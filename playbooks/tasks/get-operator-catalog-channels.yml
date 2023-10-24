@@ -1,0 +1,38 @@
+---
+- name: Clear the operator maps
+  ansible.builtin.set_fact:
+    operator_map: {}
+    operator_packages: []
+
+- name: Pull the latest catalog listing for {{ operator.catalog }}
+  ansible.builtin.command: "{{ oc_path.stdout }} mirror list operators --catalog={{ operator.catalog }}"
+  register: cmd_r_out
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  changed_when: false
+
+- name: Set fact for a operator map
+  ansible.builtin.set_fact:
+    operator_map: "{{ operator_map | default({}) | combine({item.split()[0]: item.split() | last}) }}"
+  loop: "{{ cmd_r_out.stdout_lines }}"
+  when: item.split()[0] != 'NAME'
+
+- name: Loop through the operator packages that don't have a channel defined
+  ansible.builtin.set_fact:
+    operator_packages: "{{ operator_packages | default([]) + [{'name': package_item.name, 'channels': [{'name': operator_map[package_item.name]}]}] }}"
+  loop: "{{ operator.packages }}"
+  loop_control:
+    loop_var: package_item
+  when: package_item.channels is not defined
+
+- name: Loop through the operator packages that do have a channel defined and append them to the list
+  ansible.builtin.set_fact:
+    operator_packages: "{{ operator_packages | default([]) + [package_item] }}"
+  loop: "{{ operator.packages }}"
+  loop_control:
+    loop_var: package_item
+  when: package_item.channels is defined
+
+- name: Assemble the determined operator catalog data
+  ansible.builtin.set_fact:
+    determined_operator_catalog: "{{ determined_operator_catalog | default([]) + [{'catalog': operator.catalog, 'packages': operator_packages}] }}"

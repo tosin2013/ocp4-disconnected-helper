@@ -1,0 +1,5 @@
+[all]
+image-mirror.kemo.labs ansible_host=192.168.42.238 ansible_user=notken
+
+[dmzMirror]
+image-mirror.kemo.labs ansible_host=192.168.42.238 ansible_user=notken

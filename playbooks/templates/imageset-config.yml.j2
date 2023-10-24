@@ -1,0 +1,65 @@
+---
+kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v1alpha2
+
+archiveSize: {{ archive_size | default('4') }}
+
+storageConfig:
+  local:
+    path: {{ target_mirror_path }}
+
+mirror:
+  platform:
+    graph: {{ (enable_graph | bool) | default(true) }}
+
+{% if architectures | length > 0 %}
+    architectures:
+{% for arch in architectures %}
+      - {{ arch }}
+{% endfor %}
+{% endif %}
+
+    channels:
+{% if openshift_releases | length > 0 %}
+{% for release in openshift_releases %}
+      - name: {{ release.name }}
+        type: ocp
+{% if release.minVersion is defined %}
+        minVersion: {{ release.minVersion }}
+{% endif %}
+{% if release.maxVersion is defined %}
+        maxVersion: {{ release.maxVersion }}
+{% endif %}
+{% if release.shortestPath is defined %}
+        shortestPath: {{ release.shortestPath }}
+{% endif %}
+
+{% endfor %}
+{% endif %}
+
+{% if operators | length > 0 %}
+  operators:
+{% for catalog in determined_operator_catalog %}
+    - catalog: {{ catalog.catalog }}
+      packages:
+{% for package in catalog.packages %}
+        - name: {{ package.name }}
+{% if package.channels is defined %}
+          channels:
+{% for channel in package.channels %}
+            - name: {{ channel.name }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+{% endfor %}
+{% endif %}
+
+{% if additional_images | length > 0 %}
+  additionalImages:
+{% for image in additional_images %}
+    - name: {{ image }}
+{% endfor %}
+{% endif %}
+
+  helm: {}
