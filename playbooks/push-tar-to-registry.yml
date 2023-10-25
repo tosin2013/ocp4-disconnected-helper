@@ -1,0 +1,202 @@
+---
+# Prerequisites:
+## Modify the inventory file to reflect your environment
+## The user must have password-less sudo access
+## The user must have password-less ssh access to the remote hosts
+## You need a user to push to your remote registry
+
+- name: Push a local set of oc-mirror packed TAR files to a remote registry
+  hosts: secureMirrorSource
+  gather_facts: true
+  become: true
+
+  vars:
+    # =====================================
+    # Remote Registry Configuration
+    registries:
+      - username: admin
+        password: notHarbor12345
+        server: disconn-harbor.d70.kemo.labs
+        path: oc-mirror
+
+    # target_registry_auth_path is the user path where the authentication file will be stored on the remote host
+    target_registry_auth_path: /root/.docker
+    target_registry_auth_path_user: root
+    target_registry_auth_path_group: root
+
+    # =====================================
+    # Mirror Source Configuration
+    source_mirror_path: /opt/images # no trailing slash
+
+    # Optional proxy configuration that is applied to the docker daemon and other places like the harbor configuration
+    # proxy:
+    #   http_proxy: http://192.168.42.31:3128
+    #   https_proxy: http://192.168.42.31:3128
+    #   no_proxy: localhost,.kemo.labs,.kemo.network,10.128.0.0/14,127.0.0.1,172.30.0.0/16,192.168.0.0/16,192.168.70.0/23
+
+    # Optionally set up Cockpit on the remote host - handy when needing to set up a storage volume
+    setup_cockpit: true
+
+    # base_packages defines the packages that will be installed on the remote host - mostly just handy
+    base_packages:
+      - nano
+      - curl
+      - wget
+      - tar
+      - unzip
+      - bash-completion
+      - bind-utils
+      - httpd-tools
+      - procps-ng
+
+  tasks:
+
+    - name: Make sure basic packages are installed
+      ansible.builtin.package:
+        name: "{{ base_packages }}"
+        state: present
+      environment:
+        http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+        https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+        no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+    - name: Setup Cockpit because I am a lazy admin
+      when: setup_cockpit
+      block:
+        - name: Install Cockpit because it's nice to have
+          ansible.builtin.package:
+            name: ['cockpit', 'cockpit-storaged']
+            state: present
+          environment:
+            http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+            https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+            no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+        - name: Enable Cockpit
+          ansible.builtin.service:
+            name: cockpit.socket
+            state: started
+            enabled: true
+
+    - name: Check for the oc binary
+      block:
+        - name: Check if oc is installed
+          ansible.builtin.command: which oc
+          changed_when: false
+          failed_when: oc_installed.rc not in [0, 1]
+          register: oc_installed
+
+        - name: Install the oc binary
+          when: oc_installed.rc not in [0]
+          block:
+            - name: Download the OC binary if it is not present
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
+                dest: /tmp/openshift-client-linux.tar.gz
+                mode: 0755
+              environment:
+                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+            - name: Extract the oc binary
+              ansible.builtin.unarchive:
+                src: /tmp/openshift-client-linux.tar.gz
+                dest: /usr/local/bin
+                remote_src: true
+                creates: /usr/local/bin/oc
+                mode: 0755
+
+            - name: Enable binary completion for oc
+              ansible.builtin.shell: /usr/local/bin/oc completion bash > /etc/bash_completion.d/oc_completion.sh
+              args:
+                creates: /etc/bash_completion.d/oc_completion.sh
+
+    - name: Check for the oc mirror plugin
+      block:
+        - name: Check if oc is installed
+          ansible.builtin.command: which oc-mirror
+          changed_when: false
+          failed_when: oc_mirror_installed.rc not in [0, 1]
+          register: oc_mirror_installed
+
+        - name: Install the oc-mirror plugin
+          when: oc_mirror_installed.rc not in [0]
+          block:
+            - name: Download the oc-mirror plugin
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
+                dest: /tmp/oc-mirror.tar.gz
+                mode: 0755
+              environment:
+                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+            - name: Extract the oc-mirror binary
+              ansible.builtin.unarchive:
+                src: /tmp/oc-mirror.tar.gz
+                dest: /usr/local/bin
+                remote_src: true
+                creates: /usr/local/bin/oc-mirror
+                mode: 0755
+
+            - name: Enable binary completion for oc-mirror
+              ansible.builtin.shell: /usr/local/bin/oc-mirror completion bash > /etc/bash_completion.d/oc-mirror_completion.sh
+              args:
+                creates: /etc/bash_completion.d/oc-mirror_completion.sh
+
+    - name: Make sure that the root user has /usr/local/bin in its PATH
+      block:
+        - name: Check if /usr/local/bin is already defined
+          ansible.builtin.lineinfile:
+            state: absent
+            path: "/root/.bashrc"
+            regexp: "/usr/local/bin"
+          check_mode: true
+          changed_when: false # This just makes things look prettier in the logs
+          register: path_check
+
+        - name: Define /usr/local/bin if undefined
+          ansible.builtin.lineinfile:
+            state: present
+            path: "/root/.bashrc"
+            line: "export PATH=$PATH:/usr/local/bin"
+          when: path_check.found == 0
+
+    - name: Get the path to oc, discount double check
+      ansible.builtin.command:
+        cmd: which oc
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      register: oc_path
+      changed_when: false
+
+    - name: Create the Container Registry Config directory
+      ansible.builtin.file:
+        path: "{{ target_registry_auth_path }}"
+        state: directory
+        owner: "{{ target_registry_auth_path_user }}"
+        group: "{{ target_registry_auth_path_group }}"
+        mode: 0700
+
+    - name: Create the authentication file for the registry
+      ansible.builtin.template:
+        src: templates/registry_auth.json.j2
+        dest: "{{ target_registry_auth_path }}/config.json"
+        mode: 0600
+
+    - name: Push the mirror to the remote registry
+      ansible.builtin.shell:
+        cmd: |-
+          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/ docker://{{ registry.server }}/{{ registry.path | default(omit) }}
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      register: oc_mirror_output
+
+    - name: Display the command output
+      ansible.builtin.debug:
+        msg: "{{ oc_mirror_output.stdout_lines }}"

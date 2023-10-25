@@ -13,7 +13,7 @@
     harbor_version: v2.7.3
 
     # harbor_hostname is used for the harbor configuration and path for SSL certificates
-    harbor_hostname: disconn-harbor.d70.kemo.lab
+    harbor_hostname: disconn-harbor.d70.kemo.labs
 
     # harbor_admin_password is the password for the 'admin' user
     harbor_admin_password: notHarbor12345
@@ -23,10 +23,10 @@
     harbor_data_volume_path: /data
 
     # Optional proxy configuration that is applied to the docker daemon and other places like the harbor configuration
-    # proxy:
-    #   http_proxy: http://192.168.42.31:3128
-    #   https_proxy: http://192.168.42.31:3128
-    #   no_proxy: localhost,.kemo.labs,.kemo.network,10.128.0.0/14,127.0.0.1,172.30.0.0/16,192.168.0.0/16,192.168.70.0/23
+    proxy:
+      http_proxy: http://192.168.42.31:3128
+      https_proxy: http://192.168.42.31:3128
+      no_proxy: localhost,.kemo.labs,.kemo.network,10.128.0.0/14,127.0.0.1,172.30.0.0/16,192.168.0.0/16,192.168.70.0/23
 
     # Ideally you should use HTTPS to access the container registry
     # If you have a CA chain it should be appended to the bottom of the server certificate
@@ -256,6 +256,7 @@
       - openssl
       - firewalld
       - cockpit
+      - cockpit-storaged
       - nano
 
     docker_packages:

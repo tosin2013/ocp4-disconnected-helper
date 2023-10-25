@@ -147,7 +147,7 @@
       block:
         - name: Install Cockpit because it's nice to have
           ansible.builtin.package:
-            name: cockpit
+            name: ['cockpit', 'cockpit-storaged']
             state: present
 
         - name: Enable Cockpit
