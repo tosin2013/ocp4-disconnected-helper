@@ -4,10 +4,10 @@ This repository provides some automation and other utilities to deploy OpenShift
 
 Currently supports the following patterns:
 
-1. **Downloading OpenShift releases to a local directory and package as a TAR file.**  This is intended to be done in a network with WAN access or a via a DMZ host.
-2. **Extracting that TAR file to a directory, and pushing to a registry.**  Once the TAR has been transported from the DMZ to a disconnected/secure enclave, you would extract it and push to a local registry to be used for installation.
+1. [**Downloading OpenShift releases to a local directory and package as a TAR file.**](#1-download-openshift-releases-and-operator-catalog-to-a-local-directory-and-package-as-a-tar-file) - This is intended to be done in a network with WAN access or a via a DMZ host.
+2. **Extracting that TAR file to a directory, and pushing to a registry.** - Once the TAR has been transported from the DMZ to a disconnected/secure enclave, you would extract it and push to a local registry to be used for installation.
 3. Setting up a local Docker Registry.
-4. Setting up a local Harbor Registry.
+4. [**Setting up a local Harbor Registry.**](#4-setting-up-a-local-harbor-registry) - Deploy a quick Harbor registry for testing.
 
 ## 1. Download OpenShift Releases and Operator Catalog to a local directory and package as a TAR file
 
