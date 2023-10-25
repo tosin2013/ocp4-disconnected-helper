@@ -1,0 +1,408 @@
+---
+# Prerequisites:
+## Modify the inventory file to reflect your environment
+## The user must have password-less sudo access
+## The user must have password-less ssh access to the remote hosts
+
+- name: Install Harbor Container Registry to RHEL
+  hosts: harbor
+  become: true
+
+  vars:
+    # harbor_version is the version to download and run
+    harbor_version: v2.7.3
+
+    # harbor_hostname is used for the harbor configuration and path for SSL certificates
+    harbor_hostname: disconn-harbor.d70.kemo.lab
+
+    # harbor_admin_password is the password for the 'admin' user
+    harbor_admin_password: notHarbor12345
+
+    # harbor_data_volume_path is the path to the data volume that is mounted to the various containers
+    # this should have plenty of space, ideally a separate large volume
+    harbor_data_volume_path: /data
+
+    # Optional proxy configuration that is applied to the docker daemon and other places like the harbor configuration
+    # proxy:
+    #   http_proxy: http://192.168.42.31:3128
+    #   https_proxy: http://192.168.42.31:3128
+    #   no_proxy: localhost,.kemo.labs,.kemo.network,10.128.0.0/14,127.0.0.1,172.30.0.0/16,192.168.0.0/16,192.168.70.0/23
+
+    # Ideally you should use HTTPS to access the container registry
+    # If you have a CA chain it should be appended to the bottom of the server certificate
+    # eg here it's Server Cert > Signing CA Cert > Intermediate CA Cert > Root CA Cert
+    ssl_certificate: |
+      -----BEGIN CERTIFICATE-----
+      MIIINjCCBh6gAwIBAgICEAcwDQYJKoZIhvcNAQELBQAwgbYxCzAJBgNVBAYTAlVT
+      MRcwFQYDVQQIDA5Ob3J0aCBDYXJvbGluYTEUMBIGA1UECgwLTm90IFJlZCBIYXQx
+      GjAYBgNVBAsMEUtlbW8gTGFicyBJbmZvU2VjMTowOAYDVQQDDDFLZW1vIExhYnMg
+      T3BlblNoaWZ0IFNpZ25pbmcgQ2VydGlmaWNhdGUgQXV0aG9yaXR5MSAwHgYJKoZI
+      hvcNAQkBFhFrbW9pbmlAcmVkaGF0LmNvbTAeFw0yMzEwMjUwMjQ4MjRaFw0yNDEx
+      MDMwMjQ4MjRaMIG7MQswCQYDVQQGEwJVUzEXMBUGA1UECAwOTm9ydGggQ2Fyb2xp
+      bmExEDAOBgNVBAcMB1JhbGVpZ2gxFjAUBgNVBAoMDUtlbW8gTmV0d29ya3MxIjAg
+      BgNVBAsMGUtlbW8gTmV0d29ya3MgV2ViIFNlcnZlcnMxJTAjBgNVBAMMHGRpc2Nv
+      bm4taGFyYm9yLmQ3MC5rZW1vLmxhYnMxHjAcBgkqhkiG9w0BCQEWD2tlbW9AcmVk
+      aGF0LmNvbTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBALmMsTwycopY
+      ZnktNBLvNCZK9O+aIWpwhhWFvX/glPpOKstWlw9pXkeymJXs2qP0BZeYYkPi+zWW
+      HRhXrLlKBw4sxQFfz4DcIkVU2cm6ymrCSf80/NiNQGcnacB4cdso/y17Lc3wHb/g
+      fjZrGMWNHpt0idb8qIhOypoBeSXJoQkbYiUtbdCLR7XTnjGDNXmhMh0TyP0Lepnw
+      jOKyVUuKVmxzVaqldM5CD8/MRK7ESDF5neZj6+oo8D8UqQtnSDO/foWbwdhTsOZu
+      qigtFjjPmJln5iL6NWBWriVHV+EzTQsoh78d8ML99fxQtXRiQFm8Ri5SHPSFaIok
+      dNKt8mVvcQwsuofb4h2hQ6MYyOmJ6Cy9e3YFCJ2gKhx+562ds9Fy1eHE7InH4DHx
+      lc5eeGiRBCjnnhvOSdAjyafwFAeJU8SLbplSGI4xfcLtrf3471BjPP1pC8yRwlNR
+      +9l08FTVwfeedeIUCZ28fzAIkAzslDo1HEG8DFE/3bEz951Lr2JYDHIrtUICXv8l
+      KGh4kz1HgN2hlgJGSPk3tV5XZwQhIEaeNQtOWMZmkH2uTPBt9fADOITvZXa1RHPr
+      hoXjJTQWSHQmMOv/Qngb9r5hnJRkZ0eSVHPjy4EYG5wtvZUAFOmfa6sSDYMiucQj
+      38n8DgDsxwkfUl/4Xe8Ns34habCd1TjNAgMBAAGjggJFMIICQTAJBgNVHRMEAjAA
+      MBEGCWCGSAGG+EIBAQQEAwIGQDAzBglghkgBhvhCAQ0EJhYkT3BlblNTTCBHZW5l
+      cmF0ZWQgU2VydmVyIENlcnRpZmljYXRlMB0GA1UdDgQWBBT5vIj0bKIFsZFFq4uT
+      RS/q7PTajjCB1wYDVR0jBIHPMIHMgBROj3oxwBgeWevOEBBvgC8iQbAHTqGBr6SB
+      rDCBqTELMAkGA1UEBhMCVVMxFzAVBgNVBAgMDk5vcnRoIENhcm9saW5hMRQwEgYD
+      VQQKDAtOb3QgUmVkIEhhdDESMBAGA1UECwwJS2VtbyBMYWJzMTUwMwYDVQQDDCxL
+      ZW1vIExhYnMgSW50ZXJtZWRpYXRlIENlcnRpZmljYXRlIEF1dGhvcml0eTEgMB4G
+      CSqGSIb3DQEJARYRa21vaW5pQHJlZGhhdC5jb22CAhABMA4GA1UdDwEB/wQEAwIF
+      oDATBgNVHSUEDDAKBggrBgEFBQcDATAJBgNVHRIEAjAAMGoGA1UdHwRjMGEwX6Bd
+      oFuGWWh0dHBzOi8vcmVkLWhhdC1zZS1ydG8uZ2l0aHViLmlvOjQ0My9jcmxzL2tl
+      bW8tbGFicy1vY3Atc2lnbmluZy1jZXJ0aWZpY2F0ZS1hdXRob3JpdHkuY3JsMFcG
+      A1UdEQRQME6CHGRpc2Nvbm4taGFyYm9yLmQ3MC5rZW1vLmxhYnOCHiouZGlzY29u
+      bi1oYXJib3IuZDcwLmtlbW8ubGFic4IOMTkyLjE2OC43MS4yNDAwDQYJKoZIhvcN
+      AQELBQADggIBABRI+APq+nd+6KYD2rgvB6YdxAx8uEc1dwjF6evqOpGBrOXn0LRl
+      wmx4ypLPcqN4SBPtirFu5tMGDNSb6LzLzdIvKUjRptMAmrTGM8EG8fQqKOh0dvU7
+      QW93uYPlrQNuMdUeo4Gjdz2bo9Hyo9rDd8JJfQUDp2d10nFwLea9ffiEAmRl7PEn
+      yqJ8khgcCVVeUQR3rEixjJ+jqSgFQu5Bqrp/wwOL5ZGkd4OWMYF6rXKQ3Jjwb2hf
+      cIQPyFuvzvYCEXjtCVZzxm00vRxHy2NnnmXVKr5Su1qRT44cBxRL9GASyDNritDT
+      bZcZbc8szgmxBLAQXwRohJfApvtwwkTLbDX1JNGwmVR89j4aa+diWtrex1shfjRh
+      2tr441XDeLtP6YlWGSgpv24u1yz89HnB3ul7eVE324b86XxtayHULaN36J1HJk0a
+      O0DmKprrS4GVNjFrvrPn9V0PLa1jSLXS+ORUwZH9cR6C43Lc/3L5sRAtK0Wy+y1O
+      JZg9l/fpmUXUob1tv4Tvv09ldVKe9hEaewNBhvDhJosf1x/8IFzFzeXE8knmyKBg
+      VtrkwV9JhO5ZgaB6bNxGgZt6gdiVwBho1Ek2e6qo2mNTWbi4147TidULjxX35ORB
+      AvIm3kFKXvvidk5O7QR+oa3KzUuYzV+YVqckcU/cohIcKn7zGPJp2L/h
+      -----END CERTIFICATE-----
+      -----BEGIN CERTIFICATE-----
+      MIIGsjCCBJqgAwIBAgICEAEwDQYJKoZIhvcNAQELBQAwgakxCzAJBgNVBAYTAlVT
+      MRcwFQYDVQQIDA5Ob3J0aCBDYXJvbGluYTEUMBIGA1UECgwLTm90IFJlZCBIYXQx
+      EjAQBgNVBAsMCUtlbW8gTGFiczE1MDMGA1UEAwwsS2VtbyBMYWJzIEludGVybWVk
+      aWF0ZSBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkxIDAeBgkqhkiG9w0BCQEWEWttb2lu
+      aUByZWRoYXQuY29tMB4XDTIyMDMwNzAwMDc1MVoXDTI3MDQyNTAwMDc1MVowgbYx
+      CzAJBgNVBAYTAlVTMRcwFQYDVQQIDA5Ob3J0aCBDYXJvbGluYTEUMBIGA1UECgwL
+      Tm90IFJlZCBIYXQxGjAYBgNVBAsMEUtlbW8gTGFicyBJbmZvU2VjMTowOAYDVQQD
+      DDFLZW1vIExhYnMgT3BlblNoaWZ0IFNpZ25pbmcgQ2VydGlmaWNhdGUgQXV0aG9y
+      aXR5MSAwHgYJKoZIhvcNAQkBFhFrbW9pbmlAcmVkaGF0LmNvbTCCAiIwDQYJKoZI
+      hvcNAQEBBQADggIPADCCAgoCggIBAMZqzrshCP3nEC+sTch3V6YTTOjtn0g8BPau
+      VZa4nyNGP2Fk3Bvunt2/PpAtVjQEI7oYVkv1rmRgD6f5St6I5L7SMiSDJskG5Gpl
+      g8K/g6oo5v4kFbAxoiR4u3Nf83tqay7jLpfQBJ/m81Q3oouXcsmPT1fafSXjV9M8
+      8rSRzWbUZIZvacWz5hSTnyb6hnfasExBTW6VYxlXyvgY38WEjraRjccs7zTXXrNm
+      DcWLl+8fdvk+kXQ1Be70Y6NV+g0WzNuVbEkS0gyDFWCJ7pL6NkXy7n+cxwYyTY7W
+      Lj9V+tIWa7I6bEFIVLOT1OfHSYugWhvg55AT8Yzl/mdKir7hCjuN4E+4ilYJFkrS
+      MsLN+AFeQgzIcUPIYOmXY3Oiac/F7EuvYyrgsiirGJuVOA7auh+2fJwmbLgek/Kv
+      Q4AR6pPg29sKVRPVpl3Xsc6Rabs8WSbxNwZPOIYjSZGZ8hYpA84LU5+P/1Y8l60q
+      UCungbBXLQqsmbVTl579CqkB3uISlWAE8uhdzEPBUFk742cp4eMshq2JU7ELWusV
+      EvL/3jdL+tH8NKVDD1HybggEMNFSKjLi6n2rbybE0l+W0YMKk3M8nBDvfs+o5cfd
+      0Y7Xae8FG4HseSA/onzodsuYPL5qhNzPBqJH6TVt/GLYnRhwmoMOGg80vkW0Kby2
+      SSXiJXzTAgMBAAGjgdQwgdEwHQYDVR0OBBYEFE6PejHAGB5Z684QEG+ALyJBsAdO
+      MB8GA1UdIwQYMBaAFGOf51hovtWkI7xb93svfwd+VXefMBIGA1UdEwEB/wQIMAYB
+      Af8CAQAwDgYDVR0PAQH/BAQDAgGGMGsGA1UdHwRkMGIwYKBeoFyGWmh0dHBzOi8v
+      cmVkLWhhdC1zZS1ydG8uZ2l0aHViLmlvOjQ0My9jcmxzL2tlbW8tbGFicy1pbnRl
+      cm1lZGlhdGUtY2VydGlmaWNhdGUtYXV0aG9yaXR5LmNybDANBgkqhkiG9w0BAQsF
+      AAOCAgEATvD9r2ngNqGnIlFWtvN6WXU2LrTNoYr6iOMBVNL7NnM3b+QXGGd0W371
+      b44hmA4stquwaksz8q/khZr3yYKSzyyNgldlAWqMn2C0TgnIPhoJPvqzLVJTQxQ/
+      RxHcGFOsSleWyxanqPeK3tXjxHnyvZKhkR9AfMto0Wq6GrRf3Mk615NddVWu/JYx
+      JbDHckJJ0rMBSHLrTUsZ6w3zE2pYTdw7SV8iRgpLlehSObZq0Zo6glpSCucfKqP4
+      n9aDgYqglUyhL0c3xerQ3LFDENZPeDNH8FPUFi0rTTCgvDPPUjAs4aOMLQIljmFg
+      JmpRIOmxJq4QKeUhltoeKNqPKhWRl2hQDdsT4Nga90dcnsgfJxQCG+348eMdN6lM
+      7dYkiaSJ9gsQDqcdK0PphX3aNct5Wdp7XIeo7hlKkQQqhokIqWNJ2n3oOgS99hDJ
+      mYeHyKpYt8C2SJOT+6jCGLZmrq9RE71t7ggC3O4+wN5eQ3S9b1iE7/5WcM94Qs1w
+      sF6QHjJm4FFxsMuT/ThQvxAR4MrfC9srAUPnYNKUjZy51hW94Vrmqk7J4/Q+mEmD
+      CtPyinXX3lYDjVpc4scy9TPCEmmItc97TQv9ulHDRXTGGG0ihZ0gt2mHkFZYti88
+      VzOWlplwfvawf/UZRva7tVHaw8Uv1Mma4IBSKGKMNUVt5XvCbAo=
+      -----END CERTIFICATE-----
+      -----BEGIN CERTIFICATE-----
+      MIIGsTCCBJmgAwIBAgICEAAwDQYJKoZIhvcNAQELBQAwgcMxIzAhBgkqhkiG9w0B
+      CQEWFG5hLXNlLXJ0b0ByZWRoYXQuY29tMQswCQYDVQQGEwJVUzEXMBUGA1UECAwO
+      Tm9ydGggQ2Fyb2xpbmExEDAOBgNVBAcMB1JhbGVpZ2gxFDASBgNVBAoMC05vdCBS
+      ZWQgSGF0MRswGQYDVQQLDBJTRSBSVE8gTm90IEluZm9TZWMxMTAvBgNVBAMMKFNv
+      dXRoZWFzdCBSVE8gUm9vdCBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkwHhcNMjIwMzA3
+      MDAwNjA3WhcNMzIwNjEyMDAwNjA3WjCBqTELMAkGA1UEBhMCVVMxFzAVBgNVBAgM
+      Dk5vcnRoIENhcm9saW5hMRQwEgYDVQQKDAtOb3QgUmVkIEhhdDESMBAGA1UECwwJ
+      S2VtbyBMYWJzMTUwMwYDVQQDDCxLZW1vIExhYnMgSW50ZXJtZWRpYXRlIENlcnRp
+      ZmljYXRlIEF1dGhvcml0eTEgMB4GCSqGSIb3DQEJARYRa21vaW5pQHJlZGhhdC5j
+      b20wggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCt5L25FXPE1Qjcwc9E
+      AFiXx5ecdOruDqiA5Exaf+qy60QD+nw4n6Mz1uOiVRNMRKfTM8xqyYjnV2kn/Xqx
+      X6r5Ppf+YQkotuNDfBdzfmKKn83BE6WbGgoEa07YjLVAhix3giSnxfyiBRXcUvru
+      rRgApfyydKupq4i9Z0CVndDSX3v2QR5Xo2eujtn/gg38/ynefnlULZiOFZtwYmXp
+      aoNskKTI0cDkLdT88wUNsI8L540PIuxBLOZWsGCw57ZSz7lLrULUNwIvIVWX9IKY
+      9MZwxYt0G4ZkqVvHZLO4ViToLQl5FLgpw/NmWPYaNAYEEjQb5MqQlPwSwa/8884I
+      NlONzmHMOF4LpiWHEDPOPl3HIP7K+qa4rOdG7Fjk2yCGhx10wYCFUy0bT004+1tj
+      JtRjX3Lj51zOwWsw4cbZmP3rEb1EgfQHfTHfrayDaOhSAud36IilgDwk7qwv6kSs
+      qAu6Y6oYIXmGwDtpDjA0U1LvSx95DodWYY6tFfQgErJaGx1+wMmsLh+3Kpk/kl1J
+      0uYTOgKLyd/BBqcaKhyfRpVgGCf3eP3FoYjBDKikJMA6jPwYdU900xM2llZCyRhw
+      G4WwR8WillVLdpPidBq3dKBGOWiQ/okSpYtWrsHcaPFtIFZ8DKgE0HeFdYmf8FNl
+      eX1N4WkgKCxZeDy1LhIU0b0/nwIDAQABo4HGMIHDMB0GA1UdDgQWBBRjn+dYaL7V
+      pCO8W/d7L38HflV3nzAfBgNVHSMEGDAWgBQ88OLsFlarKiQzTNkc/s7Qv2YFDTAP
+      BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjBgBgNVHR8EWTBXMFWgU6BR
+      hk9odHRwczovL3JlZC1oYXQtc2UtcnRvLmdpdGh1Yi5pbzo0NDMvY3Jscy9zZS1y
+      dG8tcm9vdC1jZXJ0aWZpY2F0ZS1hdXRob3JpdHkuY3JsMA0GCSqGSIb3DQEBCwUA
+      A4ICAQCoIR0/wK6q9s4LIUTYW4LoKnBNO5AwW6pD6Lt6JmW4UmBYFywzKRS92vZM
+      PqSnT0Q0h811ZMeBGCm5xqEttR7YIeHu2KTyKZEl9f+1prs7OaA1QOS/L+4W7e7N
+      fKKUy31Hki3KladvkyjK9MBsj8uGI3a0XA3tT5O4C5KMlW6XhNjzQWg3nm8UoX9b
+      ecb6mBMgN855YR3u6btfkUqSgqqzVZic7f/FAOZkqvc+qEuJgJcuyuNO80YtA9tc
+      nzfIwWYwCQlFH846jz1VDaslUWvVUM36vcNODoSsgdRMaKysKdIhUgqBzQ8EK36b
+      rUm5WroIFC+1k5P4+JWb26ngvLBB1X7cs9IscOxujPJEXBS/483UptvgiRDerl2t
+      jnBVdnQNc4oKIcVeCcvIqQMsXNiueV5qVswkxQ/BCRNmAL9tZD2RDONNAm2HBweZ
+      SyMVwisJLPjNFNevolQ6eZttlOsqSOUyQSbyN548BhZqE0eD5IMZSjNGTiKU2qfW
+      hp5r2L8H3MZTqtSPDhsk/A7xIdRLwdQqOt3AytxwRuehd+FCpuFahqBmnfGYbm3t
+      qZLVayNsnv52H3df8RrFzqnQ3b4xS8PMGz7LI3E5/LDmLfHwubZFevgSf6sDrp0u
+      sXSecIQRUToQt1ezkmF3KUy6BM58j2riRyqXwsLRS8vJQUJfDQ==
+      -----END CERTIFICATE-----
+      -----BEGIN CERTIFICATE-----
+      MIIG3TCCBMWgAwIBAgIUJSmf6Ooxg8uIwfFlHQYFQl5KMSYwDQYJKoZIhvcNAQEL
+      BQAwgcMxIzAhBgkqhkiG9w0BCQEWFG5hLXNlLXJ0b0ByZWRoYXQuY29tMQswCQYD
+      VQQGEwJVUzEXMBUGA1UECAwOTm9ydGggQ2Fyb2xpbmExEDAOBgNVBAcMB1JhbGVp
+      Z2gxFDASBgNVBAoMC05vdCBSZWQgSGF0MRswGQYDVQQLDBJTRSBSVE8gTm90IElu
+      Zm9TZWMxMTAvBgNVBAMMKFNvdXRoZWFzdCBSVE8gUm9vdCBDZXJ0aWZpY2F0ZSBB
+      dXRob3JpdHkwHhcNMjIwMzA3MDAwNTA5WhcNNDIwOTE4MDAwNTA5WjCBwzEjMCEG
+      CSqGSIb3DQEJARYUbmEtc2UtcnRvQHJlZGhhdC5jb20xCzAJBgNVBAYTAlVTMRcw
+      FQYDVQQIDA5Ob3J0aCBDYXJvbGluYTEQMA4GA1UEBwwHUmFsZWlnaDEUMBIGA1UE
+      CgwLTm90IFJlZCBIYXQxGzAZBgNVBAsMElNFIFJUTyBOb3QgSW5mb1NlYzExMC8G
+      A1UEAwwoU291dGhlYXN0IFJUTyBSb290IENlcnRpZmljYXRlIEF1dGhvcml0eTCC
+      AiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBANGozAIcO/PB4uIwI31kuiGW
+      j+Nm+ZJruiOaG0P/Z99F/i7e9aOrQD8BHmlGOp9R0sdabrmidvowLE69g5z4+Q0E
+      4+Uvt4GX/DYOBVR/xuV3E8LFJN1zXXbFtXJlSBz3PLWNaySAcg55a/Pwz68EWFA1
+      H2RL5I/sPDpFiz0POnZ+MJ15BCQ2P5YCN7lsHSkmbRonz349WAhvE5OM6qIrBw/J
+      Y6AJtAuEVnyiKoilqEvg0Gz6mSnog2yJY1CktMmP7S6/DPuJpTrw74027mp+g1Pm
+      hRf8jVNsLNM7VPMo8AIodTCIc+Gv3EJ1bjMc/nF1F3K5jBQZrfe21QpgMKyeY/RV
+      FvoHaCy2Miw2RFE9HOo0rwnOohiXlZM6ZSL5AUfDH2tSlJJNr08fE4op48UMIahz
+      2My117CKFE2gRe5bhEEJAO9gOqsq1oOT4Oi3TP+lysjAVAIcnNFhQ1uRmJ93Y8HU
+      qOCOgH+PV7N+kNtOwy8y32+Czh6njL09IbR8TNH2fOXYVt7JDZjnfU+FdzagNWc5
+      C+aQCdpKIMig5OuU81Ac8k6+Aj0CBawOcBI63oxV/GWkUJPgQytmyo/2zswD9FcD
+      yIVL1nvJOwVWNEyOLtDWmEzSda6CVLFFQnAw35qgS94Hc7IS3nQW6XFEGj7xzTmd
+      b2xoEKhgx+dPw5h7AYPHAgMBAAGjgcYwgcMwHQYDVR0OBBYEFDzw4uwWVqsqJDNM
+      2Rz+ztC/ZgUNMB8GA1UdIwQYMBaAFDzw4uwWVqsqJDNM2Rz+ztC/ZgUNMA8GA1Ud
+      EwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgGGMGAGA1UdHwRZMFcwVaBToFGGT2h0
+      dHBzOi8vcmVkLWhhdC1zZS1ydG8uZ2l0aHViLmlvOjQ0My9jcmxzL3NlLXJ0by1y
+      b290LWNlcnRpZmljYXRlLWF1dGhvcml0eS5jcmwwDQYJKoZIhvcNAQELBQADggIB
+      AFu7g/6ghP0PaLsjjAPW+QWqv9tMk8w0MKbKgVeUOX5xz1I7Svc1ndi2dMcYwK8W
+      pgF4bVR8T17NE3V0/xy6BGktN9BtErI9guk3zb3GBIx/1b3Mgce7134nGvhi4ik7
+      ziNB2WYwOgwxEpSA1eS68WNMT6pWZvosEZu9AKMUQ8ULsfxiKwVT+Pj171JxIvDV
+      blhilnOrBap7sP1XwS9OPcQhm0AMtFEj/zhadO1h2ynwKjd/VE2/nskfLvm1dXK5
+      DtdHsCdtT/hJ0XQjLkwOkl87WHZsy4u6kxQzxKH+LDWfSOCOksYD86fBdfQC66gL
+      7yJpX9BznEaGCKgFam3m42eH9msCIV/JTTLUbsrwzaEhxBLtpUeo6j1xF2khF8Ri
+      45Sir0yotZE0i72S4TLllkgQx9AaOiRAWvtYkcP1TBJnzL5viac3pkTnPjLiQ9BO
+      V8+9Y1O6wU0KTbLdMaz+Wfpti1lcnphQDsMJoGTe6wl3QpAK2jz32aFMoTkoyDK5
+      MwQqiTMkyOkPCiY4Rq1RRnYGIU7Ob125IjaFqyLvG9KWuiFsH7yn2nVH5kwy7O75
+      7yx0UiBuGVfG66I09YM1jR9nq7mKv30Sq1Fa/X76XyxDBGk0rLRCw02Ziq0rS8WG
+      S5kIfhw8FM52x6RHCwRicArO8HSTCf4ueEkFL7yj5xSI
+      -----END CERTIFICATE-----
+
+    # The private key for the above server certificate
+    ssl_certificate_key: |
+      -----BEGIN PRIVATE KEY-----
+      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
+      +OBFq+K3hiQqzQT4aYID/LnIgEAZ
+      -----END PRIVATE KEY-----
+
+    # ======================================
+    # Probably don't need to modify the following
+    packages:
+      - yum-utils
+      - openssl
+      - firewalld
+      - cockpit
+      - nano
+
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+    - name: Install needed packages
+      ansible.builtin.package:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Enable and start cockpit
+      ansible.builtin.service:
+        name: cockpit.socket
+        state: started
+        enabled: true
+
+    - name: Enable and start firewalld
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Enable services for harbor
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      with_items:
+        - http
+        - https
+
+    - name: Enable services for harbor
+      ansible.posix.firewalld:
+        port: "4443/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Add Docker repo
+      ansible.builtin.shell: yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      args:
+        creates: /etc/yum.repos.d/docker-ce.repo
+
+    - name: Install Docker
+      ansible.builtin.package:
+        name: "{{ docker_packages }}"
+        state: present
+
+    - name: Enable and start Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create the service drop in directory for docker and populate proxy data
+      when: proxy is defined
+      block:
+        - name: Create the directory
+          ansible.builtin.file:
+            path: /etc/systemd/system/docker.service.d
+            state: directory
+            mode: 0755
+
+        - name: Create the drop in file
+          ansible.builtin.template:
+            src: docker-proxy.conf.j2
+            dest: /etc/systemd/system/docker.service.d/proxy.conf
+            mode: 0644
+          register: drop_in_file
+
+        - name: Reload the systemd daemon
+          when: drop_in_file is changed
+          ansible.builtin.systemd:
+            daemon_reload: true
+
+        - name: Restart docker
+          when: drop_in_file is changed
+          ansible.builtin.service:
+            name: docker
+            state: restarted
+
+    - name: Create the certificate directory
+      ansible.builtin.file:
+        path: /etc/docker/certs.d/{{ harbor_hostname }}:443
+        state: directory
+        mode: 0755
+
+    - name: Create the Harbor Certificate file
+      ansible.builtin.copy:
+        content: "{{ ssl_certificate }}"
+        dest: /etc/docker/certs.d/{{ harbor_hostname }}:443/{{ harbor_hostname }}.cert
+        mode: 0644
+
+    - name: Create the Harbor Certificate key file
+      ansible.builtin.copy:
+        content: "{{ ssl_certificate_key }}"
+        dest: /etc/docker/certs.d/{{ harbor_hostname }}:443/{{ harbor_hostname }}.key
+        mode: 0644
+
+    - name: Download the Harbor offline installation package
+      ansible.builtin.get_url:
+        url: https://github.com/goharbor/harbor/releases/download/{{ harbor_version }}/harbor-offline-installer-{{ harbor_version }}.tgz
+        dest: /opt/harbor-offline-installer-{{ harbor_version }}.tgz
+        mode: 0644
+      environment:
+        http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+        https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+        no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+    - name: Extract the Harbor offline installation package
+      ansible.builtin.unarchive:
+        src: /opt/harbor-offline-installer-{{ harbor_version }}.tgz
+        dest: /opt
+        remote_src: true
+
+    - name: Template the Harbor configuration
+      ansible.builtin.template:
+        src: harbor.yml.j2
+        dest: /opt/harbor/harbor.yml
+        mode: 0644
+
+    - name: See if the container stack is running
+      ansible.builtin.shell: docker compose ls --filter name=harbor -q | grep harbor | wc -l
+      register: stack_ls_out
+      ignore_errors: true
+      changed_when: false
+
+    - name: Stop the container stack if it is running
+      ansible.builtin.shell: docker compose down -v
+      when: stack_ls_out.stdout != "0"
+      args:
+        chdir: /opt/harbor
+
+    - name: Run the preparation script
+      ansible.builtin.shell: ./prepare
+      args:
+        chdir: /opt/harbor
+      register: prepare_r_out
+
+    - name: Run the installation/start script
+      ansible.builtin.shell: ./install.sh
+      args:
+        chdir: /opt/harbor
+      register: install_r_out

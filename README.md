@@ -7,6 +7,7 @@ Currently supports the following patterns:
 1. **Downloading OpenShift releases to a local directory and package as a TAR file.**  This is intended to be done in a network with WAN access or a via a DMZ host.
 2. **Extracting that TAR file to a directory, and pushing to a registry.**  Once the TAR has been transported from the DMZ to a disconnected/secure enclave, you would extract it and push to a local registry to be used for installation.
 3. Setting up a local Docker Registry.
+4. Setting up a local Harbor Registry.
 
 ## 1. Download OpenShift Releases and Operator Catalog to a local directory and package as a TAR file
 
@@ -20,6 +21,25 @@ Currently supports the following patterns:
 ```bash=
 # Run the automation
 ansible-playbook -i inventory download-to-tar.yml
+```
+
+## 4. Setting up a local Harbor Registry
+
+In the case you need a Harbor registry to work against, you can quickly spin one up on any subscribed RHEL system - probably also works with CentOS/Rocky/etc, just haven't tested it.
+
+The automation handles package installation, firewall configuration, downloading/configuring/installing Docker and Harbor.
+
+**All that you need to bring is an SSL certificate** - see the instructions below under `SSL Certificate Generation` for a quick way to do so in case you don't have an established SSL CA to generate certificates from.
+
+If the system the Harbor registry is on is accessible from the public Internet then you could use something like Let's Encrypt.
+
+1. Modify the `inventory` file under the `harbor` group to reflect the target host that will run Harbor.  If you're running this on the same target host then just modify to a localhost type inventory host with `ansible_connection=local ansible_host=localhost`.
+2. Alter the variable to match your Harbor hostname, admin password, and SSL Certificate information.
+3. If your Harbor system is behind an outbound proxy then just enable the `proxy` variables in the Playbook.
+
+```bash=
+# Run the automation playbook
+ansible-playbook -i inventory
 ```
 
 ## Helpful Commands
@@ -39,3 +59,58 @@ oc mirror list operators --catalog=registry.redhat.io/redhat/redhat-marketplace-
 # List all channels in an operator package
 oc-mirror list operators --catalog=registry.redhat.io/redhat/redhat-operator-index:v4.13 --package=cincinnati-operator
 ```
+
+### SSL Certificate Generation
+
+Here is an example of how to create a simple CA and Server SSL certificate:
+
+```bash=
+# Create the CA key
+openssl genrsa -out ca.key 4096
+
+# Generate a self-signed CA certificate
+openssl req -x509 -new -nodes -sha512 -days 3650 \
+ -subj "/C=US/ST=Tennessee/L=Nashville/O=ContainersRUs/OU=InfoSec/CN=RootCA" \
+ -key ca.key \
+ -out ca.crt
+
+# Add the Root CA to your system trust
+cp ca.crt /etc/pki/ca-trust/source/anchors/harbor-ca.pem
+update-ca-trust
+
+# You'll also need to add that CA Cert to whatever system you're accessing Harbor with
+
+# Generate a Server Certificate Key
+openssl genrsa -out harbor.example.com.key 4096
+
+# Generate a Server Certificate Signing Request
+openssl req -sha512 -new \
+    -subj "/C=US/ST=Tennessee/L=Nashville/O=ContainersRUs/OU=DevOps/CN=harbor.example.com" \
+    -key harbor.example.com.key \
+    -out harbor.example.com.csr
+
+# Create an x509 v3 Extension file
+cat > openssl-v3.ext <<-EOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1=harbor.example.com
+DNS.2=harbor
+EOF
+
+# Sign the Server Certificate with the CA Certificate
+openssl x509 -req -sha512 -days 730 \
+    -extfile v3.ext \
+    -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -in harbor.example.com.csr \
+    -out harbor.example.com.crt
+
+# Bundle the Server Certificate and the CA Certificate
+cat harbor.example.com.crt ca.crt > harbor.example.com.bundle.crt
+```
+
+If using this process for a Harbor Registry then provide the `harbor.example.com.bundle.crt` file as the `ssl_certificate` in the Ansible Playbook and the `harbor.example.com.key` as the `ssl_certificate_key` variable.
