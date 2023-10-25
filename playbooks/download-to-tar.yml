@@ -129,6 +129,8 @@
       - nano
       - curl
       - wget
+      - tar
+      - unzip
       - bash-completion
       - bind-utils
       - httpd-tools
