@@ -6,3 +6,6 @@ image-mirror.kemo.labs ansible_host=192.168.42.238 ansible_user=notken
 
 [harbor]
 disconn-harbor.d70.kemo.labs ansible_host=192.168.71.240 ansible_user=notken
+
+[secureMirrorSource]
+mirror-source.d70.kemo.labs ansible_host=192.168.71.225 ansible_user=notken
