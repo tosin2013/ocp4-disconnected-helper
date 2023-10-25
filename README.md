@@ -29,7 +29,7 @@ In the case you need a Harbor registry to work against, you can quickly spin one
 
 The automation handles package installation, firewall configuration, downloading/configuring/installing Docker and Harbor.
 
-**All that you need to bring is an SSL certificate** - see the instructions below under `SSL Certificate Generation` for a quick way to do so in case you don't have an established SSL CA to generate certificates from.
+**All that you need to bring is an SSL certificate** - see the instructions below under [**SSL Certificate Generation**](#ssl-certificate-generation) for a quick way to do so in case you don't have an established SSL CA to generate certificates from.
 
 If the system the Harbor registry is on is accessible from the public Internet then you could use something like Let's Encrypt.
 
