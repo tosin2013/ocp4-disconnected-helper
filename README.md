@@ -42,6 +42,13 @@ If the system the Harbor registry is on is accessible from the public Internet t
 ansible-playbook -i inventory
 ```
 
+### Post Configuration for Harbor Mirroring
+
+To import the OpenShift Releases and Operator Catalog into a Harbor Registry, you'll need to do a few things:
+
+1. Create a new **Project** like `oc-mirror` - make sure it's publicly accessible.
+2. Create a **Robot Account** so you don't need to log in as a user - or log in as a user, doesn't matter.  Make sure the Robot Account has access to the Project.
+
 ## Helpful Commands
 
 ### List Operators in an Operator Catalog
