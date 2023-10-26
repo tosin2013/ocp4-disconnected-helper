@@ -2,7 +2,9 @@
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v1alpha2
 
+{% if archive_size is defined %}
 archiveSize: {{ archive_size | default('4') }}
+{% endif %}
 
 storageConfig:
   local:
