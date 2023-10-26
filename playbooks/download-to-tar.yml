@@ -109,7 +109,7 @@
       # - ppc64le
 
     # archive_size defines the maximum size of the TAR files to be created
-    archive_size: 4
+    # archive_size: 4
 
     # enable_graph enables the option to build and push the graph-data image to the mirror registry.
     # The graph-data image is required to create OpenShift Update Service (OSUS).
