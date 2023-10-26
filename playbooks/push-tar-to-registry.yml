@@ -189,7 +189,7 @@
     - name: Push the mirror to the remote registry
       ansible.builtin.shell:
         cmd: |-
-          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/ docker://{{ registry.server }}/{{ registry.path | default(omit) }}
+          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }} docker://{{ registry.server }}/{{ registry.path | default(omit) }}
       loop: "{{ registries }}"
       loop_control:
         loop_var: registry
@@ -200,3 +200,57 @@
     - name: Display the command output
       ansible.builtin.debug:
         msg: "{{ oc_mirror_output.stdout_lines }}"
+
+    - name: Get the last line of the output to source the configuration YAML files
+      ansible.builtin.set_fact:
+        oc_mirror_results_path: "{{ oc_mirror_output.stdout_lines | last | split() | last }}"
+
+    - name: Display the path to the mirror results
+      ansible.builtin.debug:
+        msg: "Results path: {{ oc_mirror_results_path }}"
+
+    - name: Read in the updateService.yaml file
+      ansible.builtin.slurp:
+        src: "{{ oc_mirror_results_path }}/updateService.yaml"
+      register: update_service_yaml
+
+    - name: Read in the imageContentSourcePolicy.yaml file
+      ansible.builtin.slurp:
+        src: "{{ oc_mirror_results_path }}/imageContentSourcePolicy.yaml"
+      register: image_content_source_policy_yaml
+
+    - name: Find all the catalogSource prefixed files
+      ansible.builtin.find:
+        paths: "{{ oc_mirror_results_path }}"
+        patterns: 'catalogSource*'
+      register: catalog_source_files
+
+    - name: Read in all the catalog_source_files
+      ansible.builtin.slurp:
+        src: "{{ yaml_item.path }}"
+      loop: "{{ catalog_source_files.files }}"
+      loop_control:
+        loop_var: yaml_item
+      register: catalog_source_yaml
+
+    - name: Display the updateService YAML as JSON
+      ansible.builtin.debug:
+        msg: "{{ yaml_item | from_yaml }}"
+      loop: "{{ [update_service_yaml.content | b64decode] }}"
+      loop_control:
+        loop_var: yaml_item
+
+    - name: Display the imageContentSourcePolicy YAML objects as JSON
+      ansible.builtin.debug:
+        msg: "{{ yaml_item | from_yaml }}"
+      loop: "{{ image_content_source_policy_yaml.content | b64decode | split('---') }}"
+      loop_control:
+        loop_var: yaml_item
+
+    - name: Display the catalogSource YAML as JSON
+      ansible.builtin.debug:
+        msg: "{{ yaml_item.content | b64decode | from_yaml }}"
+      loop: "{{ catalog_source_yaml.results }}"
+      loop_control:
+        loop_var: yaml_item
+        label: "{{ yaml_item.source }}"
