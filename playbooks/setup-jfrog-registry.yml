@@ -299,7 +299,7 @@
       when: not enable_certbot | bool
       ansible.builtin.shell:
         cmd: |
-          openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -keyout /opt/certs/default.key -out /opt/certs/default.crt -subj "/C=US/ST=North Carolina/L=Raleigh/O=InfoSec/CN={{ jfrog_server_fqdn }}"
+          openssl req -new -newkey rsa:4096 -days 768 -nodes -x509 -keyout /opt/certs/default.key -out /opt/certs/default.crt -subj "/C=US/ST=North Carolina/L=Raleigh/O=InfoSec/CN={{ jfrog_server_fqdn }}" -addext "subjectAltName=DNS:{{ jfrog_server_fqdn }},DNS:*.{{ jfrog_server_fqdn }}"
           cat /opt/certs/default.key /opt/certs/default.crt > /opt/certs/default.pem
           rm /opt/certs/default.key /opt/certs/default.crt
         creates: /opt/certs/default.pem
