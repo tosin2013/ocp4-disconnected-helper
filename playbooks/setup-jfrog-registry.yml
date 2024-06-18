@@ -1,0 +1,351 @@
+---
+# Prerequisites:
+## Modify the inventory file to reflect your environment
+## The user must have password-less sudo access
+## The user must have password-less ssh access to the remote hosts
+
+- name: Install JFrog Container Registry to RHEL/Fedora
+  hosts: jfrog
+  become: true
+  gather_facts: true
+
+  vars:
+    # Required - Set the hostname and base domain.  This can also be set per-host in the inventory file
+    jfrog_hostname: jfrog
+    base_domain: kemo.labs
+
+    update_system: true
+
+    # Optional - Setup certbot for SSL
+    enable_certbot: false
+    certbot_email: "you@somedomain.network"
+
+    # No need to edit below this line
+    jfrog_server_pkgs:
+      - curl
+      - git
+      - policycoreutils-python-utils
+      - python3-policycoreutils
+      - openssh-server
+      - openssl
+      - postfix
+      - tzdata
+      - podman
+      - bash-completion
+      - cockpit
+      - cockpit-podman
+      - nano
+      - wget
+      - firewalld
+      - python3-pip
+      - certbot
+      - nginx
+
+    jfrog_server_fqdn: "{{ jfrog_hostname }}.{{ base_domain }}"
+    jfrog_container_image: releases-docker.jfrog.io/jfrog/artifactory-jcr:latest
+    haproxy_container_image: docker.io/library/haproxy:latest
+
+    epel_link: "https://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ ansible_facts['distribution_major_version'] }}.noarch.rpm"
+
+  tasks:
+    - name: Install EPEL
+      when: ansible_facts['distribution'] == "RedHat" or ansible_facts['distribution'] == "CentOS"
+      ansible.builtin.dnf:
+        name: "{{ epel_link }}"
+        disable_gpg_check: yes
+      tags:
+        - epel_install
+
+    - name: Update system packages
+      when: update_system | bool
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+      register: update_task_result
+
+    - name: Install JFrog server packages
+      ansible.builtin.dnf:
+        name: "{{ jfrog_server_pkgs }}"
+        state: present
+      delay: 10
+      register: result
+      retries: 3
+      until: result is succeeded
+
+    - name: Reboot immediately if there were new packages installed
+      ansible.builtin.shell: "sleep 5 && reboot"
+      async: 1
+      poll: 0
+      when: update_task_result is changed
+      tags:
+        - restart
+
+    - name: Wait for the reboot to complete if there were new packages installed
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 5
+        timeout: 300
+      when: update_task_result is changed
+      delay: 10
+      register: wait_result
+      retries: 3
+      until: wait_result is succeeded
+      tags:
+        - restart
+
+    - name: Collect facts
+      ansible.builtin.setup:
+
+    - name: Connect to new instance and set hostname
+      ansible.builtin.hostname:
+        name: "{{ jfrog_hostname }}.{{ base_domain }}"
+      tags:
+        - set_hostname
+
+    - name: Create JFrog group
+      ansible.builtin.group:
+        name: artifactory
+        state: present
+        gid: 1030
+
+    - name: Create JFrog user
+      ansible.builtin.user:
+        name: artifactory
+        state: present
+        groups: artifactory
+        uid: 1030
+        shell: /bin/bash
+        home: /home/artifactory
+        create_home: yes
+
+    - name: Create HAProxy group
+      ansible.builtin.group:
+        name: haproxy
+        state: present
+        gid: 1235
+
+    - name: Create HAProxy user
+      ansible.builtin.user:
+        name: haproxy
+        state: present
+        groups: haproxy
+        uid: 1235
+        shell: /bin/bash
+        home: /opt/haproxy
+        create_home: yes
+
+    - name: Create persistent data directory if needed for JFrog
+      ansible.builtin.file:
+        path: "{{ loop_dir }}"
+        state: directory
+        mode: 0777
+        owner: "1030"
+        group: "1030"
+      loop:
+        - /opt/jfrog/artifactory/var
+        - /opt/jfrog/artifactory/var/etc
+        - /opt/jfrog/artifactory/var/etc/security
+        - /var/opt/jfrog/artifactory
+        - /var/opt/jfrog/artifactory/etc/security
+      loop_control:
+        loop_var: loop_dir
+
+    - name: Template the system.yaml file
+      ansible.builtin.template:
+        src: templates/jfrog-system.yaml.j2
+        dest: /opt/jfrog/artifactory/var/etc/system.yaml
+        owner: 1030
+        group: 1030
+        mode: 0775
+
+    - name: Create the master key
+      ansible.builtin.shell:
+        cmd: |
+          openssl rand -hex 16 > /var/opt/jfrog/artifactory/etc/security/master.key
+        creates: /var/opt/jfrog/artifactory/etc/security/master.key
+
+    - name: Set the permissions for the master key
+      ansible.builtin.file:
+        path: /var/opt/jfrog/artifactory/etc/security/master.key
+        owner: 1030
+        group: 1030
+        mode: 0644
+
+    - name: Create persistent data directory if needed for HAProxy
+      ansible.builtin.file:
+        path: "{{ loop_dir }}"
+        state: directory
+        mode: 0775
+        owner: "1235"
+        group: "1235"
+      loop:
+        - /opt/haproxy
+        - /opt/certs
+      loop_control:
+        loop_var: loop_dir
+
+    - name: Create persistent data directory if needed for Certbot
+      ansible.builtin.file:
+        path: "{{ loop_dir }}"
+        state: directory
+        mode: 0775
+        owner: "1235"
+        group: "1235"
+      loop:
+        - /opt/letsencrypt
+        - /opt/webroot
+      loop_control:
+        loop_var: loop_dir
+
+    - name: Disable SELinux because I am a lazy bastard
+      ansible.posix.selinux:
+        state: disabled
+
+    - name: Set Sysctl for ports and stuff
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_unprivileged_port_start
+        value: '80'
+        state: present
+
+    - name: Set /etc/hosts file
+      ansible.builtin.copy:
+        dest: "/etc/hosts"
+        content: |
+          127.0.0.1 localhost localdomain
+          {{ hostvars[inventory_hostname].ansible_enp1s0.ipv4.address }} {{ jfrog_hostname }}.{{ base_domain }} {{ base_domain }}
+
+    - name: Start firewalld
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Connect to JFrog server and set firewall
+      ansible.posix.firewalld:
+        permanent: yes
+        immediate: yes
+        state: enabled
+        service: "{{ item }}"
+      with_items:
+        - ssh
+        - https
+        - http
+        - cockpit
+
+    - name: Connect to JFrog server and set firewall for custom ports
+      ansible.posix.firewalld:
+        permanent: yes
+        immediate: yes
+        state: enabled
+        port: "{{ port_item }}/tcp"
+      loop_control:
+        loop_var: port_item
+      loop:
+        - 5000
+        - 5001
+        - 5002
+        - 5003
+        - 5004
+        - 5005
+        - 8040
+        - 8046
+        - 8081
+        - 8082
+        - 8091
+
+    - name: Pull JFrog Image
+      containers.podman.podman_image:
+        name: "{{ jfrog_container_image }}"
+
+    - name: Pull HAProxy Image
+      containers.podman.podman_image:
+        name: "{{ haproxy_container_image }}"
+
+    - name: Template JFrog Service file
+      ansible.builtin.template:
+        src: templates/jfrog-container.service.j2
+        dest: /etc/systemd/system/jfrog-container.service
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Template HAProxy Service file
+      ansible.builtin.template:
+        src: templates/haproxy-container.service.j2
+        dest: /etc/systemd/system/haproxy-container.service
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Template HAProxy configuration file
+      ansible.builtin.template:
+        src: templates/haproxy.cfg.j2
+        dest: /opt/haproxy/haproxy.cfg
+        owner: 1235
+        group: 1235
+        mode: 0775
+
+    - name: Template HAProxy CRT file
+      ansible.builtin.template:
+        src: templates/crt-list.cfg.j2
+        dest: /opt/haproxy/crt-list.cfg
+        owner: 1235
+        group: 1235
+        mode: 0775
+
+    - name: Seed default certificate
+      when: not enable_certbot | bool
+      ansible.builtin.shell:
+        cmd: |
+          openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -keyout /opt/certs/default.key -out /opt/certs/default.crt -subj "/C=US/ST=North Carolina/L=Raleigh/O=InfoSec/CN={{ jfrog_server_fqdn }}"
+          cat /opt/certs/default.key /opt/certs/default.crt > /opt/certs/default.pem
+          rm /opt/certs/default.key /opt/certs/default.crt
+        creates: /opt/certs/default.pem
+
+    - name: Request cerbot certificate
+      when: enable_certbot | bool
+      ansible.builtin.shell:
+        cmd: |
+          certbot certonly --standalone -n -d {{ jfrog_server_fqdn }} --email {{ certbot_email }} --agree-tos
+          cat /etc/letsencrypt/live/{{ jfrog_server_fqdn }}/privkey.pem /etc/letsencrypt/live/{{ jfrog_server_fqdn }}/fullchain.pem > /opt/certs/{{ jfrog_server_fqdn }}.pem
+          chown 1235:1235 /opt/certs/{{ jfrog_server_fqdn }}.pem
+        creates: "/etc/letsencrypt/live/{{ jfrog_server_fqdn }}/privkey.pem"
+
+    - name: Reload systemd units
+      ansible.builtin.service:
+        daemon_reload: yes
+
+    - name: Start Cockpit Service
+      ansible.builtin.service:
+        name: cockpit
+        state: started
+        enabled: yes
+
+    - name: Start JFrog Service
+      ansible.builtin.service:
+        name: jfrog-container
+        state: started
+        enabled: yes
+
+    - name: Start HAProxy Service
+      ansible.builtin.service:
+        name: haproxy-container
+        state: started
+        enabled: yes
+
+    - name: JFrog provisioning complete!
+      ansible.builtin.debug:
+        msg:
+        - =======================================================
+        - JFrog provisioning complete!"
+        - =======================================================
+        - "JFrog Endpoint:     https://{{ jfrog_server_fqdn }}"
+        - "Default Username:   admin"
+        - "Default Password:   password"
+        - "======================================================"
+        - "You may need to wait a few minutes for the service to fully start."
+        - "Manually accept the EULA with the following curl command if needed:"
+        - "curl -XPOST -vu admin:password -k https://{{ jfrog_server_fqdn }}/artifactory/ui/jcr/eula/accept"
+

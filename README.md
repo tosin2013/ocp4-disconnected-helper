@@ -8,7 +8,7 @@ Currently supports the following patterns:
 2. [**Pushing an oc mirror TAR file to a registry.**](#2-pushing-an-oc-mirror-tar-file-to-a-registry) - Once the TAR has been transported from the DMZ to a disconnected/secure enclave, you would extract it and push to a local registry to be used for installation.
 3. Setting up a local Docker Registry.
 4. [**Setting up a local Harbor Registry.**](#4-setting-up-a-local-harbor-registry) - Deploy a quick Harbor registry for testing.
-5. Setting up a local JFrog Registry.
+5. [**Setting up a local JFrog Registry.**](#5-setting-up-a-local-jfrog-container-registry) - Deploy a JFrog registry for testing.
 
 ## 1. Download OpenShift Releases and Operator Catalog to a local directory and package as a TAR file
 
@@ -50,12 +50,12 @@ The automation handles package installation, firewall configuration, downloading
 If the system the Harbor registry is on is accessible from the public Internet then you could use something like Let's Encrypt.
 
 1. Modify the `inventory` file under the `harbor` group to reflect the target host that will run Harbor.  If you're running this on the same target host then just modify to a localhost type inventory host with `ansible_connection=local ansible_host=localhost`.
-2. Alter the variable to match your Harbor hostname, admin password, and SSL Certificate information.
+2. Alter the variables for the Playbook to match your Harbor hostname, admin password, and SSL Certificate information.
 3. If your Harbor system is behind an outbound proxy then just enable the `proxy` variables in the Playbook.
 
 ```bash=
 # Run the automation playbook
-ansible-playbook -i inventory
+ansible-playbook -i inventory setup-harbor-registry.yml
 ```
 
 ### Post Configuration for Harbor Mirroring
@@ -64,6 +64,29 @@ To import the OpenShift Releases and Operator Catalog into a Harbor Registry, yo
 
 1. Create a new **Project** like `oc-mirror` - make sure it's publicly accessible.
 2. Create a **Robot Account** so you don't need to log in as a user - or log in as a user, doesn't matter.  Make sure the Robot Account has access to the Project.
+
+## 5. Setting up a local JFrog Container Registry
+
+An alternative to deploying Harbor is JFrog for a local container image registry.  JFrog can easily act as a mirror or as a pass-through proxy cache.  Tested with RHEL 9.3 and Fedora 39 - if running on RHEL you must have the system already subscribed, and your target user with password-less sudo capabilities.
+
+The provided automation takes a fresh system and deploys all the needed packages to run JFrog and HAProxy as Podman containers, and creates a self-signed SSL certificate for HAProxy.  Alternatively you may also provide your own SSL Certificate.
+
+1. Modify the `inventory` file under the `jfrog` group to reflect the target host that will run the JFrog stack.  If you're running this on the same target host then just modify to a localhost type inventory host with `ansible_connection=local ansible_host=localhost`.
+2. Alter the variables to match your JFrog hostname and base domain name.  This can be provided in your inventory file or via an external variable file that is passed along to the Playbook execution.
+
+```bash=
+# Run the automation playbook
+ansible-playbook -i inventory setup-jfrog-registry.yml
+```
+
+### Post Configuration for JFrog Mirroring
+
+To import the OpenShift Releases and Operator Catalog into a JFrog Registry, you'll need to do a few things:
+
+1. Create a new **Local Repository** like `oc-mirror` - make sure it's publicly accessible.
+2. Create an **Account** so you don't need to log in as the admin user.  Make sure the Account has access to the Repository.
+
+Alternatively you can also have JFrog act as a pass-through proxy cache by creating **Remote Repositories**.  With the default configuration the remote repositories will be exposed via sub-paths, eg if you have a remote repository created with the `quay-remote` key then you could be able to access it at `jfrog.example.com/quay-remote/`
 
 ## Helpful Commands
 

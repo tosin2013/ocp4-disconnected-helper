@@ -1,0 +1,4 @@
+{% if enable_certbot|bool %}
+/usr/local/etc/certs/{{ jfrog_hostname }}.{{ base_domain }}.pem [alpn h2 ssl-min-ver TLSv1.2] {{ jfrog_hostname }}.{{ base_domain }}
+{% endif %}
+/usr/local/etc/certs/default.pem
