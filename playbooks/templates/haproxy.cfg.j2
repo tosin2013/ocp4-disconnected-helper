@@ -35,11 +35,14 @@ frontend https
   
   use_backend jfrogui if host_jfrogui
 
-  # forward other requests to jfrog too in case this is being used for virtual proxy prefix domains
-  default_backend jfrogui
+  default_backend registry
 
 backend letsencrypt
   server letsencrypt 127.0.0.1:8080 check init-addr none
+
+backend registry
+  server backend1 127.0.0.1:8081
+  http-request add-header X-Forwarded-Proto https if { ssl_fc }
 
 backend jfrogui
   server jfrogui1 127.0.0.1:8082
