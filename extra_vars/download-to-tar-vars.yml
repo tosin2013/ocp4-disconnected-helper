@@ -15,14 +15,14 @@ target_mirror_path: /opt/images # no trailing slash
 
 openshift_releases:
 # A single x.y.z release
-  - name: stable-4.13
-    minVersion: 4.13.33
-    maxVersion: 4.13.33
+  - name: stable-4.15
+    minVersion: 4.15.18
+    maxVersion: 4.15.18
 
   # An upgrade release - check paths: https://access.redhat.com/labs/ocpupgradegraph/update_path/
-  - name: stable-4.14
-    minVersion: 4.14.13
-    maxVersion: 4.14.13
+  - name: stable-4.16
+    minVersion: 4.16.14
+    maxVersion: 4.16.14
     shortestPath: true
 
 certified_catalog_operator_packages:
