@@ -1,0 +1,296 @@
+---
+# Prerequisites:
+## Modify the inventory file to reflect your environment
+## The user must have password-less sudo access
+## The user must have password-less ssh access to the remote hosts
+## You need a user to push to your remote registry
+
+- name: Push a local set of oc-mirror packed TAR files to a remote registry
+  hosts: localhost
+  gather_facts: true
+  become: true
+
+  tasks:
+
+    - name: Make sure basic packages are installed
+      ansible.builtin.package:
+        name: "{{ base_packages }}"
+        state: present
+      environment:
+        http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+        https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+        no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+    - name: Setup Cockpit because I am a lazy admin
+      when: setup_cockpit
+      block:
+        - name: Install Cockpit because it's nice to have
+          ansible.builtin.package:
+            name: ['cockpit', 'cockpit-storaged']
+            state: present
+          environment:
+            http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+            https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+            no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+
+        - name: Enable Cockpit
+          ansible.builtin.service:
+            name: cockpit.socket
+            state: started
+            enabled: true
+
+    - name: Check for the oc binary
+      block:
+        - name: Check if oc is installed
+          ansible.builtin.command: which oc
+          changed_when: false
+          failed_when: oc_installed.rc not in [0, 1]
+          register: oc_installed
+
+        - name: Install the oc binary
+          when: oc_installed.rc not in [0]
+          block:
+            - name: Download the OC binary if proxy is not present 
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
+                dest: /tmp/openshift-client-linux.tar.gz
+                mode: 0755
+              when: proxy is not defined
+
+            - name: Download the OC binary if it is not present
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
+                dest: /tmp/openshift-client-linux.tar.gz
+                mode: 0755
+              environment:
+                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+              when: proxy is defined
+
+            - name: Extract the oc binary
+              ansible.builtin.unarchive:
+                src: /tmp/openshift-client-linux.tar.gz
+                dest: /usr/local/bin
+                remote_src: true
+                creates: /usr/local/bin/oc
+                mode: 0755
+
+            - name: Enable binary completion for oc
+              ansible.builtin.shell: /usr/local/bin/oc completion bash > /etc/bash_completion.d/oc_completion.sh
+              args:
+                creates: /etc/bash_completion.d/oc_completion.sh
+
+    - name: Check for the oc mirror plugin
+      block:
+        - name: Check if oc is installed
+          ansible.builtin.command: which oc-mirror
+          changed_when: false
+          failed_when: oc_mirror_installed.rc not in [0, 1]
+          register: oc_mirror_installed
+
+        - name: Install the oc-mirror plugin
+          when: oc_mirror_installed.rc not in [0]
+          block:
+            - name: Download the oc-mirror plugin when proxy is not defined 
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
+                dest: /tmp/oc-mirror.tar.gz
+                mode: 0755
+              when: proxy is not defined
+
+            - name: Download the oc-mirror plugin
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
+                dest: /tmp/oc-mirror.tar.gz
+                mode: 0755
+              environment:
+                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
+                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
+                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+              when: proxy is defined
+
+            - name: Extract the oc-mirror binary
+              ansible.builtin.unarchive:
+                src: /tmp/oc-mirror.tar.gz
+                dest: /usr/local/bin
+                remote_src: true
+                creates: /usr/local/bin/oc-mirror
+                mode: 0755
+
+            - name: Enable binary completion for oc-mirror
+              ansible.builtin.shell: /usr/local/bin/oc-mirror completion bash > /etc/bash_completion.d/oc-mirror_completion.sh
+              args:
+                creates: /etc/bash_completion.d/oc-mirror_completion.sh
+
+    - name: Make sure that the root user has /usr/local/bin in its PATH
+      block:
+        - name: Check if /usr/local/bin is already defined
+          ansible.builtin.lineinfile:
+            state: absent
+            path: "/root/.bashrc"
+            regexp: "/usr/local/bin"
+          check_mode: true
+          changed_when: false # This just makes things look prettier in the logs
+          register: path_check
+
+        - name: Define /usr/local/bin if undefined
+          ansible.builtin.lineinfile:
+            state: present
+            path: "/root/.bashrc"
+            line: "export PATH=$PATH:/usr/local/bin"
+          when: path_check.found == 0
+
+    - name: Get the path to oc, discount double check
+      ansible.builtin.command:
+        cmd: which oc
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      register: oc_path
+      changed_when: false
+
+    - name: Create the Container Registry Config directory
+      ansible.builtin.file:
+        path: "{{ target_registry_auth_path }}"
+        state: directory
+        owner: "{{ target_registry_auth_path_user }}"
+        group: "{{ target_registry_auth_path_group }}"
+        mode: 0700
+
+    - name: Create the authentication file for the registry
+      ansible.builtin.template:
+        src: templates/registry_auth.json.j2
+        dest: "{{ target_registry_auth_path }}/config.json"
+        mode: 0600
+
+    - name: Generate Basic Auth Token for each registry
+      ansible.builtin.set_fact:
+        auth_token: "{{ (item.username + ':' + item.password) | b64encode }}"
+      when: item.registry_type == "harbor"
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: item
+
+    - name: Create Harbor Projects
+      ansible.builtin.uri:
+        url: "https://{{ item.server }}/api/v2.0/projects"
+        method: POST
+        headers:
+          Authorization: "Basic {{ auth_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 201
+        validate_certs: no
+        body: |
+          {
+            "project_name": "{{ item.path }}",
+            "metadata": {
+              "public": "true"
+            },
+            "storage_limit": -1,
+            "registry_id": null
+          }
+      when: item.registry_type == "harbor"
+      ignore_errors: true
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: item
+
+    - name: Push the mirror to the remote registry
+      ansible.builtin.shell:
+        cmd: |-
+          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }} docker://{{ registry.server }}/{{ registry.path | default(omit) }}
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      register: oc_mirror_output
+
+    - name: Display oc_mirror_output variable
+      ansible.builtin.debug:
+        msg: "{{ oc_mirror_output }}"
+
+    - name: Display the command output
+      ansible.builtin.debug:
+        msg: "{{ oc_mirror_output.stdout_lines }}"
+
+    - name: Get the last line of the output to source the configuration YAML files
+      ansible.builtin.set_fact:
+        oc_mirror_results_path: "{{ oc_mirror_output.stdout_lines | last | split() | last }}"
+
+    - name: Display the path to the mirror results
+      ansible.builtin.debug:
+        msg: "Results path: {{ oc_mirror_results_path }}"
+
+    - name: Read in the updateService.yaml file
+      ansible.builtin.slurp:
+        src: "{{ oc_mirror_results_path }}/updateService.yaml"
+      register: update_service_yaml
+
+    - name: Read in the imageContentSourcePolicy.yaml file
+      ansible.builtin.slurp:
+        src: "{{ oc_mirror_results_path }}/imageContentSourcePolicy.yaml"
+      register: image_content_source_policy_yaml
+
+    - name: Find all the catalogSource prefixed files
+      ansible.builtin.find:
+        paths: "{{ oc_mirror_results_path }}"
+        patterns: 'catalogSource*'
+      register: catalog_source_files
+
+    - name: Read in all the catalog_source_files
+      ansible.builtin.slurp:
+        src: "{{ yaml_item.path }}"
+      loop: "{{ catalog_source_files.files }}"
+      loop_control:
+        loop_var: yaml_item
+      register: catalog_source_yaml
+
+    - name: Display the updateService YAML as JSON
+      ansible.builtin.debug:
+        msg: "{{ yaml_item | from_yaml }}"
+      loop: "{{ [update_service_yaml.content | b64decode] }}"
+      loop_control:
+        loop_var: yaml_item
+
+    - name: Display the imageContentSourcePolicy YAML objects as JSON
+      ansible.builtin.debug:
+        msg: "{{ yaml_item | from_yaml }}"
+      loop: "{{ image_content_source_policy_yaml.content | b64decode | split('---') }}"
+      loop_control:
+        loop_var: yaml_item
+
+    - name: Display the catalogSource YAML as JSON
+      ansible.builtin.debug:
+        msg: "{{ yaml_item.content | b64decode | from_yaml }}"
+      loop: "{{ catalog_source_yaml.results }}"
+      loop_control:
+        loop_var: yaml_item
+        label: "{{ yaml_item.source }}"
+
+    - name: Display certified_catalog_operator_packages
+      ansible.builtin.debug:
+        var: certified_catalog_operator_packages
+
+    - name: Display redhat_catalog_operator_packages
+      ansible.builtin.debug:
+        var: redhat_catalog_operator_packages
+
+    - name: Check if Red Hat catalog operator packages exist
+      ansible.builtin.assert:
+        that: item.name in redhat_catalog_operator_packages
+        fail_msg: "Package {{ item.name }} does not exist in Red Hat catalog. Please remove it manually."
+      loop: "{{ operators }}"
+      loop_control:
+        loop_var: item
+      when: item.catalog.startswith('registry.redhat.io/redhat/redhat-operator-index')
+
+    - name: Check if Certified catalog operator packages exist
+      ansible.builtin.assert:
+        that: item.name in certified_catalog_operator_packages
+        fail_msg: "Package {{ item.name }} does not exist in Certified catalog. Please remove it manually."
+      loop: "{{ operators }}"
+      loop_control:
+        loop_var: item
+      when: item.catalog.startswith('registry.redhat.io/redhat/certified-operator-index')
