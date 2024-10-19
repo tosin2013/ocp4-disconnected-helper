@@ -1,64 +1,46 @@
 ---
-- name: Clear the operator maps
+- name: Clear operator maps and packages
   ansible.builtin.set_fact:
     operator_map: {}
     operator_packages: []
+    catalog_operators: {}
 
-- name: Pull the latest catalog listing for {{ operator.catalog }}
-  ansible.builtin.command: "{{ oc_path.stdout }} mirror list operators --catalog={{ operator.catalog }}"
-  register: cmd_r_out
-  environment:
-    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
-  changed_when: false
-
-- name: Set fact for a operator map
-  ansible.builtin.set_fact:
-    operator_map: "{{ operator_map | default({}) | combine({item.split()[0]: item.split() | last}) }}"
-  loop: "{{ cmd_r_out.stdout_lines }}"
-  when: item.split()[0] != 'NAME'
-
-- name: Loop through the operator packages that don't have a channel defined
-  ansible.builtin.set_fact:
-    operator_packages: "{{ operator_packages | default([]) + [{'name': package_item.name, 'channels': [{'name': operator_map[package_item.name]}]}] }}"
-  loop: "{{ operator.packages }}"
+- name: Loop through each operator catalog
+  loop: "{{ operators }}"
   loop_control:
-    loop_var: package_item
-  when: package_item.channels is not defined
+    loop_var: operator
+  tasks:
+    - name: Pull the latest catalog listing for {{ operator.catalog }}
+      ansible.builtin.command: "{{ oc_path.stdout }} mirror list operators --catalog={{ operator.catalog }}"
+      register: catalog_listing
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      changed_when: false
 
-- name: Loop through the operator packages that do have a channel defined and append them to the list
-  ansible.builtin.set_fact:
-    operator_packages: "{{ operator_packages | default([]) + [package_item] }}"
-  loop: "{{ operator.packages }}"
-  loop_control:
-    loop_var: package_item
-  when: package_item.channels is defined
+    - name: Set fact for operators in the catalog
+      ansible.builtin.set_fact:
+        operator_map: "{{ operator_map | default({}) | combine({item.split()[0]: item.split() | last}) }}"
+      loop: "{{ catalog_listing.stdout_lines }}"
+      when: item.split()[0] != 'NAME'
 
-- name: Assemble the determined operator catalog data
-  ansible.builtin.set_fact:
-    determined_operator_catalog: "{{ determined_operator_catalog | default([]) + [{'catalog': operator.catalog, 'packages': operator_packages}] }}"
+    - name: Set fact for catalog operators list
+      ansible.builtin.set_fact:
+        catalog_operators: "{{ catalog_operators | default([]) + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
+      loop: "{{ catalog_listing.stdout_lines }}"
 
-- name: Display certified_catalog_operator_packages
+    - name: Verify package existence in the catalog
+      ansible.builtin.assert:
+        that: item.name in catalog_operators
+        fail_msg: "Package {{ item.name }} does not exist in {{ operator.catalog }}. Please check the package name and try again."
+      loop: "{{ operator.packages }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: registry_check is not changed
+
+    - name: Display catalog data for debugging
+      ansible.builtin.debug:
+        var: catalog_operators
+
+- name: Display final operator catalog data
   ansible.builtin.debug:
-    var: certified_catalog_operator_packages
-
-- name: Display redhat_catalog_operator_packages
-  ansible.builtin.debug:
-    var: redhat_catalog_operator_packages
-
-- name: Check if Red Hat catalog operator packages exist
-  ansible.builtin.assert:
-    that: item.name in redhat_catalog_operator_packages
-    fail_msg: "Package {{ item.name }} does not exist in Red Hat catalog. Please remove it manually."
-  loop: "{{ operator_packages }}"
-  loop_control:
-    loop_var: item
-  when: operator.catalog.startswith('registry.redhat.io/redhat/redhat-operator-index')
-
-- name: Check if Certified catalog operator packages exist
-  ansible.builtin.assert:
-    that: item.name in certified_catalog_operator_packages
-    fail_msg: "Package {{ item.name }} does not exist in Certified catalog. Please remove it manually."
-  loop: "{{ operator_packages }}"
-  loop_control:
-    loop_var: item
-  when: operator.catalog.startswith('registry.redhat.io/redhat/certified-operator-index')
+    var: determined_operator_catalog
