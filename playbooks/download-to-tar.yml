@@ -195,6 +195,12 @@
       ansible.builtin.fail:
         msg: "There is not enough space available in {{ target_mirror_path }} to store the OpenShift release"
 
+    - name: Clear operator maps and packages
+      ansible.builtin.set_fact:
+        operator_map: {}
+        operator_packages: []
+        catalog_operators: {}
+
     - name: Determine the target OpenShift Operator Catalog package channels
       ansible.builtin.include_tasks:
         file: tasks/get-operator-catalog-channels.yml
