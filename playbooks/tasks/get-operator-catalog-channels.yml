@@ -40,6 +40,36 @@
     - name: Display catalog data for debugging
       ansible.builtin.debug:
         var: catalog_operators
+    - name: Pull the latest catalog listing for {{ operator.catalog }}
+      ansible.builtin.command: "{{ oc_path.stdout }} mirror list operators --catalog={{ operator.catalog }}"
+      register: catalog_listing
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      changed_when: false
+
+    - name: Set fact for operators in the catalog
+      ansible.builtin.set_fact:
+        operator_map: "{{ operator_map | default({}) | combine({item.split()[0]: item.split() | last}) }}"
+      loop: "{{ catalog_listing.stdout_lines }}"
+      when: item.split()[0] != 'NAME'
+
+    - name: Set fact for catalog operators list
+      ansible.builtin.set_fact:
+        catalog_operators: "{{ catalog_operators | default([]) + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
+      loop: "{{ catalog_listing.stdout_lines }}"
+
+    - name: Verify package existence in the catalog
+      ansible.builtin.assert:
+        that: item.name in catalog_operators
+        fail_msg: "Package {{ item.name }} does not exist in {{ operator.catalog }}. Please check the package name and try again."
+      loop: "{{ operator.packages }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: registry_check is not changed
+
+    - name: Display catalog data for debugging
+      ansible.builtin.debug:
+        var: catalog_operators
 
 - name: Display final operator catalog data
   ansible.builtin.debug:
