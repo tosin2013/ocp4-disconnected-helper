@@ -62,4 +62,4 @@
 
 - name: Display final operator catalog data
   ansible.builtin.debug:
-  var: determined_operator_catalog
+    var: determined_operator_catalog
