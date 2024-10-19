@@ -163,7 +163,6 @@
         dest: "{{ target_registry_auth_path }}/config.json"
         mode: 0600
 
-
     - name: Generate Basic Auth Token for each registry
       ansible.builtin.set_fact:
         auth_token: "{{ (item.username + ':' + item.password) | b64encode }}"
@@ -269,3 +268,21 @@
       loop_control:
         loop_var: yaml_item
         label: "{{ yaml_item.source }}"
+
+    - name: Check if Red Hat catalog operator packages exist
+      ansible.builtin.assert:
+        that: item.name in redhat_catalog_operator_packages
+        fail_msg: "Package {{ item.name }} does not exist in Red Hat catalog. Please remove it manually."
+      loop: "{{ operators }}"
+      loop_control:
+        loop_var: item
+      when: item.catalog.startswith('registry.redhat.io/redhat/redhat-operator-index')
+
+    - name: Check if Certified catalog operator packages exist
+      ansible.builtin.assert:
+        that: item.name in certified_catalog_operator_packages
+        fail_msg: "Package {{ item.name }} does not exist in Certified catalog. Please remove it manually."
+      loop: "{{ operators }}"
+      loop_control:
+        loop_var: item
+      when: item.catalog.startswith('registry.redhat.io/redhat/certified-operator-index')
