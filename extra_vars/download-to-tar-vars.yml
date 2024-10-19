@@ -27,7 +27,7 @@ openshift_releases:
 
 certified_catalog_operator_packages:
   # PortWorx Certified Operator
-  - name: portworx-certified-bundle
+  - name: portworx-certified
 
 redhat_catalog_operator_packages:
   # OpenShift Update Service
