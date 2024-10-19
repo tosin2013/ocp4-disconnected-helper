@@ -36,3 +36,21 @@
 - name: Assemble the determined operator catalog data
   ansible.builtin.set_fact:
     determined_operator_catalog: "{{ determined_operator_catalog | default([]) + [{'catalog': operator.catalog, 'packages': operator_packages}] }}"
+
+- name: Check if Red Hat catalog operator packages exist
+  ansible.builtin.assert:
+    that: item.name in redhat_catalog_operator_packages
+    fail_msg: "Package {{ item.name }} does not exist in Red Hat catalog. Please remove it manually."
+  loop: "{{ operator_packages }}"
+  loop_control:
+    loop_var: item
+  when: operator.catalog.startswith('registry.redhat.io/redhat/redhat-operator-index')
+
+- name: Check if Certified catalog operator packages exist
+  ansible.builtin.assert:
+    that: item.name in certified_catalog_operator_packages
+    fail_msg: "Package {{ item.name }} does not exist in Certified catalog. Please remove it manually."
+  loop: "{{ operator_packages }}"
+  loop_control:
+    loop_var: item
+  when: operator.catalog.startswith('registry.redhat.io/redhat/certified-operator-index')
