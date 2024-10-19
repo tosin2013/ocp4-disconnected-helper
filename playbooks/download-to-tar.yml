@@ -123,6 +123,16 @@
         group: root
         mode: 0700
 
+    - name: Test network speed
+      ansible.builtin.command: "ping -c 4 google.com"
+      register: network_test
+      changed_when: false
+
+    - name: Fail if network latency is too high
+      ansible.builtin.fail:
+        msg: "Network latency is too high. Please ensure better connectivity."
+      when: network_test.stdout is search('time=([1-9][0-9]{2,})')  # Fail if latency is above a certain threshold (e.g., 100ms)
+
     - name: if target_mirror_path does not exist create the directory 
       ansible.builtin.file:
         path: "{{ target_mirror_path }}"
@@ -203,11 +213,25 @@
     - name: Assemble the oc mirror command
       ansible.builtin.set_fact:
         oc_mirror_cmd: |-
-          {{ oc_path.stdout }} mirror --v2 --config {{ target_mirror_path }}/imageSetConfig.yml file://
+          {{ oc_path.stdout }} mirror --config {{ target_mirror_path }}/imageSetConfig.yml file://
 
     - name: Display the oc mirror command
       ansible.builtin.debug:
         msg: "{{ oc_mirror_cmd }}"
+
+    - name: Run the mirroring process in dry-run mode
+      ansible.builtin.command:
+        cmd: "{{ oc_mirror_cmd }} --dry-run"
+        chdir: "{{ target_mirror_path }}"
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      register: dry_run_output
+      become: true  # If the command requires elevated privileges
+      changed_when: false
+
+    - name: Print dry-run output for review
+      ansible.builtin.debug:
+        msg: "Dry-run output: {{ dry_run_output.stdout }}"
 
     - name: Run the mirroring process asynchronously for 2 hours
       ansible.builtin.command:
@@ -218,7 +242,7 @@
       async: 7200  # Set the timeout for 2 hours (7200 seconds)
       poll: 10     # Set how often to check the status (in seconds)
       register: oc_mirror_async_output
-      become: yes  # If the command requires elevated privileges
+      become: true  # If the command requires elevated privileges
 
     - name: Print job ID for debugging
       ansible.builtin.debug:
