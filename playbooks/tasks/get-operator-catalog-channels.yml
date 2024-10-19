@@ -37,6 +37,14 @@
   ansible.builtin.set_fact:
     determined_operator_catalog: "{{ determined_operator_catalog | default([]) + [{'catalog': operator.catalog, 'packages': operator_packages}] }}"
 
+- name: Display certified_catalog_operator_packages
+  ansible.builtin.debug:
+    var: certified_catalog_operator_packages
+
+- name: Display redhat_catalog_operator_packages
+  ansible.builtin.debug:
+    var: redhat_catalog_operator_packages
+
 - name: Check if Red Hat catalog operator packages exist
   ansible.builtin.assert:
     that: item.name in redhat_catalog_operator_packages

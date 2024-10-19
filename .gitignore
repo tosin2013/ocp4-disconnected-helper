@@ -1,3 +1,7 @@
 rh-pull-secret
 .vscode/**
-.vscode/
+.vscode/aider-env/
+aider-env/bin/activate
+aider_setup.sh
+aider-env/
+.aider*
