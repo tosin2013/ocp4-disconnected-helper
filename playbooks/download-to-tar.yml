@@ -208,6 +208,13 @@
       loop_control:
         loop_var: operator
 
+    - name: Determine the target OpenShift Operator Catalog package channels
+      ansible.builtin.include_tasks:
+        file: tasks/get-operator-catalog-channels.yml
+      loop: "{{ operators }}"
+      loop_control:
+        loop_var: operator
+
     - name: Template the imageSetConfig file
       ansible.builtin.template:
         src: imageset-config.yml.j2
