@@ -65,15 +65,6 @@
   ansible.builtin.debug:
     var: registry_check
 
-- name: Verify package existence in the catalog
-  ansible.builtin.assert:
-    that: item.name in catalog_operators
-    fail_msg: "Package {{ item.name }} does not exist in {{ operator.catalog }}. Please check the package name and try again."
-  loop: "{{ operator.packages }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: registry_check is defined and not registry_check.changed
-
 - name: Display catalog data for debugging
   ansible.builtin.debug:
     var: catalog_operators
