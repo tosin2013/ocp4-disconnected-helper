@@ -22,7 +22,7 @@
 
 - name: Set fact for operators in the catalog
   ansible.builtin.set_fact:
-    catalog_operators_list: "{{ catalog_operators_list + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
+    catalog_operators: "{{ catalog_operators + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
   loop: "{{ catalog_listing.stdout_lines }}"
   when: item.split()[0] != 'NAME'
 
@@ -40,15 +40,6 @@
     label: "{{ item.name }}"
   when: registry_check is defined and not registry_check.changed
 
-- name: Display registry_check for debugging
-  ansible.builtin.debug:
-    var: registry_check
-  when: debug_mode
-
-- name: Display catalog data for debugging
-  ansible.builtin.debug:
-    var: catalog_operators
-  when: debug_mode
 
 - name: Set fact for operators in the catalog
   ansible.builtin.set_fact:
