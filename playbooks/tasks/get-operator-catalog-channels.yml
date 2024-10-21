@@ -6,6 +6,10 @@
     PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
   changed_when: false
 
+- name: Initialize catalog_operators as a list
+  ansible.builtin.set_fact:
+    catalog_operators: []
+
 - name: Set fact for operators in the catalog
   ansible.builtin.set_fact:
     operator_map: "{{ operator_map | default({}) | combine({item.split()[0]: item.split() | last}) }}"
@@ -14,7 +18,7 @@
 
 - name: Set fact for catalog operators list
   ansible.builtin.set_fact:
-    catalog_operators: "{{ catalog_operators | default([]) + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
+    catalog_operators: "{{ catalog_operators + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
   loop: "{{ catalog_listing.stdout_lines }}"
 
 - name: Verify package existence in the catalog
