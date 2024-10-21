@@ -38,7 +38,7 @@
             state: started
             enabled: true
 
-    - name: Check for the oc binary
+    - name: Check for the oc binary and install if necessary
       block:
         - name: Check if oc is installed
           ansible.builtin.command: which oc
@@ -49,14 +49,7 @@
         - name: Install the oc binary
           when: oc_installed.rc not in [0]
           block:
-            - name: Download the OC binary if proxy is not present 
-              ansible.builtin.get_url:
-                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
-                dest: /tmp/openshift-client-linux.tar.gz
-                mode: 0755
-              when: proxy is not defined
-
-            - name: Download the OC binary if it is not present
+            - name: Download the OC binary
               ansible.builtin.get_url:
                 url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
                 dest: /tmp/openshift-client-linux.tar.gz
@@ -65,7 +58,6 @@
                 http_proxy: "{{ proxy.http_proxy | default(omit) }}"
                 https_proxy: "{{ proxy.https_proxy | default(omit) }}"
                 no_proxy: "{{ proxy.no_proxy | default(omit) }}"
-              when: proxy is defined
 
             - name: Extract the oc binary
               ansible.builtin.unarchive:
@@ -80,9 +72,9 @@
               args:
                 creates: /etc/bash_completion.d/oc_completion.sh
 
-    - name: Check for the oc mirror plugin
+    - name: Check for the oc mirror plugin and install if necessary
       block:
-        - name: Check if oc is installed
+        - name: Check if oc-mirror is installed
           ansible.builtin.command: which oc-mirror
           changed_when: false
           failed_when: oc_mirror_installed.rc not in [0, 1]
@@ -91,13 +83,6 @@
         - name: Install the oc-mirror plugin
           when: oc_mirror_installed.rc not in [0]
           block:
-            - name: Download the oc-mirror plugin when proxy is not defined 
-              ansible.builtin.get_url:
-                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
-                dest: /tmp/oc-mirror.tar.gz
-                mode: 0755
-              when: proxy is not defined
-
             - name: Download the oc-mirror plugin
               ansible.builtin.get_url:
                 url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
@@ -107,7 +92,6 @@
                 http_proxy: "{{ proxy.http_proxy | default(omit) }}"
                 https_proxy: "{{ proxy.https_proxy | default(omit) }}"
                 no_proxy: "{{ proxy.no_proxy | default(omit) }}"
-              when: proxy is defined
 
             - name: Extract the oc-mirror binary
               ansible.builtin.unarchive:
