@@ -55,6 +55,10 @@
     catalog_operators: "{{ catalog_operators | default([]) + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
   loop: "{{ catalog_listing.stdout_lines }}"
 
+- name: Display registry_check for debugging
+  ansible.builtin.debug:
+    var: registry_check
+
 - name: Verify package existence in the catalog
   ansible.builtin.assert:
     that: item.name in catalog_operators
@@ -62,7 +66,7 @@
   loop: "{{ operator.packages }}"
   loop_control:
     label: "{{ item.name }}"
-  when: registry_check is not changed
+  when: registry_check is defined and not registry_check.changed
 
 - name: Display catalog data for debugging
   ansible.builtin.debug:
