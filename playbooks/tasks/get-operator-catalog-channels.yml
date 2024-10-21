@@ -6,15 +6,15 @@
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
       changed_when: false
-    - rescue:
-        - name: Handle error in catalog listing
-          ansible.builtin.debug:
-            msg: "Failed to pull catalog listing for {{ operator.catalog }}. Error: {{ catalog_listing.stderr }}"
-    - always:
-        - name: Display catalog listing for debugging
-          ansible.builtin.debug:
-            var: catalog_listing
-          when: debug_mode
+  rescue:
+    - name: Handle error in catalog listing
+      ansible.builtin.debug:
+        msg: "Failed to pull catalog listing for {{ operator.catalog }}. Error: {{ catalog_listing.stderr }}"
+  always:
+    - name: Display catalog listing for debugging
+      ansible.builtin.debug:
+        var: catalog_listing
+      when: debug_mode
 
 - name: Initialize catalog_operators as a list
   ansible.builtin.set_fact:
