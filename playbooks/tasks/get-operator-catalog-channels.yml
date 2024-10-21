@@ -24,6 +24,7 @@
 - name: Display registry_check for debugging
   ansible.builtin.debug:
     var: registry_check
+  when: debug_mode
 
 - name: Verify package existence in the catalog
   ansible.builtin.assert:
@@ -37,6 +38,7 @@
 - name: Display catalog data for debugging
   ansible.builtin.debug:
     var: catalog_operators
+  when: debug_mode
 - name: Pull the latest catalog listing for {{ operator.catalog }}
   ansible.builtin.command: "{{ oc_path.stdout }} mirror list operators --catalog={{ operator.catalog }}"
   register: catalog_listing
@@ -75,7 +77,9 @@
 - name: Display determined_operator_catalog for debugging
   ansible.builtin.debug:
     var: determined_operator_catalog
+  when: debug_mode
 
 - name: Display final operator catalog data
   ansible.builtin.debug:
     var: determined_operator_catalog
+  when: debug_mode

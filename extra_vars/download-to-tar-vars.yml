@@ -122,3 +122,6 @@ base_packages:
   - bind-utils
   - httpd-tools
   - procps-ng
+
+# Debug mode to control verbosity of logging
+debug_mode: false
