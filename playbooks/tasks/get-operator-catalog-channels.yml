@@ -20,11 +20,6 @@
   ansible.builtin.set_fact:
     catalog_operators: []
 
-- name: Set fact for operators in the catalog
-  ansible.builtin.set_fact:
-    catalog_operators: "{{ catalog_operators + [{'name': item.split()[0], 'channel': item.split() | last}] }}"
-  loop: "{{ catalog_listing.stdout_lines }}"
-  when: item.split()[0] != 'NAME'
 
 - name: Verify package existence in the catalog with channel and version
   ansible.builtin.assert:
@@ -41,11 +36,6 @@
   when: registry_check is defined and not registry_check.changed
 
 
-- name: Set fact for operators in the catalog
-  ansible.builtin.set_fact:
-    operator_map: "{{ operator_map | default({}) | combine({item.split()[0]: item.split() | last}) }}"
-  loop: "{{ catalog_listing.stdout_lines }}"
-  when: item.split()[0] != 'NAME'
 
 
 - name: Set fact for determined_operator_catalog
