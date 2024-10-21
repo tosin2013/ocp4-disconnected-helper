@@ -72,6 +72,10 @@
   ansible.builtin.debug:
     var: catalog_operators
 
+- name: Display determined_operator_catalog for debugging
+  ansible.builtin.debug:
+    var: determined_operator_catalog
+
 - name: Display final operator catalog data
   ansible.builtin.debug:
     var: determined_operator_catalog
