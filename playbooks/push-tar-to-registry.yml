@@ -89,9 +89,9 @@
                 dest: /tmp/oc-mirror.tar.gz
                 mode: 0755
               environment:
-                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
-                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
-                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+                http_proxy: "{{ proxy.http_proxy | default('') }}"
+                https_proxy: "{{ proxy.https_proxy | default('') }}"
+                no_proxy: "{{ proxy.no_proxy | default('') }}"
 
             - name: Extract the oc-mirror binary
               ansible.builtin.unarchive:
