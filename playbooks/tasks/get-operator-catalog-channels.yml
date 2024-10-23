@@ -50,7 +50,7 @@
 
 - name: Set fact for determined_operator_catalog
   ansible.builtin.set_fact:
-    determined_operator_catalog: "{{ catalog_operators }}"
+    determined_operator_catalog: "{{ catalog_operators | map('combine', {'catalog': operator.catalog}) }}"
 
 - name: Check the Structure of determined_operator_catalog
   block:
