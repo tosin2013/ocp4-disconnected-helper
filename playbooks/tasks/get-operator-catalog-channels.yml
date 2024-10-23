@@ -20,6 +20,15 @@
   ansible.builtin.set_fact:
     catalog_operators: []
 
+- name: Merge packages from redhat_catalog_operator_packages
+  ansible.builtin.set_fact:
+    catalog_operators: "{{ catalog_operators + redhat_catalog_operator_packages }}"
+  when: redhat_catalog_operator_packages is defined
+
+- name: Merge packages from certified_catalog_operator_packages
+  ansible.builtin.set_fact:
+    catalog_operators: "{{ catalog_operators + certified_catalog_operator_packages }}"
+  when: certified_catalog_operator_packages is defined
 
 - name: Verify package existence in the catalog with channel and version
   ansible.builtin.assert:
