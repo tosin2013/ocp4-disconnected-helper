@@ -35,11 +35,6 @@
     label: "{{ item.name }}"
   when: registry_check is defined and not registry_check.changed
 
-
-
-
 - name: Set fact for determined_operator_catalog
   ansible.builtin.set_fact:
     determined_operator_catalog: "{{ catalog_operators }}"
-
-
