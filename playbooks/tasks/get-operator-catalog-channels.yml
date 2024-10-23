@@ -74,3 +74,62 @@
       loop: "{{ determined_operator_catalog }}"
       loop_control:
         loop_var: item
+
+- name: Initialize catalog_operators as a list
+  ansible.builtin.set_fact:
+    catalog_operators: []
+
+- name: Merge packages from redhat_catalog_operator_packages
+  ansible.builtin.set_fact:
+    catalog_operators: "{{ catalog_operators + redhat_catalog_operator_packages }}"
+  when: redhat_catalog_operator_packages is defined
+
+- name: Merge packages from certified_catalog_operator_packages
+  ansible.builtin.set_fact:
+    catalog_operators: "{{ catalog_operators + certified_catalog_operator_packages }}"
+  when: certified_catalog_operator_packages is defined
+
+- name: Verify package existence in the catalog with channel and version
+  ansible.builtin.assert:
+    that: |
+      catalog_operators.get(item.name) is defined and
+      catalog_operators[item.name]['channel'] == item.channel
+    fail_msg: |
+      Package {{ item.name }} does not exist in {{ operator.catalog }}
+      or is not available in the specified channel {{ item.channel }}.
+      Please check the package name and channel, and try again.
+  loop: "{{ operator.packages | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: registry_check is defined and not registry_check.changed
+
+- name: Display catalog_operators
+  ansible.builtin.debug:
+    var: catalog_operators
+
+- name: Set fact for determined_operator_catalog
+  ansible.builtin.set_fact:
+    determined_operator_catalog: "{{ catalog_operators | map('combine', {'catalog': operator.catalog}) }}"
+
+- name: Check the Structure of determined_operator_catalog
+  block:
+    - name: Ensure determined_operator_catalog is a list
+      ansible.builtin.assert:
+        that: determined_operator_catalog is iterable
+        fail_msg: "determined_operator_catalog is not a list"
+
+    - name: Ensure each item in determined_operator_catalog is a dictionary
+      ansible.builtin.assert:
+        that: item is mapping
+        fail_msg: "Item {{ item }} in determined_operator_catalog is not a dictionary"
+      loop: "{{ determined_operator_catalog }}"
+      loop_control:
+        loop_var: item
+
+    - name: Ensure each dictionary in determined_operator_catalog contains a catalog attribute
+      ansible.builtin.assert:
+        that: item.catalog is defined
+        fail_msg: "Dictionary {{ item }} in determined_operator_catalog does not contain a catalog attribute"
+      loop: "{{ determined_operator_catalog }}"
+      loop_control:
+        loop_var: item
