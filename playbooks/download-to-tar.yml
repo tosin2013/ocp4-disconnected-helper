@@ -160,4 +160,14 @@
     - name: Clear the mirror path if requested
       when: clean_mirror_path
       block:
-        - name: Find any tar files that
+        - name: Find any tar files that need to be removed
+          ansible.builtin.find:
+            paths: "{{ target_mirror_path }}"
+            patterns: '*.tar'
+          register: tar_files
+
+        - name: Remove any found tar files
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ tar_files.files }}"
