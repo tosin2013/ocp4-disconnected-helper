@@ -215,6 +215,10 @@
       loop_control:
         loop_var: operator
 
+    - name: Display determined_operator_catalog
+      ansible.builtin.debug:
+        var: determined_operator_catalog
+
     - name: Template the imageSetConfig file
       ansible.builtin.template:
         src: imageset-config.yml.j2
