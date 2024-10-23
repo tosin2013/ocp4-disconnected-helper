@@ -51,3 +51,26 @@
 - name: Set fact for determined_operator_catalog
   ansible.builtin.set_fact:
     determined_operator_catalog: "{{ catalog_operators }}"
+
+- name: Check the Structure of determined_operator_catalog
+  block:
+    - name: Ensure determined_operator_catalog is a list
+      ansible.builtin.assert:
+        that: determined_operator_catalog is iterable
+        fail_msg: "determined_operator_catalog is not a list"
+
+    - name: Ensure each item in determined_operator_catalog is a dictionary
+      ansible.builtin.assert:
+        that: item is mapping
+        fail_msg: "Item {{ item }} in determined_operator_catalog is not a dictionary"
+      loop: "{{ determined_operator_catalog }}"
+      loop_control:
+        loop_var: item
+
+    - name: Ensure each dictionary in determined_operator_catalog contains a catalog attribute
+      ansible.builtin.assert:
+        that: item.catalog is defined
+        fail_msg: "Dictionary {{ item }} in determined_operator_catalog does not contain a catalog attribute"
+      loop: "{{ determined_operator_catalog }}"
+      loop_control:
+        loop_var: item
