@@ -10,12 +10,12 @@ rh_pull_secret: "{{ lookup('file', '/root/rh-pull-secret') }}"
 skip_cleanup: false
 # --continue-on-error: Proceeds with the mirroring process despite encountering 
 #certain errors, such as invalid image digests or tags. Using this flag will return an exit code of 1, but the oc mirror operations will continue.
-continue_on_error: false
+continue_on_error: true
 
 # The --max-per-registry parameter controls the number of concurrent connections to a registry during the mirroring process. 
 max_per_registry: 6 # 6 is the default
 # --skip-missing: Continues the mirroring process even if some images are missing.
-skip_missing: false
+skip_missing: true
 mirror_retry: 5 # 3 is the default
 
 # target_rh_pull_secret_path is the user path where the authentication file will be stored on the remote host
