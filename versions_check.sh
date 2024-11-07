@@ -139,12 +139,23 @@ else
     echo "$upgrade_path"
 fi
 
-# Prompt user to update versions or skip the update check
-# This script checks if the first argument is not "--skip-update". If it is not, it prompts the user to update the versions
-# in the file extra_vars/download-to-tar-vars.yml. If the user chooses to update, it uses the yq tool to update the
-# minVersion and maxVersion fields for OpenShift releases 4.15 and 4.16 in the specified YAML file. If the user chooses
-# not to update, it skips the version update. If the first argument is "--skip-update", it skips the version update check.
-if [[ "$1" != "--skip-update" ]]; then
+
+# This script updates the OpenShift version information in the extra_vars/download-to-tar-vars.yml file.
+# Usage:
+#   ./versions_check.sh [--auto-update | --skip-update]
+#
+# Options:
+#   --auto-update   Automatically update the OpenShift versions without prompting.
+#   --skip-update   Skip the version update check.
+#
+# If no option is provided, the script will prompt the user to decide whether to update the versions.
+#
+# The script uses the 'yq' command to modify the YAML file. If the USE_SUDO variable is set, it will use sudo to run the yq command.
+if [[ "$1" == "--auto-update" ]]; then
+    ${USE_SUDO} yq eval -i ".openshift_releases[0].minVersion = \"$latest_4_15\" | .openshift_releases[0].maxVersion = \"$latest_4_15\" |
+.openshift_releases[1].minVersion = \"$latest_4_16\" | .openshift_releases[1].maxVersion = \"$latest_4_16\"" extra_vars/download-to-tar-vars.yml
+    echo "Versions automatically updated in extra_vars/download-to-tar-vars.yml"
+elif [[ "$1" != "--skip-update" ]]; then
     read -p "Would you like to update the versions in extra_vars/download-to-tar-vars.yml? (y/n): " update_choice
     if [[ "$update_choice" == "y" ]]; then
         ${USE_SUDO} yq eval -i ".openshift_releases[0].minVersion = \"$latest_4_15\" | .openshift_releases[0].maxVersion = \"$latest_4_15\" |
