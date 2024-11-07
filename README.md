@@ -161,6 +161,11 @@ cat harbor.example.com.crt ca.crt > harbor.example.com.bundle.crt
 
 If using this process for a Harbor Registry then provide the `harbor.example.com.bundle.crt` file as the `ssl_certificate` in the Ansible Playbook and the `harbor.example.com.key` as the `ssl_certificate_key` variable.
 
+###  Auto Check for New Versions
+[How to Run the `versions_check.sh` Script](versions_check.md)
+```bash
+./versions_check.sh
+```
 
 ### Troubleshooting
 See [Troubleshooting Steps](troubleshooting.md)

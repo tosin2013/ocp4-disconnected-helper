@@ -1,12 +1,9 @@
-### test_version.md Update
-
 #### How to Run the `versions_check.sh` Script
 
 1. **Ensure Dependencies are Installed**:
    - Install `curl`, `jq`, and `yq` if not already installed.
    ```bash
-   sudo apt-get install curl jq
-   sudo snap install yq
+   sudo yum install curl jq
    ```
 
 2. **Run the Script**:
