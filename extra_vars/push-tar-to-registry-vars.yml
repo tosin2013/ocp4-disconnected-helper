@@ -1,0 +1,44 @@
+---
+# =====================================
+# Remote Registry Configuration
+registries:
+  - username: admin
+    password: notHarbor12345
+    server: disconn-harbor.d70.kemo.labs
+    path: oc-mirror
+    registry_type: harbor
+
+# target_registry_auth_path is the user path where the authentication file will be stored on the remote host
+target_registry_auth_path: /root/.docker
+target_registry_auth_path_user: root
+target_registry_auth_path_group: root
+
+# =====================================
+# mirror tar file name
+mirror_tar_file: mirror_seq1_000000.tar
+
+# =====================================
+# Mirror Source Configuration
+source_mirror_path: /opt/images # no trailing slash
+
+
+# Optional proxy configuration that is applied to the docker daemon and other places like the harbor configuration
+# proxy:
+#   http_proxy: http://192.168.42.31:3128
+#   https_proxy: http://192.168.42.31:3128
+#   no_proxy: localhost,.kemo.labs,.kemo.network,10.128.0.0/14,127.0.0.1,172.30.0.0/16,192.168.0.0/16,192.168.70.0/23
+
+# Optionally set up Cockpit on the remote host - handy when needing to set up a storage volume
+setup_cockpit: true
+
+# base_packages defines the packages that will be installed on the remote host - mostly just handy
+base_packages:
+  - nano
+  - curl
+  - wget
+  - tar
+  - unzip
+  - bash-completion
+  - bind-utils
+  - httpd-tools
+  - procps-ng

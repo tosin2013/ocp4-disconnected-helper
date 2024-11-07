@@ -6,48 +6,9 @@
 ## You need a user to push to your remote registry
 
 - name: Push a local set of oc-mirror packed TAR files to a remote registry
-  hosts: secureMirrorSource
+  hosts: localhost
   gather_facts: true
   become: true
-
-  vars:
-    # =====================================
-    # Remote Registry Configuration
-    registries:
-      - username: admin
-        password: notHarbor12345
-        server: disconn-harbor.d70.kemo.labs
-        path: oc-mirror
-
-    # target_registry_auth_path is the user path where the authentication file will be stored on the remote host
-    target_registry_auth_path: /root/.docker
-    target_registry_auth_path_user: root
-    target_registry_auth_path_group: root
-
-    # =====================================
-    # Mirror Source Configuration
-    source_mirror_path: /opt/images # no trailing slash
-
-    # Optional proxy configuration that is applied to the docker daemon and other places like the harbor configuration
-    # proxy:
-    #   http_proxy: http://192.168.42.31:3128
-    #   https_proxy: http://192.168.42.31:3128
-    #   no_proxy: localhost,.kemo.labs,.kemo.network,10.128.0.0/14,127.0.0.1,172.30.0.0/16,192.168.0.0/16,192.168.70.0/23
-
-    # Optionally set up Cockpit on the remote host - handy when needing to set up a storage volume
-    setup_cockpit: true
-
-    # base_packages defines the packages that will be installed on the remote host - mostly just handy
-    base_packages:
-      - nano
-      - curl
-      - wget
-      - tar
-      - unzip
-      - bash-completion
-      - bind-utils
-      - httpd-tools
-      - procps-ng
 
   tasks:
 
@@ -89,6 +50,13 @@
         - name: Install the oc binary
           when: oc_installed.rc not in [0]
           block:
+            - name: Download the OC binary if proxy is not present 
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
+                dest: /tmp/openshift-client-linux.tar.gz
+                mode: 0755
+              when: proxy is not defined
+
             - name: Download the OC binary if it is not present
               ansible.builtin.get_url:
                 url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
@@ -98,6 +66,7 @@
                 http_proxy: "{{ proxy.http_proxy | default(omit) }}"
                 https_proxy: "{{ proxy.https_proxy | default(omit) }}"
                 no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+              when: proxy is defined
 
             - name: Extract the oc binary
               ansible.builtin.unarchive:
@@ -123,6 +92,13 @@
         - name: Install the oc-mirror plugin
           when: oc_mirror_installed.rc not in [0]
           block:
+            - name: Download the oc-mirror plugin when proxy is not defined 
+              ansible.builtin.get_url:
+                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
+                dest: /tmp/oc-mirror.tar.gz
+                mode: 0755
+              when: proxy is not defined
+
             - name: Download the oc-mirror plugin
               ansible.builtin.get_url:
                 url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
@@ -132,6 +108,7 @@
                 http_proxy: "{{ proxy.http_proxy | default(omit) }}"
                 https_proxy: "{{ proxy.https_proxy | default(omit) }}"
                 no_proxy: "{{ proxy.no_proxy | default(omit) }}"
+              when: proxy is defined
 
             - name: Extract the oc-mirror binary
               ansible.builtin.unarchive:
@@ -186,16 +163,54 @@
         dest: "{{ target_registry_auth_path }}/config.json"
         mode: 0600
 
+
+    - name: Generate Basic Auth Token for each registry
+      ansible.builtin.set_fact:
+        auth_token: "{{ (item.username + ':' + item.password) | b64encode }}"
+      when: item.registry_type == "harbor"
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: item
+
+    - name: Create Harbor Projects
+      ansible.builtin.uri:
+        url: "https://{{ item.server }}/api/v2.0/projects"
+        method: POST
+        headers:
+          Authorization: "Basic {{ auth_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 201
+        validate_certs: no
+        body: |
+          {
+            "project_name": "{{ item.path }}",
+            "metadata": {
+              "public": "true"
+            },
+            "storage_limit": -1,
+            "registry_id": null
+          }
+      when: item.registry_type == "harbor"
+      ignore_errors: true
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: item
+
     - name: Push the mirror to the remote registry
       ansible.builtin.shell:
         cmd: |-
-          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }} docker://{{ registry.server }}/{{ registry.path | default(omit) }}
+          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/{{ mirror_tar_file }} docker://{{ registry.server }}/{{ registry.path | default(omit) }}
       loop: "{{ registries }}"
       loop_control:
         loop_var: registry
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
       register: oc_mirror_output
+
+    - name: Display oc_mirror_output variable
+      ansible.builtin.debug:
+        msg: "{{ oc_mirror_output }}"
 
     - name: Display the command output
       ansible.builtin.debug:
