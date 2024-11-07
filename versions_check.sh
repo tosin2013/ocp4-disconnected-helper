@@ -140,6 +140,10 @@ else
 fi
 
 # Prompt user to update versions or skip the update check
+# This script checks if the first argument is not "--skip-update". If it is not, it prompts the user to update the versions
+# in the file extra_vars/download-to-tar-vars.yml. If the user chooses to update, it uses the yq tool to update the
+# minVersion and maxVersion fields for OpenShift releases 4.15 and 4.16 in the specified YAML file. If the user chooses
+# not to update, it skips the version update. If the first argument is "--skip-update", it skips the version update check.
 if [[ "$1" != "--skip-update" ]]; then
     read -p "Would you like to update the versions in extra_vars/download-to-tar-vars.yml? (y/n): " update_choice
     if [[ "$update_choice" == "y" ]]; then

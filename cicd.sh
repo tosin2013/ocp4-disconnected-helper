@@ -39,6 +39,9 @@ if [ "$OPTIND" -eq 1 ]; then
   show_help
 fi
 
+# This script checks if the current user has root privileges.
+# If the user is not root (EUID is not 0), it sets the USE_SUDO variable to "sudo".
+# This allows subsequent commands to be run with sudo if necessary.
 if [ "$EUID" -ne 0 ]
 then
   export USE_SUDO="sudo"
