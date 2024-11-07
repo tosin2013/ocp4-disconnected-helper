@@ -4,7 +4,7 @@
 
 If you encounter failures during the download to TAR process, especially for images like `multicluster-global-hub-operator-product`, it may indicate a missing entry in the operator map file. You might see an error message similar to this:
 
-```plaintext
+```bash
 fatal: [localhost]: FAILED! => {"msg": "The task includes an option with an undefined variable. The error was: 'dict object' has no attribute 'multicluster-global-hub-operator-product'. 'dict object' has no attribute 'multicluster-global-hub-operator-product'\n\nThe error appears to be in '/home/lab-user/workspace/ocp4-disconnected-helper/playbooks/tasks/get-operator-catalog-channels.yml': line 25, column 3, but may\nbe elsewhere in the file depending on the exact syntax problem.\n\nThe offending line appears to be:\n\n\n- name: Loop through the operator packages that don't have a channel defined\n  ^ here\n"}
 ```
 

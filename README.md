@@ -15,7 +15,7 @@ Currently supports the following patterns:
 1. Modify the `inventory` file under the `dmzMirror` group to reflect the host that is running the mirroring process.  If you're running this via the CLI on the same node in the DMZ then just modify to run as a localhost entry.
 2. Download a Red Hat Registry Pull Secret and save it to a file: https://cloud.redhat.com/openshift/install/pull-secret
    1. Optionally, if running via Tower or storing the Pull Secret as a Vaulted variable, you can define the Pull Secret in a variable called `rh_pull_secret` with the content wrapped in a single quote.
-3. Configure any additional variables for what to mirror - by default it mirrors OpenShift 4.12.15 with a set of additional releases to upgrade to 4.13.10 with the shortest path.  A set of Operators are also set as defaults that should work for many bare metal deployments.
+3. Configure any additional variables for what to mirror - by default it mirrors OpenShift 4.15.23 with a set of additional releases to upgrade to 4.16.3 with the shortest path.  A set of Operators are also set as defaults that should work for many bare metal deployments.
 
 > You can specify Operators to mirror simply by their package name from the target Operator Catalog - unless specified, the automation will determine the default channel to mirror.
 
@@ -94,16 +94,16 @@ Alternatively you can also have JFrog act as a pass-through proxy cache by creat
 
 ```bash=
 # List all the available Operator Catalogs for a specific OpenShift release
-oc mirror list operators --version=4.13
+oc mirror list operators --version=4.16
 
 # List the Operators in the Operator Indexes
-oc mirror list operators --catalog=registry.redhat.io/redhat/redhat-operator-index:v4.13
-oc mirror list operators --catalog=registry.redhat.io/redhat/certified-operator-index:v4.13
-oc mirror list operators --catalog=registry.redhat.io/redhat/community-operator-index:v4.13
-oc mirror list operators --catalog=registry.redhat.io/redhat/redhat-marketplace-index:v4.13
+oc mirror list operators --catalog=registry.redhat.io/redhat/redhat-operator-index:v4.16
+oc mirror list operators --catalog=registry.redhat.io/redhat/certified-operator-index:v4.16
+oc mirror list operators --catalog=registry.redhat.io/redhat/community-operator-index:v4.16
+oc mirror list operators --catalog=registry.redhat.io/redhat/redhat-marketplace-index:v4.16
 
 # List all channels in an operator package
-oc-mirror list operators --catalog=registry.redhat.io/redhat/redhat-operator-index:v4.13 --package=cincinnati-operator
+oc-mirror list operators --catalog=registry.redhat.io/redhat/redhat-operator-index:v4.16 --package=cincinnati-operator
 ```
 
 ### SSL Certificate Generation
@@ -160,6 +160,7 @@ cat harbor.example.com.crt ca.crt > harbor.example.com.bundle.crt
 ```
 
 If using this process for a Harbor Registry then provide the `harbor.example.com.bundle.crt` file as the `ssl_certificate` in the Ansible Playbook and the `harbor.example.com.key` as the `ssl_certificate_key` variable.
+
 
 ### Troubleshooting
 See [Troubleshooting Steps](troubleshooting.md)
