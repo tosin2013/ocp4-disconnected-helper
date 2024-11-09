@@ -1,7 +1,7 @@
 #!/bin/bash
 # sudo -E ./cicd.sh  -d false -g mjffm -h PASSWORD -p false -r true
 # sudo -E ./cicd.sh  -d true -g mjffm -h PASSWORD -p false -r false
-
+#  sudo -E ./cicd.sh  -d false -g mjffm -h PASSWORD -p true -r false
 CODE_DIR="/home/lab-user/workspace/ocp4-disconnected-helper/"
 
 # Function to display help menu
@@ -217,8 +217,8 @@ then
     echo "Pushing images to registry"
     ${USE_SUDO} yq eval '.registries[0].server = "harbor.'${DOMAIN}'"' -i extra_vars/push-tar-to-registry-vars.yml || exit $?
     ${USE_SUDO} yq eval '.registries[0].password = "'${HARBOR_PASSWORD}'"'  -i extra_vars/push-tar-to-registry-vars.yml || exit $?
-    echo ${USE_SUDO} /usr/bin/ansible-playbook -i /tmp/inventory  playbooks/push-tar-to-registry.yml  -e "@extra_vars${$CODE_DIR}/push-tar-to-registry-vars.yml" -vv
-    ${USE_SUDO} /usr/bin/ansible-playbook -i /tmp/inventory  playbooks/push-tar-to-registry.yml  -e "@extra_vars${$CODE_DIR}/push-tar-to-registry-vars.yml" -vv || exit $?
+    echo ${USE_SUDO} /usr/bin/ansible-playbook playbooks/push-tar-to-registry.yml  -e "@extra_vars/push-tar-to-registry-vars.yml" -vv
+    ${USE_SUDO} /usr/bin/ansible-playbook playbooks/push-tar-to-registry.yml  -e "@extra_vars/push-tar-to-registry-vars.yml" -vv || exit $?
 fi
 
 # This section of the script handles the deletion of downloaded files if DELETE_DOWNLOADED_FILE is set to true.

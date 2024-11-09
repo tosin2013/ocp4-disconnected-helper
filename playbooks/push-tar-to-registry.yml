@@ -214,20 +214,91 @@
 
     - name: Display the command output
       ansible.builtin.debug:
-        msg: "{{ oc_mirror_output.stdout_lines }}"
+        msg: "{{ oc_mirror_output.stdout_lines if oc_mirror_output.stdout_lines is defined else 'No output available' }}"
 
-    - name: Get the last line of the output to source the configuration YAML files
+    - name: Run oc mirror with --manifests-only if no output available
+      ansible.builtin.shell:
+        cmd: |-
+          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/{{ mirror_tar_file }} docker://{{ registry.server }}/{{ registry.path | default(omit) }} --manifests-only
+      when: oc_mirror_output.stdout_lines is not defined
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      register: oc_mirror_manifests_output
+      args:
+        chdir: "{{ source_mirror_path }}"
+
+    - name: Debug oc_mirror_output
+      ansible.builtin.debug:
+        msg: "{{ oc_mirror_output }}"
+
+    - name: Set fact for oc_mirror_manifests_output
       ansible.builtin.set_fact:
-        oc_mirror_results_path: "{{ oc_mirror_output.stdout_lines | last | split() | last }}"
+        oc_mirror_manifests_output: "{{ oc_mirror_manifests_output if oc_mirror_manifests_output.stdout is defined else oc_mirror_output }}"
+
+    - name: Set default mirror results path
+      ansible.builtin.set_fact:
+        oc_mirror_results_path: "{{ source_mirror_path }}/oc-mirror-workspace/results-{{ lookup('pipe', 'date +%s') }}"
+      when: oc_mirror_manifests_output.results[0].stdout is not regex('Writing ICSP manifests to')
+
+    - name: Extract mirror results path from output if available
+      ansible.builtin.set_fact:
+        oc_mirror_results_path: "{{ oc_mirror_manifests_output.results[0].stdout | regex_search('Writing ICSP manifests to (.+)', '\\1') | first }}"
+      when: oc_mirror_manifests_output.results[0].stdout is regex('Writing ICSP manifests to')
+
+    - name: Create mirror results directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ oc_mirror_results_path }}"
+        state: directory
+        mode: '0755'
 
     - name: Display the path to the mirror results
       ansible.builtin.debug:
         msg: "Results path: {{ oc_mirror_results_path }}"
 
+    - name: Check if the expected files are created
+      ansible.builtin.find:
+        paths: "{{ oc_mirror_results_path }}"
+        patterns: 'updateService.yaml'
+      register: update_service_file_check
+
+    - name: Display file check results
+      ansible.builtin.debug:
+        msg: "File check results: {{ update_service_file_check }}"
+
+    - name: Check if updateService.yaml exists
+      ansible.builtin.stat:
+        path: "{{ oc_mirror_results_path }}/updateService.yaml"
+      register: update_service_file
+
     - name: Read in the updateService.yaml file
       ansible.builtin.slurp:
         src: "{{ oc_mirror_results_path }}/updateService.yaml"
       register: update_service_yaml
+      when: update_service_file.stat.exists
+
+    - name: Set empty fact if file doesn't exist
+      ansible.builtin.set_fact:
+        update_service_yaml: {'content': ''}
+      when: not update_service_file.stat.exists
+
+    - name: Check if imageContentSourcePolicy.yaml exists
+      ansible.builtin.stat:
+        path: "{{ oc_mirror_results_path }}/imageContentSourcePolicy.yaml"
+      register: image_content_source_policy_file
+
+    - name: Read in the imageContentSourcePolicy.yaml file
+      ansible.builtin.slurp:
+        src: "{{ oc_mirror_results_path }}/imageContentSourcePolicy.yaml"
+      register: image_content_source_policy_yaml
+      when: image_content_source_policy_file.stat.exists
+
+    - name: Set empty fact if imageContentSourcePolicy file doesn't exist
+      ansible.builtin.set_fact:
+        image_content_source_policy_yaml: {'content': ''}
+      when: not image_content_source_policy_file.stat.exists
 
     - name: Read in the imageContentSourcePolicy.yaml file
       ansible.builtin.slurp:
@@ -269,3 +340,7 @@
       loop_control:
         loop_var: yaml_item
         label: "{{ yaml_item.source }}"
+
+    - name: Show user location of the mirror results
+      ansible.builtin.debug:
+        msg: "Mirror results are located at {{ oc_mirror_results_path }}"

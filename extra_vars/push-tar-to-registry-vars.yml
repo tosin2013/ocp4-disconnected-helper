@@ -21,6 +21,8 @@ mirror_tar_file: mirror_seq1_000000.tar
 # Mirror Source Configuration
 source_mirror_path: /opt/images # no trailing slash
 
+source_path_report_location:  /opt/images/oc-mirror-workspace/
+
 
 # Optional proxy configuration that is applied to the docker daemon and other places like the harbor configuration
 # proxy:
