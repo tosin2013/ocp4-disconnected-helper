@@ -169,3 +169,6 @@ If using this process for a Harbor Registry then provide the `harbor.example.com
 
 ### Troubleshooting
 See [Troubleshooting Steps](troubleshooting.md)
+
+### Links
+* [RHOAI disconnected install helper](https://github.com/red-hat-data-services/rhoai-disconnected-install-helper/tree/main)
