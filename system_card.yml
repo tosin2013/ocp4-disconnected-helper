@@ -1,0 +1,208 @@
+---
+# System Card Version: 1.1
+# Generated: 2024-01-29
+
+architecture:
+  name: OpenShift Disconnected Deployment
+  description: |
+    This system is designed to deploy an OpenShift cluster in a disconnected/air-gapped environment using local container registries (Harbor or JFrog Artifactory) to host the OpenShift release images and operator catalogs. The deployment process involves mirroring OpenShift releases from Red Hat registries, packaging them into a tar file, transferring the tar file to the air-gapped environment, and pushing the contents to the local registry. KVM virtual machines are provisioned to host the Harbor and JFrog Artifactory registries.
+
+workflow:
+  preparation:
+    description: "Environment setup and validation phase"
+    components:
+      - name: bootstrap_env.sh
+        description: "Installs and configures all system prerequisites"
+        dependencies:
+          - sudo access
+          - internet connectivity
+      - name: validate_env.sh
+        description: "Verifies system meets all requirements"
+        validates:
+          - Linux operating system
+          - Kernel version >= 5.14
+          - Ansible >= 2.9
+          - Libvirt >= 6.0
+          - KVM enabled
+  
+  registry_setup:
+    description: "Container registry deployment phase (choose one)"
+    components:
+      - name: setup-quay-registry.yml
+        description: "Deploys Red Hat Quay mirror registry"
+        features:
+          - Native OpenShift content support
+          - Vulnerability scanning
+          - Image signing
+          - PostgreSQL database backend
+          - Built-in TLS/authentication
+          - RBAC and security policies
+      - name: setup-harbor-registry.yml
+        description: "Deploys Harbor registry"
+        features:
+          - SSL certificate management
+          - Docker configuration
+          - Firewall rules setup
+          - System service management
+      - name: setup-jfrog-registry.yml
+        description: "Deploys JFrog Artifactory"
+        features:
+          - HAProxy TLS termination
+          - User/group management
+          - Persistent storage setup
+          - Security configuration
+  
+  content_mirroring:
+    description: "Content mirroring and transfer phase"
+    components:
+      - name: download-to-tar.yml
+        description: "Mirrors OpenShift content on connected system"
+        features:
+          - oc/oc-mirror tool setup
+          - Space validation
+          - Content download
+          - TAR creation
+      - name: push-tar-to-registry.yml
+        description: "Pushes content to disconnected registry"
+        features:
+          - Registry authentication
+          - Manifest generation
+          - Project creation
+          - Content verification
+
+components:
+  - name: OpenShift Cluster
+    description: The OpenShift cluster consisting of control plane and worker nodes.
+  - name: Container Registry
+    description: A local container registry (Harbor or JFrog Artifactory) for hosting the OpenShift release images and operator catalogs.
+  - name: KVM Virtual Machines
+    description: KVM virtual machines provisioned to host container registries (Quay, Harbor, or JFrog Artifactory).
+    specifications:
+      quay_vms:
+        memory: 8192MB
+        vcpus: 4
+        storage: 100GB
+        network: NAT
+      harbor_vms:
+        memory: 4096MB
+        vcpus: 2
+        storage: 50GB
+        network: NAT
+      jfrog_vms:
+        memory: 8192MB
+        vcpus: 4
+        storage: 100GB
+        network: NAT
+    infrastructure:
+      network: 
+        name: kvm_net
+        type: NAT
+      storage:
+        name: kvm_pool
+        type: dir
+        path: /var/lib/libvirt/images
+  - name: Red Hat Registries
+    description: External Red Hat registries used for mirroring the OpenShift releases.
+  - name: Ansible Automation
+    description: Ansible playbooks and roles for automating the deployment process, including mirroring, packaging, transferring, and pushing the OpenShift releases to the local registry, as well as provisioning the KVM virtual machines and setting up the container registries.
+
+configuration_variables:
+  directory: extra_vars/
+  files:
+    - name: download-to-tar-vars.yml
+      description: Variables for configuring the download-to-tar.yml playbook.
+      variables:
+        - name: target_mirror_path
+          description: "The local directory where OpenShift releases will be mirrored to."
+        - name: rh_pull_secret
+          description: "Your Red Hat pull secret for accessing registry.redhat.io."
+        - name: openshift_releases
+          description: "List of OpenShift releases to mirror."
+        - name: operators
+          description: "List of Operator catalogs and packages to mirror."
+    - name: push-tar-to-registry-vars.yml
+      description: Variables for configuring the push-tar-to-registry.yml playbook.
+      variables:
+        - name: source_mirror_path
+          description: "The local directory containing mirrored OpenShift releases (output of download-to-tar.yml)."
+        - name: mirror_tar_file
+          description: "The specific tar file to push to the registry."
+        - name: registries
+          description: "List of target registries to push the mirrored content to."
+    - name: setup-harbor-registry-vars.yml
+      description: Variables for configuring the setup-harbor-registry.yml playbook.
+      variables:
+        - name: harbor_version
+          description: "The version of Harbor to install."
+        - name: harbor_hostname
+          description: "The hostname for the Harbor registry."
+        - name: harbor_admin_password
+          description: "The password for the Harbor admin user."
+        - name: ssl_certificate
+          description: "The SSL certificate for the Harbor registry."
+        - name: ssl_certificate_key
+          description: "The SSL certificate key for the Harbor registry."
+    - name: setup-jfrog-registry-vars.yml
+      description: Variables for configuring the setup-jfrog-registry.yml playbook.
+      variables:
+        - name: jfrog_hostname
+          description: "The hostname for the JFrog registry."
+        - name: base_domain
+          description: "The base domain for the JFrog registry."
+        - name: enable_certbot
+          description: "Whether to enable automatic SSL certificate generation using Certbot (true/false)."
+        - name: certbot_email
+          description: "The email address to use for Certbot certificate registration."
+    - name: setup-quay-registry-vars.yml
+      description: Variables for configuring the setup-quay-registry.yml playbook.
+      variables:
+        - name: quay_hostname
+          description: "The hostname for the Quay registry."
+        - name: base_domain
+          description: "The base domain for the Quay registry."
+        - name: quay_version
+          description: "The version of Quay to install."
+        - name: postgres_password
+          description: "The password for the PostgreSQL database used by Quay."
+        - name: enable_ssl
+          description: "Whether to enable SSL for Quay (true/false)."
+        - name: enable_certbot
+          description: "Whether to enable automatic SSL certificate generation using Certbot (true/false)."
+        - name: certbot_email
+          description: "The email address to use for Certbot certificate registration."
+
+deployment_requirements:
+  - name: Air-gapped Environment
+    description: The system must be deployed in an air-gapped/disconnected environment without direct access to external registries or the internet.
+  - name: Secure Transfer
+    description: The OpenShift release tar file must be securely transferred from the mirroring environment to the air-gapped environment.
+  - name: Automated Provisioning
+    description: KVM virtual machines must be automatically provisioned with the desired specifications (CPU, RAM, storage, networking) to host the container registries.
+  - name: Automated Registry Setup
+    description: The Harbor or JFrog Artifactory registries must be automatically set up and configured on the provisioned KVM virtual machines.
+  - name: CI/CD Integration
+    description: The deployment process should be integrated with a CI/CD pipeline for automated testing and deployment.
+
+environment_constraints:
+  operating_system: Red Hat Enterprise Linux
+  os_release: "9.5"
+  os_codename: Plow
+  kernel_version: ">=5.14" # RHEL 9.5 uses kernel 5.14
+  ansible_version: ">=2.9" # Ansible core 2.14 is compatible with RHEL 9.5
+  libvirt_version: ">=7.0" # RHEL 9.5 ships with libvirt 8.0
+  kvm_enabled: true
+
+ansible_requirements:
+  collections:
+    - name: community.general
+      version: ">=6.4.0" # Ensure compatibility with RHEL 9.5
+      description: Required for extended Ansible functionality including firewall management, service configuration, and system modifications
+    - name: community.libvirt
+      version: ">=1.9.1"
+      description: Required for managing KVM infrastructure
+    - name: ansible.posix
+      version: ">=1.5.4"
+      description: Required for managing POSIX-related tasks
+    - name: containers.podman
+      version: ">=1.10.1"
+      description: Required for managing Podman containers

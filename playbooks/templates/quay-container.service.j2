@@ -1,0 +1,23 @@
+[Unit]
+Description=Red Hat Quay Mirror Registry Container
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+TimeoutStartSec=300
+ExecStartPre=-/usr/bin/podman rm -f quay-mirror
+ExecStart=/usr/bin/podman run --name quay-mirror \
+    -p 443:8443 \
+    -p 80:8080 \
+    -v {{ quay_root_dir }}/config:/conf/stack:Z \
+    -v {{ quay_storage_dir }}:/datastorage:Z \
+    -v {{ ssl_cert_dir }}:/conf/ssl:Z \
+    registry.redhat.io/quay/quay-rhel8:v{{ quay_version }}
+ExecStop=/usr/bin/podman stop -t 60 quay-mirror
+ExecStopPost=/usr/bin/podman rm -f quay-mirror
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

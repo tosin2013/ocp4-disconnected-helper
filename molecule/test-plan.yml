@@ -1,0 +1,135 @@
+---
+# Molecule Test Plan for OpenShift Disconnected Helper
+verify_sequence:
+  environment_setup:
+    - name: "Verify system prerequisites"
+      tests:
+        - Kernel version check
+        - Required packages installation
+        - User permissions
+        - System disk space
+        - Network configuration
+
+    - name: "Verify Ansible environment"
+      tests:
+        - Ansible version validation
+        - Required collections presence
+        - Playbook syntax validation
+        - Role dependencies
+
+    - name: "Verify KVM infrastructure"
+      tests:
+        - Libvirt service status
+        - KVM module loading
+        - Network bridge configuration
+        - Storage pool setup
+        - Nested virtualization support
+
+  registry_deployment:
+    - name: "Verify Quay registry deployment"
+      tests:
+        - VM provisioning
+        - PostgreSQL setup
+        - SSL certificate generation
+        - Registry container deployment
+        - Health check endpoints
+        - Authentication configuration
+        - Storage configuration
+        - Network connectivity
+
+    - name: "Verify Harbor registry deployment"
+      tests:
+        - VM provisioning
+        - Docker setup
+        - SSL certificate configuration
+        - Registry initialization
+        - Project creation
+        - Robot account setup
+        - Storage configuration
+        - Network connectivity
+
+    - name: "Verify JFrog registry deployment"
+      tests:
+        - VM provisioning
+        - Podman setup
+        - HAProxy configuration
+        - SSL termination
+        - Repository creation
+        - Authentication setup
+        - Storage configuration
+        - Network connectivity
+
+  content_mirroring:
+    - name: "Verify mirroring preparation"
+      tests:
+        - oc-mirror tool installation
+        - Space validation
+        - Pull secret validation
+        - Registry authentication
+        - Network connectivity to Red Hat registries
+
+    - name: "Verify content download"
+      tests:
+        - OpenShift release download
+        - Operator catalog mirroring
+        - TAR file creation
+        - Checksum validation
+        - Space utilization
+
+    - name: "Verify content push"
+      tests:
+        - Registry authentication
+        - Content push validation
+        - Manifest generation
+        - Image verification
+        - Tag validation
+
+test_scenarios:
+  - name: "Full deployment with Quay"
+    description: "Complete end-to-end test with Quay registry"
+    sequence:
+      - environment_setup
+      - Quay VM provisioning
+      - Quay registry deployment
+      - Content mirroring
+      - Disconnected validation
+
+  - name: "Full deployment with Harbor"
+    description: "Complete end-to-end test with Harbor registry"
+    sequence:
+      - environment_setup
+      - Harbor VM provisioning
+      - Harbor registry deployment
+      - Content mirroring
+      - Disconnected validation
+
+  - name: "Full deployment with JFrog"
+    description: "Complete end-to-end test with JFrog registry"
+    sequence:
+      - environment_setup
+      - JFrog VM provisioning
+      - JFrog registry deployment
+      - Content mirroring
+      - Disconnected validation
+
+  - name: "Isolated component tests"
+    description: "Individual component testing"
+    tests:
+      - Bootstrap script validation
+      - Environment validation script
+      - KVM provisioner role
+      - Registry playbooks
+      - Content mirror playbooks
+
+idempotency_tests:
+  - Bootstrap script re-execution
+  - Registry playbook re-runs
+  - VM provisioning playbook re-runs
+  - Content mirror re-runs
+
+cleanup_verification:
+  - VM cleanup
+  - Network cleanup
+  - Storage cleanup
+  - Registry data cleanup
+  - Content cleanup

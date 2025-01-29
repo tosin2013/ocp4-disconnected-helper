@@ -1,0 +1,36 @@
+---
+# Variables for setting up Quay Mirror Registry
+
+# Registry Configuration
+quay_hostname: quay
+base_domain: example.com
+quay_version: "3.9.6"
+quay_root_dir: /opt/quay
+quay_storage_dir: /var/lib/quay
+
+# Database Configuration
+postgres_version: "13"
+# Note: The actual password will be generated during deployment
+# postgres_password: will be auto-generated
+
+# SSL/TLS Configuration
+enable_ssl: true
+ssl_cert_dir: /opt/quay/ssl
+# Choose one:
+# 1. Self-signed certificate (default)
+enable_certbot: false
+# 2. Let's Encrypt certificate
+# enable_certbot: true
+# certbot_email: "admin@example.com"
+
+# System Configuration
+# Optional: Update system packages during installation
+update_system: true
+# Optional: Install Cockpit for web-based system management
+setup_cockpit: true
+
+# Proxy Configuration (if needed)
+# proxy:
+#   http_proxy: http://proxy.example.com:3128
+#   https_proxy: http://proxy.example.com:3128
+#   no_proxy: localhost,127.0.0.1,example.com

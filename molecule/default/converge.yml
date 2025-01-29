@@ -1,0 +1,144 @@
+---
+- name: Verify environment setup
+  hosts: all
+  become: true
+  tasks:
+    - name: Run environment validation script
+      command: /tmp/validate_env.sh
+      register: validate_result
+      failed_when: validate_result.rc != 0
+
+    - name: Verify KVM configuration
+      block:
+        - name: Check KVM module
+          command: lsmod | grep kvm
+          changed_when: false
+
+        - name: Verify libvirt service
+          service:
+            name: libvirtd
+            state: started
+            enabled: true
+
+        - name: Check network bridge
+          command: virsh net-list --all
+          changed_when: false
+          register: net_result
+          failed_when: "'kvm_net' not in net_result.stdout"
+
+- name: Test Quay registry deployment
+  hosts: registry_hosts
+  become: true
+  tasks:
+    - name: Deploy Quay registry
+      include_tasks: ../../playbooks/setup-quay-registry.yml
+      vars:
+        quay_hostname: registry-test
+        base_domain: test.local
+        ssl_cert_dir: /opt/test-registry
+
+    - name: Verify Quay deployment
+      block:
+        - name: Check Quay container status
+          command: podman ps
+          register: container_status
+          changed_when: false
+          failed_when: "'quay-mirror' not in container_status.stdout"
+
+        - name: Verify Quay health endpoint
+          uri:
+            url: https://registry-test:8443/health
+            validate_certs: false
+            return_content: true
+          register: health_check
+          failed_when: health_check.status != 200
+
+        - name: Verify PostgreSQL
+          command: psql -U quay -d quay -c "\l"
+          become: true
+          become_user: postgres
+          changed_when: false
+
+- name: Test content mirroring
+  hosts: mirror_hosts
+  become: true
+  tasks:
+    - name: Test oc-mirror functionality
+      block:
+        - name: Create test imagesetconfig
+          copy:
+            content: |
+              apiVersion: mirror.openshift.io/v1alpha2
+              kind: ImageSetConfiguration
+              storageConfig:
+                registry:
+                  imageURL: registry-test:8443/test/mirror
+                  skipTLS: true
+              mirror:
+                platform:
+                  channels:
+                    - name: stable-4.12
+                      type: ocp
+                operators:
+                  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.12
+                    packages:
+                      - name: cluster-logging
+                        channels:
+                          - name: stable
+            dest: /opt/mirror/workspace/imageset-config.yaml
+
+        - name: Test oc-mirror command
+          command: oc-mirror --config=/opt/mirror/workspace/imageset-config.yaml file:///opt/mirror/target
+          environment:
+            GODEBUG: x509ignoreCN=0
+          register: mirror_result
+          failed_when: mirror_result.rc != 0
+
+    - name: Verify mirrored content
+      block:
+        - name: Check tar file creation
+          stat:
+            path: /opt/mirror/target/mirror_seq1_000000.tar
+          register: tar_stat
+          failed_when: not tar_stat.stat.exists
+
+        - name: Verify manifest files
+          command: tar tf /opt/mirror/target/mirror_seq1_000000.tar
+          changed_when: false
+          register: manifest_check
+          failed_when: "'oc-mirror-workspace/results' not in manifest_check.stdout"
+
+- name: Verify cleanup operations
+  hosts: all
+  become: true
+  tasks:
+    - name: Test cleanup procedures
+      block:
+        - name: Stop containers
+          command: podman stop -a
+          ignore_errors: true
+
+        - name: Remove containers
+          command: podman rm -a
+          ignore_errors: true
+
+        - name: Clean test directories
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /opt/test-registry
+            - /var/lib/test-registry
+            - /opt/test-mirror
+            - /var/lib/test-mirror
+
+        - name: Verify cleanup
+          stat:
+            path: "{{ item }}"
+          register: cleanup_check
+          failed_when: cleanup_check.stat.exists
+          loop:
+            - /opt/test-registry
+            - /var/lib/test-registry
+            - /opt/test-mirror
+            - /var/lib/test-mirror

@@ -1,0 +1,51 @@
+FEATURE_SECURITY_SCANNER: true
+FEATURE_STORAGE_REPLICATION: true
+FEATURE_PROXY_CACHE: true
+
+# Database configuration
+DB_URI: postgresql://quay:{{ postgres_password }}@localhost:5432/quay
+
+# Redis configuration
+BUILDLOGS_REDIS:
+    host: localhost
+    port: 6379
+    password: ''
+
+USER_EVENTS_REDIS:
+    host: localhost
+    port: 6379
+    password: ''
+
+# Server configuration
+SERVER_HOSTNAME: {{ quay_hostname }}.{{ base_domain }}
+PREFERRED_URL_SCHEME: https
+EXTERNAL_TLS_TERMINATION: false
+
+# SSL/TLS Configuration
+SSL_CERT: {{ ssl_cert_dir }}/ssl.cert
+SSL_KEY: {{ ssl_cert_dir }}/ssl.key
+
+# Storage configuration
+DISTRIBUTED_STORAGE_CONFIG:
+    default:
+        - LocalStorage
+        - storage_path: {{ quay_storage_dir }}
+
+# Security configuration
+AUTHENTICATION_TYPE: Database
+FEATURE_USER_CREATION: true
+FEATURE_ANONYMOUS_ACCESS: false
+SUPER_USERS:
+    - admin
+
+# Misc configuration
+REGISTRY_TITLE: Quay Mirror Registry
+REGISTRY_TITLE_SHORT: Quay Mirror
+TAG_EXPIRATION_OPTIONS:
+    - 2w
+    - 1m
+    - 3m
+    - 6m
+    - 1y
+DEFAULT_TAG_EXPIRATION: 2w
+TESTING: false
