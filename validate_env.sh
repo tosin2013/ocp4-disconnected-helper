@@ -43,12 +43,13 @@ if command -v ansible >/dev/null 2>&1; then
     print_status "Ansible Version >= 2.14.0 (Current: $ANSIBLE_VERSION)" $ANSIBLE_VERSION_STATUS
 
     # Check for required collections
-    REQUIRED_COLLECTIONS=("community.general:6.4.0" "community.libvirt:1.9.1" "ansible.posix:1.5.4" "containers.podman:1.10.1")
+    REQUIRED_COLLECTIONS=("community.general" "community.libvirt" "ansible.posix" "containers.podman")
     for collection in "${REQUIRED_COLLECTIONS[@]}"; do
-        if ansible-galaxy collection list | grep -q "$collection"; then
-            print_status "Required Ansible collection '$collection' is installed" 0
+        collection_name=$(echo "$collection" | cut -d':' -f1)
+        if ansible-galaxy collection list | grep -q "$collection_name"; then
+            print_status "Required Ansible collection '$collection_name' is installed" 0
         else
-            print_status "Required Ansible collection '$collection' is not installed" 1
+            print_status "Required Ansible collection '$collection_name' is not installed" 1
         fi
     done
 else
