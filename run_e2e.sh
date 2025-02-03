@@ -100,7 +100,7 @@ deploy_quay() {
   
   # First provision the VM using KVM provisioner
   echo "[INFO] Provisioning VM for Quay..."
-  ansible-playbook -i localhost, playbooks/provision-quay-vm.yml -e "@extra_vars/setup-quay-registry-vars.yml" --connection=local
+  ansible-playbook -i localhost, playbooks/provision-quay-vm.yml -e "@extra_vars/setup-quay-registry-vars.yml" --connection=local --vault-password-file /root/.vault_pass
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Failed to provision VM for Quay."
     exit 1
@@ -110,21 +110,41 @@ deploy_quay() {
   echo "[INFO] Waiting for VM to be ready..."
   sleep 30
   
+  # Verify inventory file exists
+  if [ ! -f "playbooks/inventory/quay" ]; then
+    echo "[ERROR] Quay inventory file not found at playbooks/inventory/quay"
+    exit 1
+  fi
+  
   # Run the Quay setup playbook against the provisioned VM
   echo "[INFO] Setting up Quay registry..."
-  ansible-playbook -i inventory/quay playbooks/setup-quay-registry.yml -e "@extra_vars/setup-quay-registry-vars.yml"
+  ansible-playbook playbooks/setup-quay-registry.yml -i playbooks/inventory/quay -e "@extra_vars/setup-quay-registry-vars.yml" --vault-password-file /root/.vault_pass
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Failed to setup Quay registry."
     exit 1
   fi
   
-  # Verify Quay is running
+  # Get the Quay host from inventory
   echo "[INFO] Verifying Quay registry..."
-  QUAY_HOST=$(grep -A1 '\[quay\]' inventory/quay | tail -n1)
-  if ! curl -k -s "https://${QUAY_HOST}:8443/health/instance" | grep -q "healthy"; then
-    echo "[ERROR] Quay registry health check failed."
+  if ! QUAY_HOST=$(grep -A1 '\[quay\]' playbooks/inventory/quay | tail -n1 | awk '{print $1}'); then
+    echo "[ERROR] Failed to get Quay host from inventory."
     exit 1
   fi
+  
+  # Wait for Quay to be ready
+  echo "[INFO] Waiting for Quay to be ready..."
+  for i in {1..30}; do
+    if curl -k -s "https://${QUAY_HOST}:8443/health/instance" | grep -q "\"status\": \"healthy\""; then
+      echo "[SUCCESS] Quay registry is healthy"
+      break
+    fi
+    if [ $i -eq 30 ]; then
+      echo "[ERROR] Quay registry health check failed after 5 minutes."
+      exit 1
+    fi
+    echo "Attempt $i: Waiting for Quay to be ready..."
+    sleep 10
+  done
   
   echo "[SUCCESS] Quay registry deployed and verified"
 }
