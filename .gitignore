@@ -1,3 +1,10 @@
+# Environment variables
+.env
+
+# Secrets
+vars/rh_secrets.yml
+.vault_pass
+
 rh-pull-secret
 .vscode/**
 .vscode/
