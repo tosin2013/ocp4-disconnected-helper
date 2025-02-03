@@ -6,20 +6,68 @@
 # These tasks should be further modified to properly configure the VMs using supported parameters,
 # such as defining the VM using an XML template.
 
-- name: Provision Quay KVM VMs
+- name: Create disk for Quay VM
+  ansible.builtin.command:
+    cmd: qemu-img create -f qcow2 -o preallocation=metadata /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2 100G
+    creates: /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Create Quay VM
   community.libvirt.virt:
-    name: quay-vm-{{ item }}
+    command: define
+    xml: |
+      <domain type='kvm'>
+        <name>quay-vm-{{ item | regex_replace('quay-vm-', '') }}</name>
+        <memory unit='MiB'>8192</memory>
+        <vcpu>4</vcpu>
+        <os>
+          <type arch='x86_64' machine='pc-q35-rhel8.6.0'>hvm</type>
+          <boot dev='hd'/>
+        </os>
+        <features>
+          <acpi/>
+          <apic/>
+        </features>
+        <cpu mode='host-passthrough'/>
+        <devices>
+          <emulator>/usr/libexec/qemu-kvm</emulator>
+          <disk type='file' device='disk'>
+            <driver name='qemu' type='qcow2'/>
+            <source file='/var/lib/libvirt/images/quay-vm-{{ item }}.qcow2'/>
+            <target dev='vda' bus='virtio'/>
+          </disk>
+          <interface type='network'>
+            <source network='default'/>
+            <model type='virtio'/>
+          </interface>
+          <serial type='pty'/>
+          <console type='pty'/>
+          <channel type='unix'>
+            <target type='virtio' name='org.qemu.guest_agent.0'/>
+          </channel>
+        </devices>
+      </domain>
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Start Quay VM
+  community.libvirt.virt:
+    name: quay-vm-{{ item | regex_replace('quay-vm-', '') }}
     state: running
   loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
 
 - name: Provision Harbor KVM VMs
   community.libvirt.virt:
     name: harbor-vm-{{ item }}
     state: running
-  loop: "{{ groups['kvm_harbor_vms'] }}"
+  loop: "{{ groups['kvm_harbor_vms'] | default([]) }}"
+  when: "'kvm_harbor_vms' in groups"
 
 - name: Provision JFrog KVM VMs
   community.libvirt.virt:
     name: jfrog-vm-{{ item }}
     state: running
-  loop: "{{ groups['kvm_jfrog_vms'] }}"
+  loop: "{{ groups['kvm_jfrog_vms'] | default([]) }}"
+  when: "'kvm_jfrog_vms' in groups"
