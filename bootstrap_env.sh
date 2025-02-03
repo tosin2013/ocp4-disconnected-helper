@@ -2,8 +2,8 @@
 
 # This script is referenced in README.md and should be updated there if modified
 # See: Environment Setup and Validation section
-### To-Do 
-# 1. pip install molecule
+### Completed Tasks
+# 1. pip install molecule - Added 2025-02-03
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -67,12 +67,20 @@ dnf update -y
 print_status "Package lists updated" $?
 
 print_section "Installing Prerequisites"
-dnf install -y epel-release
+dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm -y
 dnf install -y @development
 dnf install -y python3-pip python3-devel gcc libffi-devel openssl-devel qemu-kvm cockpit-machines
-dnf install -y ansible ansible-core
+dnf install -y  ansible-core
 dnf install -y genisoimage cloud-utils-growpart cloud-init libguestfs-tools libguestfs-tools-c
 print_status "Prerequisites installed" $?
+
+print_section "Installing Molecule"
+pip3 install molecule
+if [[ $? -ne 0 ]]; then
+    print_status "Failed to install molecule" 1
+    exit 1
+fi
+print_status "Molecule installed successfully" 0
 
 print_section "Installing Ansible Collections"
 ansible-galaxy collection install community.general community.libvirt ansible.posix containers.podman
@@ -173,12 +181,12 @@ else
 fi
 
 print_section "RHEL 8 KVM Image Setup"
-if [ ! -f "/var/lib/libvirt/images/rhel8.qcow2" ]; then
+if [ ! -f "/var/lib/libvirt/images/rhel8" ]; then
     print_info "Downloading RHEL 8 KVM image using kcli..."
     if sudo kcli download image rhel8; then
         # Create a symlink if kcli downloads to a different location
-        if [ ! -f "/var/lib/libvirt/images/rhel8.qcow2" ] && [ -f "/root/.kcli/pool/rhel8.qcow2" ]; then
-            ln -s /root/.kcli/pool/rhel8.qcow2 /var/lib/libvirt/images/rhel8.qcow2
+        if [ ! -f "/var/lib/libvirt/images/rhel8.qcow2" ] && [ -f "/root/.kcli/pool/rhel8" ]; then
+            ln -s /root/.kcli/pool/rhel8 /var/lib/libvirt/images/rhel8
         fi
         print_status "RHEL 8 KVM image downloaded successfully" 0
     else
@@ -187,12 +195,12 @@ if [ ! -f "/var/lib/libvirt/images/rhel8.qcow2" ]; then
         echo "1. Visit: https://access.redhat.com/downloads/content/479/ver=/rhel---8/8.10/x86_64/product-software"
         echo "2. Log in with your Red Hat account"
         echo "3. Download the 'Red Hat Enterprise Linux 8.10 KVM Guest Image'"
-        echo "4. Once downloaded, move it to /var/lib/libvirt/images/rhel8.qcow2"
+        echo "4. Once downloaded, move it to /var/lib/libvirt/images/rhel8"
         echo ""
         print_info "Example commands after downloading:"
-        echo "sudo mv ~/Downloads/rhel-8.10-x86_64-kvm.qcow2 /var/lib/libvirt/images/rhel8.qcow2"
-        echo "sudo chown root:root /var/lib/libvirt/images/rhel8.qcow2"
-        echo "sudo chmod 644 /var/lib/libvirt/images/rhel8.qcow2"
+        echo "sudo mv ~/Downloads/rhel-8.10-x86_64-kvm /var/lib/libvirt/images/rhel8"
+        echo "sudo chown root:root /var/lib/libvirt/images/rhel8"
+        echo "sudo chmod 644 /var/lib/libvirt/images/rhel8"
     fi
 else
     print_status "RHEL 8 KVM image already exists" 0
