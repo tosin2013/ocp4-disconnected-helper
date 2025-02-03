@@ -6,6 +6,43 @@
 # These tasks should be further modified to properly configure the VMs using supported parameters,
 # such as defining the VM using an XML template.
 
+- name: Load Red Hat credentials
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../vars/rh_secrets.yml"
+    name: rh_secrets
+
+- name: Check if Quay VM exists
+  community.libvirt.virt:
+    name: "{{ item }}"
+    command: status
+  register: vm_status
+  failed_when: false
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Stop existing Quay VM if running
+  community.libvirt.virt:
+    name: "{{ item }}"
+    state: destroyed
+  failed_when: false
+  when: "'kvm_quay_vms' in groups"
+  loop: "{{ groups['kvm_quay_vms'] }}"
+
+- name: Undefine existing Quay VM
+  community.libvirt.virt:
+    name: "{{ item }}"
+    command: undefine
+  failed_when: false
+  when: "'kvm_quay_vms' in groups"
+  loop: "{{ groups['kvm_quay_vms'] }}"
+
+- name: Remove existing Quay VM disk
+  ansible.builtin.file:
+    path: "/var/lib/libvirt/images/{{ item }}.qcow2"
+    state: absent
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
 - name: Ensure root SSH key exists
   ansible.builtin.command:
     cmd: ssh-keygen -t rsa -f /root/.ssh/id_rsa -N '' -q
@@ -18,43 +55,103 @@
 
 - name: Create disk for Quay VM
   ansible.builtin.command:
-    cmd: qemu-img create -f qcow2 -b /var/lib/libvirt/images/rhel8 -F qcow2 /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2 100G
-    creates: /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2
+    cmd: qemu-img create -f qcow2 -b /var/lib/libvirt/images/rhel8 -F qcow2 /var/lib/libvirt/images/{{ item }}.qcow2 100G
+    creates: /var/lib/libvirt/images/{{ item }}.qcow2
   loop: "{{ groups['kvm_quay_vms'] }}"
   when: "'kvm_quay_vms' in groups"
 
-- name: Create cloud-init user-data
-  ansible.builtin.copy:
-    dest: "/var/lib/libvirt/images/user-data-{{ item }}"
-    content: |
-      #cloud-config
-      users:
-        - name: cloud-user
-          sudo: ALL=(ALL) NOPASSWD:ALL
-          ssh_authorized_keys:
-            - {{ (ssh_pub_key.content | b64decode).strip() }}
-      chpasswd:
-        list: |
-          cloud-user:redhat
-        expire: False
-      ssh_pwauth: True
-  loop: "{{ groups['kvm_quay_vms'] }}"
-  when: "'kvm_quay_vms' in groups"
-
-- name: Create cloud-init meta-data
-  ansible.builtin.copy:
-    dest: "/var/lib/libvirt/images/meta-data-{{ item }}"
-    content: |
-      instance-id: {{ item }}
-      local-hostname: {{ item }}
-  loop: "{{ groups['kvm_quay_vms'] }}"
-  when: "'kvm_quay_vms' in groups"
-
-- name: Create cloud-init ISO
+- name: Basic VM setup with virt-sysprep
   ansible.builtin.command:
-    cmd: genisoimage -output /var/lib/libvirt/images/cloud-init-{{ item }}.iso -volid cidata -joliet -rock /var/lib/libvirt/images/user-data-{{ item }} /var/lib/libvirt/images/meta-data-{{ item }}
-    creates: /var/lib/libvirt/images/cloud-init-{{ item }}.iso
+    cmd: >-
+      virt-sysprep -v -x
+      -a /var/lib/libvirt/images/{{ item }}.qcow2
+      --hostname {{ item }}
+      --root-password password:redhat
+      --install qemu-guest-agent,cloud-init,python3,python3-libselinux
+      --selinux-relabel
   loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+  register: vm_setup
+  ignore_errors: true
+  environment:
+    LIBGUESTFS_BACKEND: direct
+    LIBVIRT_DEFAULT_URI: qemu:///system
+    LIBGUESTFS_DEBUG: 1
+    LIBGUESTFS_TRACE: 1
+    LIBGUESTFS_MEMSIZE: 2048
+
+- name: Display VM setup output
+  ansible.builtin.debug:
+    var: vm_setup
+  when: "'kvm_quay_vms' in groups"
+
+- name: Create guestfish script
+  ansible.builtin.copy:
+    dest: /tmp/guestfish_commands.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      guestfish --rw -a "$1" -i <<'EOF'
+      # Create cloud-user and set up sudo
+      sh 'useradd -m -s /bin/bash cloud-user'
+      sh 'echo "cloud-user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cloud-user'
+      
+      # Enable services
+      sh 'systemctl enable qemu-guest-agent cloud-init'
+      
+      # Configure network
+      write /etc/sysconfig/network-scripts/ifcfg-eth0 "BOOTPROTO=dhcp\nDEVICE=eth0\nONBOOT=yes"
+      
+      # Register with Red Hat
+      sh 'subscription-manager register --org={{ rh_secrets.rh_credentials.org_id }} --activationkey={{ rh_secrets.rh_credentials.activation_key }} || true'
+      sh 'dnf config-manager --enable rhel-8-for-x86_64-baseos-rpms rhel-8-for-x86_64-appstream-rpms'
+      EOF
+
+- name: Configure VM with guestfish
+  ansible.builtin.command:
+    cmd: /tmp/guestfish_commands.sh /var/lib/libvirt/images/{{ item }}.qcow2
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups and vm_setup is success"
+  register: vm_config
+  ignore_errors: true
+  environment:
+    LIBGUESTFS_BACKEND: direct
+    LIBVIRT_DEFAULT_URI: qemu:///system
+    LIBGUESTFS_DEBUG: 1
+    LIBGUESTFS_TRACE: 1
+    LIBGUESTFS_MEMSIZE: 2048
+
+- name: Display VM config output
+  ansible.builtin.debug:
+    var: vm_config
+  when: "'kvm_quay_vms' in groups"
+
+- name: Remove guestfish script
+  ansible.builtin.file:
+    path: /tmp/guestfish_commands.sh
+    state: absent
+
+- name: Inject SSH key
+  ansible.builtin.command:
+    cmd: >-
+      virt-customize -v -x
+      -a /var/lib/libvirt/images/{{ item }}.qcow2
+      --ssh-inject cloud-user:file:/root/.ssh/id_rsa.pub
+      --selinux-relabel
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups and vm_config is success"
+  register: vm_ssh
+  ignore_errors: true
+  environment:
+    LIBGUESTFS_BACKEND: direct
+    LIBVIRT_DEFAULT_URI: qemu:///system
+    LIBGUESTFS_DEBUG: 1
+    LIBGUESTFS_TRACE: 1
+    LIBGUESTFS_MEMSIZE: 2048
+
+- name: Display SSH key injection output
+  ansible.builtin.debug:
+    var: vm_ssh
   when: "'kvm_quay_vms' in groups"
 
 - name: Create Quay VM
@@ -62,7 +159,7 @@
     command: define
     xml: |
       <domain type='kvm'>
-        <name>quay-vm-{{ item | regex_replace('quay-vm-', '') }}</name>
+        <name>{{ item }}</name>
         <memory unit='MiB'>8192</memory>
         <vcpu>4</vcpu>
         <os>
@@ -78,14 +175,8 @@
           <emulator>/usr/libexec/qemu-kvm</emulator>
           <disk type='file' device='disk'>
             <driver name='qemu' type='qcow2'/>
-            <source file='/var/lib/libvirt/images/quay-vm-{{ item }}.qcow2'/>
+            <source file='/var/lib/libvirt/images/{{ item }}.qcow2'/>
             <target dev='vda' bus='virtio'/>
-          </disk>
-          <disk type='file' device='cdrom'>
-            <driver name='qemu' type='raw'/>
-            <source file='/var/lib/libvirt/images/cloud-init-{{ item }}.iso'/>
-            <target dev='sda' bus='sata'/>
-            <readonly/>
           </disk>
           <interface type='network'>
             <source network='default'/>
@@ -106,10 +197,39 @@
 
 - name: Start Quay VM
   community.libvirt.virt:
-    name: quay-vm-{{ item | regex_replace('quay-vm-', '') }}
+    name: "{{ item }}"
     state: running
   loop: "{{ groups['kvm_quay_vms'] }}"
   when: "'kvm_quay_vms' in groups"
+
+- name: Wait for 30 seconds for VM to initialize
+  ansible.builtin.pause:
+    seconds: 30
+  when: "'kvm_quay_vms' in groups"
+
+- name: Get VM IP address
+  ansible.builtin.command:
+    cmd: virsh domifaddr {{ item }} --source agent
+  register: vm_ip_info
+  failed_when: false
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Display VM network information
+  ansible.builtin.debug:
+    var: vm_ip_info
+  when: "'kvm_quay_vms' in groups"
+
+- name: Ensure QEMU guest agent is installed
+  ansible.builtin.command:
+    cmd: >-
+      virt-customize -a /var/lib/libvirt/images/{{ item }}.qcow2
+      --install qemu-guest-agent
+      --run-command 'systemctl enable qemu-guest-agent'
+      --selinux-relabel
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+  ignore_errors: true
 
 - name: Provision Harbor KVM VMs
   community.libvirt.virt:
