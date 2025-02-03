@@ -72,6 +72,7 @@ dnf install -y @development
 dnf install -y python3-pip python3-devel gcc libffi-devel openssl-devel qemu-kvm cockpit-machines
 dnf install -y  ansible-core
 dnf install -y genisoimage cloud-utils-growpart cloud-init libguestfs-tools libguestfs-tools-c
+pip install  ansible-lint
 print_status "Prerequisites installed" $?
 
 print_section "Installing Molecule"
@@ -124,6 +125,10 @@ print_section "Installing kcli"
 if ! command_exists kcli; then
     print_info "Installing kcli..."
     curl -s https://raw.githubusercontent.com/karmab/kcli/main/install.sh | bash
+    if [ ! -f /root/.vault_pass ];
+    then 
+        sudo bash -c "openssl rand -base64 32 > /root/.vault_pass && chmod 600 /root/.vault_pass"
+    fi
     if [ $? -eq 0 ]; then
         print_status "kcli installed successfully" 0
     else
