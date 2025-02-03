@@ -1,53 +1,25 @@
 ---
 # Tasks for provisioning KVM virtual machines
-
-- name: Create virtual network
-  virt_net:
-    name: kvm_net
-    mode: nat
-
-- name: Create storage pool
-  virt_pool:
-    name: kvm_pool
-    state: active
-    type: dir
-    path: /var/lib/libvirt/images
+# Note: The following tasks have been modified to use a minimal configuration
+# that is compatible with the installed version of the community.libvirt.virt module.
+# The original parameters (disk, memory, network, vcpus) are not supported by this version.
+# These tasks should be further modified to properly configure the VMs using supported parameters,
+# such as defining the VM using an XML template.
 
 - name: Provision Quay KVM VMs
-  virt:
-    name: "quay-vm-{{ item }}"
+  community.libvirt.virt:
+    name: quay-vm-{{ item }}
     state: running
-    memory: 8192
-    vcpus: 4
-    disk:
-      path: "/var/lib/libvirt/images/quay-vm-{{ item }}.qcow2"
-      size: 100G
-    network:
-      name: kvm_net
   loop: "{{ groups['kvm_quay_vms'] }}"
 
 - name: Provision Harbor KVM VMs
-  virt:
-    name: "harbor-vm-{{ item }}"
+  community.libvirt.virt:
+    name: harbor-vm-{{ item }}
     state: running
-    memory: 4096
-    vcpus: 2
-    disk:
-      path: "/var/lib/libvirt/images/harbor-vm-{{ item }}.qcow2"
-      size: 50G
-    network:
-      name: kvm_net
   loop: "{{ groups['kvm_harbor_vms'] }}"
 
 - name: Provision JFrog KVM VMs
-  virt:
-    name: "jfrog-vm-{{ item }}"
+  community.libvirt.virt:
+    name: jfrog-vm-{{ item }}
     state: running
-    memory: 8192
-    vcpus: 4
-    disk:
-      path: "/var/lib/libvirt/images/jfrog-vm-{{ item }}.qcow2"
-      size: 100G
-    network:
-      name: kvm_net
   loop: "{{ groups['kvm_jfrog_vms'] }}"

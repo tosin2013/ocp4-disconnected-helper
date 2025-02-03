@@ -1,127 +1,48 @@
 ---
-- name: Cleanup registry hosts
+- name: Cleanup
   hosts: registry_hosts
   become: true
+  gather_facts: false
+
   tasks:
-    - name: Stop and remove Quay container
-      block:
-        - name: Stop Quay container service
-          systemd:
-            name: quay-container
-            state: stopped
-            enabled: false
-          ignore_errors: true
+    - name: Debug /tmp directory permissions
+      debug:
+        msg: "Permissions of /tmp: {{ lookup('stat', '/tmp').mode }}"
 
-        - name: Remove Quay containers
-          command: podman rm -f quay-mirror
-          ignore_errors: true
+    - name: Stop Quay container service
+      become: true
+      systemd:
+        name: quay-container
+        state: stopped
+        enabled: false
+      failed_when: false
 
-        - name: Stop PostgreSQL service
-          service:
-            name: postgresql
-            state: stopped
-          ignore_errors: true
-
-    - name: Clean up registry data
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /opt/quay
-        - /opt/harbor
-        - /opt/jfrog
-        - /var/lib/postgresql/data
-        - /opt/test-registry
-        - /var/lib/test-registry
-
-- name: Cleanup mirror hosts
-  hosts: mirror_hosts
-  become: true
-  tasks:
-    - name: Clean up mirror data
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /opt/mirror
-        - /opt/test-mirror
-        - /var/lib/test-mirror
-        - /tmp/oc.tar.gz
-        - /tmp/oc-mirror.tar.gz
-
-    - name: Remove oc tools
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /usr/local/bin/oc
-        - /usr/local/bin/oc-mirror
-        - /usr/local/bin/kubectl
-
-- name: Common cleanup tasks
-  hosts: all
-  become: true
-  tasks:
-    - name: Remove test files
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /tmp/bootstrap_env.sh
-        - /tmp/validate_env.sh
-        - /tmp/verification_report.txt
-
-    - name: Clean firewall rules
-      firewalld:
-        port: "{{ item }}"
-        permanent: true
-        state: disabled
-        immediate: true
-      loop:
-        - 80/tcp
-        - 443/tcp
-        - 5000/tcp
-        - 8443/tcp
-      ignore_errors: true
-
-    - name: Clean package cache
-      package:
-        autoremove: true
-      ignore_errors: true
-
-    - name: Generate cleanup report
-      copy:
-        content: |
-          Cleanup Report
-          ==============
-          Time: {{ ansible_date_time.iso8601 }}
-          Host: {{ inventory_hostname }}
-          
-          Removed Directories:
-          - /opt/quay
-          - /opt/harbor
-          - /opt/jfrog
-          - /opt/mirror
-          - /opt/test-registry
-          - /opt/test-mirror
-          
-          Removed Services:
-          - Quay container
-          - PostgreSQL
-          - Test containers
-          
-          Cleaned Configuration:
-          - Firewall rules
-          - Test files
-          - Package cache
-        dest: /tmp/cleanup_report.txt
-        mode: '0644'
-
-    - name: Display cleanup report
-      command: cat /tmp/cleanup_report.txt
-      register: cleanup_report
+    - name: Remove test images from local storage
+      become: true
+      command: "{{ item }}"
+      with_items:
+        - podman rmi localhost:8080/test/hello-world:latest --force
+        - podman rmi docker.io/hello-world:latest --force
+      failed_when: false
       changed_when: false
 
-    - name: Show cleanup report
-      debug:
-        msg: "{{ cleanup_report.stdout_lines }}"
+    - name: Clean up registry data directory  
+      become: true
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/quay
+        - /etc/quay
+        - /etc/systemd/system/quay-container.service
+      failed_when: false
+
+    - name: Clean container storage
+      command: podman system prune -af
+      failed_when: false
+      changed_when: false
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+      failed_when: false

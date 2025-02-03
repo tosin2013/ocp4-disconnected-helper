@@ -2,7 +2,8 @@
 
 # This script is referenced in README.md and should be updated there if modified
 # See: Environment Setup and Validation section
-
+### To-Do 
+# 1. pip install molecule
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

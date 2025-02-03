@@ -34,3 +34,6 @@ setup_cockpit: true
 #   http_proxy: http://proxy.example.com:3128
 #   https_proxy: http://proxy.example.com:3128
 #   no_proxy: localhost,127.0.0.1,example.com
+
+# Quay Admin Password
+quay_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"

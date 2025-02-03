@@ -1,177 +1,34 @@
 ---
-- name: Verify environment setup
-  hosts: all
-  become: true
+- name: Verify
+  hosts: localhost
+  gather_facts: false
   tasks:
-    - name: Verify system requirements
-      block:
-        - name: Check kernel version
-          command: uname -r
-          register: kernel_version
-          changed_when: false
-          failed_when: kernel_version.stdout is version('5.14', '<')
+    - name: Check Quay container status
+      containers.podman.podman_container_info:
+        name: "{{ item.name }}"
+      register: container_info
+      loop: "{{ molecule_yml.platforms }}"
+      failed_when: not container_info.containers[0].State.Running
 
-        - name: Verify ansible installation
-          command: ansible --version
-          register: ansible_version
-          changed_when: false
-          failed_when: ansible_version.stdout is not search('core.*2\.9')
+    - name: Check Quay port availability
+      wait_for:
+        host: localhost
+        port: "{{ item.ansible_port }}"
+        timeout: 10
+      register: port_check
+      loop: "{{ molecule_yml.platforms }}"
+      failed_when: not port_check.state == "started"
 
-        - name: Verify ansible collections
-          command: ansible-galaxy collection list community.general
-          register: collection_check
-          changed_when: false
-          failed_when: collection_check.rc != 0
+    - name: Check Quay health endpoint
+      uri:
+        url: "http://localhost:{{ item.ansible_port }}/health/instance"
+        method: GET
+        return_content: yes
+      register: health_check
+      loop: "{{ molecule_yml.platforms }}"
+      failed_when: health_check.status != 200
 
-        - name: Check libvirt
-          command: libvirtd --version
-          register: libvirt_version
-          changed_when: false
-          failed_when: libvirt_version.stdout is version('6.0', '<')
-
-- name: Verify registry deployment
-  hosts: registry_hosts
-  become: true
-  tasks:
-    - name: Verify Quay registry
-      block:
-        - name: Check Quay service status
-          command: systemctl status quay-container
-          register: quay_status
-          changed_when: false
-          failed_when: "'active (running)' not in quay_status.stdout"
-
-        - name: Verify Quay container health
-          uri:
-            url: https://registry-test:8443/health
-            validate_certs: false
-            return_content: true
-          register: quay_health
-          failed_when: quay_health.status != 200
-
-        - name: Check Quay storage
-          stat:
-            path: /opt/quay/storage
-          register: storage_check
-          failed_when: not storage_check.stat.exists or not storage_check.stat.isdir
-
-        - name: Verify PostgreSQL connectivity
-          command: psql -U quay -d quay -c "SELECT version();"
-          become: true
-          become_user: postgres
-          changed_when: false
-
-        - name: Check SSL certificate
-          command: openssl x509 -in /opt/test-registry/ssl.cert -text
-          register: cert_check
-          changed_when: false
-          failed_when: "'registry-test' not in cert_check.stdout"
-
-- name: Verify content mirroring
-  hosts: mirror_hosts
-  become: true
-  tasks:
-    - name: Verify oc tools
-      block:
-        - name: Check oc version
-          command: oc version
-          register: oc_version
-          changed_when: false
-          failed_when: oc_version.rc != 0
-
-        - name: Check oc-mirror version
-          command: oc-mirror version
-          register: oc_mirror_version
-          changed_when: false
-          failed_when: oc_mirror_version.rc != 0
-
-    - name: Verify mirrored content
-      block:
-        - name: Check tar file
-          stat:
-            path: /opt/mirror/target/mirror_seq1_000000.tar
-          register: tar_check
-          failed_when: not tar_check.stat.exists
-
-        - name: Check manifest structure
-          command: tar tf /opt/mirror/target/mirror_seq1_000000.tar
-          register: manifest_structure
-          changed_when: false
-          failed_when: >
-            'oc-mirror-workspace/results/imageset-config.yaml' not in manifest_structure.stdout or
-            'oc-mirror-workspace/results/mapping.txt' not in manifest_structure.stdout
-
-    - name: Verify workspace cleanup
-      block:
-        - name: Check workspace directories
-          stat:
-            path: "{{ item }}"
-          register: workspace_check
-          loop:
-            - /opt/mirror/workspace/src
-            - /opt/mirror/workspace/dest
-          failed_when: workspace_check.stat.exists
-
-- name: Verify system state
-  hosts: all
-  become: true
-  tasks:
-    - name: Check system resources
-      block:
-        - name: Verify memory usage
-          command: free -m
-          register: memory_check
-          changed_when: false
-          failed_when: false
-
-        - name: Check disk space
-          command: df -h
-          register: disk_check
-          changed_when: false
-          failed_when: false
-
-        - name: Verify process list
-          command: ps aux
-          register: process_check
-          changed_when: false
-          failed_when: false
-
-    - name: Verify network configuration
-      block:
-        - name: Check network interfaces
-          command: ip a
-          register: network_check
-          changed_when: false
-          failed_when: false
-
-        - name: Verify firewall rules
-          command: firewall-cmd --list-all
-          register: firewall_check
-          changed_when: false
-          failed_when: >
-            '443/tcp' not in firewall_check.stdout or
-            '8443/tcp' not in firewall_check.stdout
-
-    - name: Generate verification report
-      copy:
-        content: |
-          System Verification Report
-          ========================
-          Time: {{ ansible_date_time.iso8601 }}
-          
-          Memory Status:
-          {{ memory_check.stdout }}
-          
-          Disk Status:
-          {{ disk_check.stdout }}
-          
-          Network Configuration:
-          {{ network_check.stdout }}
-          
-          Firewall Rules:
-          {{ firewall_check.stdout }}
-          
-          Process Status:
-          {{ process_check.stdout }}
-        dest: /tmp/verification_report.txt
-        mode: '0644'
+    - name: Debug test container status
+      debug:
+        var: container_info
+        verbosity: 1

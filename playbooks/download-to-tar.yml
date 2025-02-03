@@ -44,7 +44,7 @@
               ansible.builtin.get_url:
                 url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
                 dest: /tmp/openshift-client-linux.tar.gz
-                mode: 0755
+                mode: "0755"
 
             - name: Extract the oc binary
               ansible.builtin.unarchive:
@@ -52,7 +52,7 @@
                 dest: /usr/local/bin
                 remote_src: true
                 creates: /usr/local/bin/oc
-                mode: 0755
+                mode: "0755"
 
             - name: Enable binary completion for oc
               ansible.builtin.shell: /usr/local/bin/oc completion bash > /etc/bash_completion.d/oc_completion.sh
@@ -74,7 +74,7 @@
               ansible.builtin.get_url:
                 url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
                 dest: /tmp/oc-mirror.tar.gz
-                mode: 0755
+                mode: "0755"
 
             - name: Extract the oc-mirror binary
               ansible.builtin.unarchive:
@@ -82,7 +82,7 @@
                 dest: /usr/local/bin
                 remote_src: true
                 creates: /usr/local/bin/oc-mirror
-                mode: 0755
+                mode: "0755"
 
             - name: Enable binary completion for oc-mirror
               ansible.builtin.shell: /usr/local/bin/oc-mirror completion bash > /etc/bash_completion.d/oc-mirror_completion.sh
@@ -115,37 +115,44 @@
       register: oc_path
       changed_when: false
 
-    - name: Create the $HOME/.docker directory
+    - name: Create the docker configuration directory
       ansible.builtin.file:
         path: /root/.docker
         state: directory
         owner: root
         group: root
-        mode: 0700
+        mode: "0700"
 
-    - name: if target_mirror_path does not exist create the directory 
+    - name: Create target mirror directory if it does not exist
       ansible.builtin.file:
         path: "{{ target_mirror_path }}"
         state: directory
         owner: root
         group: root
-        mode: 0755
+        mode: "0755"
 
-    - name: Copy the Red Hat Registry Pull Secret to the remote host
+    - name: Copy the Red Hat Registry Pull Secret
       when: local_rh_pull_secret_path is defined
       ansible.builtin.copy:
         src: "{{ local_rh_pull_secret_path }}"
         dest: "{{ target_rh_pull_secret_path }}"
-        mode: 0600
+        mode: "0600"
         backup: true
 
-    - name: Store the Red Hat Registry Pull Secret on the remote host when defined as a variable
+    - name: Store the Red Hat Registry Pull Secret from variable
       when: local_rh_pull_secret_path is not defined and rh_pull_secret is defined
       ansible.builtin.copy:
-        content: "{{ rh_pull_secret }}"
+        src: "{{ rh_pull_secret }}"
         dest: "{{ target_rh_pull_secret_path }}"
-        mode: 0600
+        mode: "0600"
         backup: true
+
+    - name: Configure Docker authentication
+      ansible.builtin.copy:
+        src: /home/lab-user/pullsecret.json
+        dest: /root/.docker/config.json
+        mode: "0600"
+        remote_src: true
 
     - name: Clear the mirror path if requested
       when: clean_mirror_path
@@ -196,38 +203,42 @@
       ansible.builtin.template:
         src: imageset-config.yml.j2
         dest: "{{ target_mirror_path }}/imageSetConfig.yml"
-        mode: 0644
+        mode: "0644"
         owner: root
         group: root
 
     - name: Assemble the oc mirror command
       ansible.builtin.set_fact:
         oc_mirror_cmd: >-
-          {{ oc_path.stdout }} mirror {% if skip_cleanup %}--skip-cleanup {% endif %} {% if continue_on_error %}--continue-on-error {% endif %} {% if skip_missing %}--skip-missing {% endif %} --max-per-registry={{ max_per_registry }} --config {{ target_mirror_path }}/imageSetConfig.yml file://
+          {{ oc_path.stdout }} mirror
+          {% if skip_cleanup %}--skip-cleanup {% endif %}
+          {% if continue_on_error %}--continue-on-error {% endif %}
+          {% if skip_missing %}--skip-missing {% endif %}
+          --max-per-registry={{ max_per_registry }}
+          --config {{ target_mirror_path }}/imageSetConfig.yml
+          file://
 
     - name: Display the oc mirror command
       ansible.builtin.debug:
         msg: "{{ oc_mirror_cmd }}"
 
-    - name: Run the mirroring process asynchronously for 2 hours
+    - name: Run the mirroring process asynchronously
       ansible.builtin.command:
         cmd: "{{ oc_mirror_cmd }}"
         chdir: "{{ target_mirror_path }}"
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
-      async: 7200  # Set the timeout for 2 hours (7200 seconds)
-      poll: 10     # Set how often to check the status (in seconds)
+      async: 7200
+      poll: 10
       register: oc_mirror_async_output
-      become: yes  # If the command requires elevated privileges
+      changed_when: true  # This command always changes state
+      become: true
 
-    - name: Print job ID for debugging
-      ansible.builtin.debug:
-        msg: "Async job ID is {{ oc_mirror_async_output.ansible_job_id }}"
-
-    - name: Copy job ID to file
+    - name: Store async job ID
       ansible.builtin.copy:
-        content: "{{ oc_mirror_async_output.ansible_job_id }}"  
+        content: "{{ oc_mirror_async_output.ansible_job_id }}"
         dest: /tmp/mirror_job_id.txt
+        mode: "0600"
 
     - name: Verify ID file contents
       ansible.builtin.stat:

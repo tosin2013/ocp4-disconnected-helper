@@ -52,7 +52,7 @@
       when: ansible_facts['distribution'] == "RedHat" or ansible_facts['distribution'] == "CentOS"
       ansible.builtin.dnf:
         name: "{{ epel_link }}"
-        disable_gpg_check: yes
+        disable_gpg_check: true
       tags:
         - epel_install
 
@@ -61,7 +61,7 @@
       ansible.builtin.dnf:
         name: "*"
         state: latest
-        update_cache: yes
+        update_cache: true
       register: update_task_result
 
     - name: Install JFrog server packages
@@ -118,7 +118,7 @@
         uid: 1030
         shell: /bin/bash
         home: /home/artifactory
-        create_home: yes
+        create_home: true
 
     - name: Create HAProxy group
       ansible.builtin.group:
@@ -134,7 +134,7 @@
         uid: 1235
         shell: /bin/bash
         home: /opt/haproxy
-        create_home: yes
+        create_home: true
 
     - name: Create persistent data directory if needed for JFrog
       ansible.builtin.file:
@@ -224,8 +224,8 @@
 
     - name: Connect to JFrog server and set firewall
       ansible.posix.firewalld:
-        permanent: yes
-        immediate: yes
+        permanent: true
+        immediate: true
         state: enabled
         service: "{{ item }}"
       with_items:
@@ -236,8 +236,8 @@
 
     - name: Connect to JFrog server and set firewall for custom ports
       ansible.posix.firewalld:
-        permanent: yes
-        immediate: yes
+        permanent: true
+        immediate: true
         state: enabled
         port: "{{ port_item }}/tcp"
       loop_control:
@@ -315,25 +315,25 @@
 
     - name: Reload systemd units
       ansible.builtin.service:
-        daemon_reload: yes
+        daemon_reload: true
 
     - name: Start Cockpit Service
       ansible.builtin.service:
         name: cockpit
         state: started
-        enabled: yes
+        enabled: true
 
     - name: Start JFrog Service
       ansible.builtin.service:
         name: jfrog-container
         state: started
-        enabled: yes
+        enabled: true
 
     - name: Start HAProxy Service
       ansible.builtin.service:
         name: haproxy-container
         state: started
-        enabled: yes
+        enabled: true
 
     - name: JFrog provisioning complete!
       ansible.builtin.debug:

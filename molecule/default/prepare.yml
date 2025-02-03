@@ -1,135 +1,18 @@
 ---
-- name: Prepare test environment
-  hosts: all
-  become: true
+- name: Prepare
+  hosts: localhost
+  gather_facts: false
   tasks:
-    - name: Install system prerequisites
-      package:
-        name:
-          - curl
-          - git
-          - openssl
-          - python3-pip
-          - firewalld
-          - podman
-          - policycoreutils-python-utils
-        state: present
+    - name: Wait for Quay containers to be ready
+      containers.podman.podman_container_info:
+        name: "{{ item.name }}"
+      register: container_info
+      until: container_info.containers | length > 0 and container_info.containers[0].State.Running
+      retries: 10
+      delay: 3
+      loop: "{{ molecule_yml.platforms }}"
 
-    - name: Enable and start firewalld
-      service:
-        name: firewalld
-        state: started
-        enabled: true
-
-    - name: Configure firewall ports
-      firewalld:
-        port: "{{ item }}"
-        permanent: true
-        state: enabled
-        immediate: true
-      loop:
-        - 80/tcp
-        - 443/tcp
-        - 5000/tcp
-        - 8443/tcp
-
-    - name: Create test directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: '0755'
-      loop:
-        - /opt/test-registry
-        - /var/lib/test-registry
-        - /opt/test-mirror
-        - /var/lib/test-mirror
-
-    - name: Generate self-signed certificate for testing
-      shell: |
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-          -keyout /opt/test-registry/ssl.key \
-          -out /opt/test-registry/ssl.cert \
-          -subj "/CN=registry-test/O=Test/C=US" \
-          -addext "subjectAltName=DNS:registry-test,DNS:localhost"
-      args:
-        creates: /opt/test-registry/ssl.cert
-
-    # Verify Ansible collections
-    - name: Install required Ansible collections
-      command: ansible-galaxy collection install community.general
-      changed_when: false
-
-    # Bootstrap validation
-    - name: Copy bootstrap and validation scripts
-      copy:
-        src: "{{ item.src }}"
-        dest: "{{ item.dest }}"
-        mode: '0755'
-      loop:
-        - src: ../../bootstrap_env.sh
-          dest: /tmp/bootstrap_env.sh
-        - src: ../../validate_env.sh
-          dest: /tmp/validate_env.sh
-
-- name: Prepare registry hosts
-  hosts: registry_hosts
-  become: true
-  tasks:
-    - name: Install registry-specific packages
-      package:
-        name: "{{ item }}"
-        state: present
-      loop:
-        - postgresql-server
-        - postgresql-contrib
-        - docker-ce
-        - docker-ce-cli
-        - containerd.io
-      when: "'registry_hosts' in group_names"
-
-    - name: Create registry directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: '0755'
-      loop:
-        - /opt/quay/config
-        - /opt/quay/storage
-        - /opt/harbor/config
-        - /opt/harbor/storage
-        - /opt/jfrog/config
-        - /opt/jfrog/storage
-
-- name: Prepare mirror hosts
-  hosts: mirror_hosts
-  become: true
-  tasks:
-    - name: Download oc and oc-mirror
-      get_url:
-        url: "{{ item.url }}"
-        dest: "{{ item.dest }}"
-        mode: '0755'
-      loop:
-        - url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz
-          dest: /tmp/oc.tar.gz
-        - url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
-          dest: /tmp/oc-mirror.tar.gz
-
-    - name: Extract oc and oc-mirror
-      unarchive:
-        src: "{{ item.src }}"
-        dest: /usr/local/bin
-        remote_src: true
-      loop:
-        - src: /tmp/oc.tar.gz
-        - src: /tmp/oc-mirror.tar.gz
-
-    - name: Create mirror directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: '0755'
-      loop:
-        - /opt/mirror/source
-        - /opt/mirror/target
-        - /opt/mirror/workspace
+    - name: Debug container info
+      debug:
+        var: container_info
+        verbosity: 1

@@ -1,11 +1,20 @@
----
-# System Card Version: 1.1
-# Generated: 2024-01-29
+# System Card Version: 1.6
+# Generated: 2025-01-31
+# Environment: Laboratory
+
+overview:
+  purpose: "Facilitate molecule testing in a disconnected lab environment by creating VMs for container registries and running playbooks against them. Intended for future integration with GitHub Actions."
+  primary_objectives:
+    - Enable automated testing of container registry deployments using Molecule.
+    - Support the creation and management of virtual machines for hosting container registries.
+    - Provide a framework for running Ansible playbooks against the deployed registries.
+    - Prepare for future automation using GitHub Actions.
+  scope: "Lab environment testing and validation of OpenShift disconnected deployments."
 
 architecture:
-  name: OpenShift Disconnected Deployment
+  name: OpenShift Disconnected Deployment (Lab Environment)
   description: |
-    This system is designed to deploy an OpenShift cluster in a disconnected/air-gapped environment using local container registries (Harbor or JFrog Artifactory) to host the OpenShift release images and operator catalogs. The deployment process involves mirroring OpenShift releases from Red Hat registries, packaging them into a tar file, transferring the tar file to the air-gapped environment, and pushing the contents to the local registry. KVM virtual machines are provisioned to host the Harbor and JFrog Artifactory registries.
+    This system is designed to deploy an OpenShift cluster in a disconnected/air-gapped environment using local container registries (Quay, Harbor, or JFrog Artifactory) to host the OpenShift release images and operator catalogs. The deployment process involves mirroring OpenShift releases from Red Hat registries, packaging them into a TAR file, transferring the TAR file to the air-gapped environment, and pushing the contents to the local registry. KVM virtual machines are provisioned to host the container registries. This setup is intended for testing and learning purposes, with a focus on Molecule-based testing.
 
 workflow:
   preparation:
@@ -16,193 +25,354 @@ workflow:
         dependencies:
           - sudo access
           - internet connectivity
+        error_handling:
+          - privilege_error: "Display sudo access instructions"
+          - network_error: "Check connectivity and DNS resolution"
       - name: validate_env.sh
         description: "Verifies system meets all requirements"
         validates:
           - Linux operating system
           - Kernel version >= 5.14
-          - Ansible >= 2.9
-          - Libvirt >= 6.0
+          - Ansible >= 2.14.0
+          - Libvirt >= 8.0.0
           - KVM enabled
-  
+          - Presence of vg_data volume group
+          - Presence and mount points of lv_vms and lv_images logical volumes
+          - XFS filesystem on lv_vms and lv_images
+        error_handling:
+          - validation_failure: "Show error message with fix steps"
+          - disk_space_warning: "Alert if space is low"
+          - dependency_missing: "Show installation commands"
+
+  vm_deployment:
+    description: "Provisioning KVM virtual machines for container registries"
+    components:
+      - name: roles/kvm_provisioner/tasks/main.yml
+        description: "Provisions KVM virtual machines for registry testing"
+        specifications:
+          quay_vms:
+            memory: 8192MB
+            vcpus: 4
+            storage: 250GB
+            os: RHEL 8
+            network: NAT
+          harbor_vms:
+            memory: 8192MB
+            vcpus: 4
+            storage: 200GB
+            os: Ubuntu
+            network: NAT
+          jfrog_vms:
+            memory: 8192MB
+            vcpus: 4
+            storage: 200GB
+            os: RHEL 8
+            network: NAT
+        error_handling:
+          - resource_issue: "Reduce resource allocation if needed"
+          - network_failure: "Check network connectivity"
+          - provisioning_error: "Clean up and retry"
+
   registry_setup:
     description: "Container registry deployment phase (choose one)"
     components:
       - name: setup-quay-registry.yml
         description: "Deploys Red Hat Quay mirror registry"
         features:
-          - Native OpenShift content support
-          - Vulnerability scanning
-          - Image signing
-          - PostgreSQL database backend
-          - Built-in TLS/authentication
-          - RBAC and security policies
+          - Basic registry functionality
+          - TLS/authentication
+          - Simple RBAC
+        lab_notes:
+          - "Focus on core functionality"
+          - "Skip advanced features for lab testing"
+
       - name: setup-harbor-registry.yml
         description: "Deploys Harbor registry"
         features:
-          - SSL certificate management
+          - Basic SSL setup
           - Docker configuration
-          - Firewall rules setup
-          - System service management
+          - Simple authentication
+        lab_notes:
+          - "Use self-signed certificates"
+          - "Basic configuration for testing"
+
       - name: setup-jfrog-registry.yml
         description: "Deploys JFrog Artifactory"
         features:
-          - HAProxy TLS termination
-          - User/group management
-          - Persistent storage setup
-          - Security configuration
-  
+          - Basic setup
+          - Simple authentication
+          - Local storage
+        lab_notes:
+          - "Minimal configuration for testing"
+          - "Skip HA features"
+
+  molecule_testing:
+    description: "Testing phase using Molecule to create VMs and deploy registries"
+    components:
+      - name: ansible-lint
+        description: "Basic syntax and best practice checks for all playbooks"
+      - name: run_e2e.sh
+        description: "Basic end-to-end testing"
+        test_sequence:
+          - name: download-tar
+            description: "Direct playbook execution with ansible-lint validation"
+            steps:
+              - "Run ansible-lint on download-to-tar.yml"
+              - "Execute download-to-tar.yml playbook directly on localhost"
+          - name: registry-deployment
+            description: "Molecule-based testing for registry deployments"
+            scenarios:
+              - quay
+              - harbor
+              - jfrog
+
   content_mirroring:
     description: "Content mirroring and transfer phase"
     components:
       - name: download-to-tar.yml
         description: "Mirrors OpenShift content on connected system"
+        testing:
+          method: "Direct ansible-playbook execution with ansible-lint"
+          location: "run_e2e.sh:run_download_tar()"
         features:
           - oc/oc-mirror tool setup
           - Space validation
-          - Content download
+          - Content download (OpenShift 4.16 and 4.17)
           - TAR creation
       - name: push-tar-to-registry.yml
         description: "Pushes content to disconnected registry"
         features:
-          - Registry authentication
-          - Manifest generation
-          - Project creation
-          - Content verification
+          - Basic authentication
+          - Content transfer
+          - Simple verification
+
+  future_considerations:
+    - name: github_actions_integration
+      description: "Plan to run molecule tests using GitHub Actions for CI/CD"
+      notes:
+        - "This will require configuring GitHub Actions workflows."
+        - "Authentication and environment setup within GitHub Actions need to be considered."
+
+  testing:
+    - name: molecule_testing_workflow
+      description: "Detailed workflow for Molecule-based testing"
+      steps:
+        - name: vm_creation
+          description: "Create VMs for container registries using Molecule. Define separate groups in the Ansible inventory for each registry type (e.g., quay_vms, harbor_vms, jfrog_vms). Specify the target group using the -l or --limit option when invoking the playbook."
+        - name: registry_deployment
+          description: "Deploy container registries (Quay, Harbor, or JFrog) on the VMs. Use the -l or --limit option when invoking the playbook to target the specific group of VMs created in the previous step."
+        - name: playbook_execution
+          description: "Run Ansible playbooks against the deployed registries to validate functionality"
+        - name: verification
+          description: "Verify the successful execution of playbooks and the functionality of the registries. Modify the Molecule scenarios (molecule/*/molecule.yml) to define the appropriate inventory groups for each test scenario. Ensure that each scenario targets the correct VM group based on the container registry being tested."
 
 components:
   - name: OpenShift Cluster
-    description: The OpenShift cluster consisting of control plane and worker nodes.
+    description: Test cluster for learning and validation
   - name: Container Registry
-    description: A local container registry (Harbor or JFrog Artifactory) for hosting the OpenShift release images and operator catalogs.
+    description: Local registry for testing (Quay, Harbor, or JFrog)
   - name: KVM Virtual Machines
-    description: KVM virtual machines provisioned to host container registries (Quay, Harbor, or JFrog Artifactory).
-    specifications:
-      quay_vms:
-        memory: 8192MB
-        vcpus: 4
-        storage: 100GB
-        network: NAT
-      harbor_vms:
-        memory: 4096MB
-        vcpus: 2
-        storage: 50GB
-        network: NAT
-      jfrog_vms:
-        memory: 8192MB
-        vcpus: 4
-        storage: 100GB
-        network: NAT
+    description: Test VMs for registry deployment and Molecule testing
     infrastructure:
-      network: 
+      network:
         name: kvm_net
         type: NAT
       storage:
-        name: kvm_pool
-        type: dir
-        path: /var/lib/libvirt/images
-  - name: Red Hat Registries
-    description: External Red Hat registries used for mirroring the OpenShift releases.
-  - name: Ansible Automation
-    description: Ansible playbooks and roles for automating the deployment process, including mirroring, packaging, transferring, and pushing the OpenShift releases to the local registry, as well as provisioning the KVM virtual machines and setting up the container registries.
+        name: vg_data
+        type: lvm
+        disks:
+          - /dev/nvme1n1
+          - /dev/nvme0n1
+        volumes:
+          - name: lv_vms
+            size: 750G
+            mount: /var/lib/libvirt/images
+            filesystem: xfs
+          - name: lv_images
+            size: 100%FREE
+            mount: /opt/images
+            filesystem: xfs
+
+success_criteria:
+  - name: successful_molecule_tests
+    description: "All Molecule tests, including VM creation, registry deployment, and playbook execution, pass successfully."
+  - name: functional_registries
+    description: "Container registries are deployed and functional within the lab environment."
+  - name: playbook_validation
+    description: "Ansible playbooks execute without errors against the deployed registries."
 
 configuration_variables:
   directory: extra_vars/
   files:
     - name: download-to-tar-vars.yml
-      description: Variables for configuring the download-to-tar.yml playbook.
+      description: "Download configuration"
       variables:
         - name: target_mirror_path
-          description: "The local directory where OpenShift releases will be mirrored to."
+          value: /opt/images
         - name: rh_pull_secret
-          description: "Your Red Hat pull secret for accessing registry.redhat.io."
+          description: "Red Hat pull secret"
         - name: openshift_releases
-          description: "List of OpenShift releases to mirror."
-        - name: operators
-          description: "List of Operator catalogs and packages to mirror."
+          value: ["4.16", "4.17"]
     - name: push-tar-to-registry-vars.yml
-      description: Variables for configuring the push-tar-to-registry.yml playbook.
-      variables:
-        - name: source_mirror_path
-          description: "The local directory containing mirrored OpenShift releases (output of download-to-tar.yml)."
-        - name: mirror_tar_file
-          description: "The specific tar file to push to the registry."
-        - name: registries
-          description: "List of target registries to push the mirrored content to."
+      description: "Registry push configuration"
     - name: setup-harbor-registry-vars.yml
-      description: Variables for configuring the setup-harbor-registry.yml playbook.
-      variables:
-        - name: harbor_version
-          description: "The version of Harbor to install."
-        - name: harbor_hostname
-          description: "The hostname for the Harbor registry."
-        - name: harbor_admin_password
-          description: "The password for the Harbor admin user."
-        - name: ssl_certificate
-          description: "The SSL certificate for the Harbor registry."
-        - name: ssl_certificate_key
-          description: "The SSL certificate key for the Harbor registry."
+      description: "Harbor setup configuration"
     - name: setup-jfrog-registry-vars.yml
-      description: Variables for configuring the setup-jfrog-registry.yml playbook.
-      variables:
-        - name: jfrog_hostname
-          description: "The hostname for the JFrog registry."
-        - name: base_domain
-          description: "The base domain for the JFrog registry."
-        - name: enable_certbot
-          description: "Whether to enable automatic SSL certificate generation using Certbot (true/false)."
-        - name: certbot_email
-          description: "The email address to use for Certbot certificate registration."
+      description: "JFrog setup configuration"
     - name: setup-quay-registry-vars.yml
-      description: Variables for configuring the setup-quay-registry.yml playbook.
-      variables:
-        - name: quay_hostname
-          description: "The hostname for the Quay registry."
-        - name: base_domain
-          description: "The base domain for the Quay registry."
-        - name: quay_version
-          description: "The version of Quay to install."
-        - name: postgres_password
-          description: "The password for the PostgreSQL database used by Quay."
-        - name: enable_ssl
-          description: "Whether to enable SSL for Quay (true/false)."
-        - name: enable_certbot
-          description: "Whether to enable automatic SSL certificate generation using Certbot (true/false)."
-        - name: certbot_email
-          description: "The email address to use for Certbot certificate registration."
+      description: "Quay setup configuration"
+
+file_relationships:
+  - file: "roles/kvm_provisioner/tasks/main.yml"
+    relationship: "Provisions KVM virtual machines for registry testing"
+    dependencies:
+      - "roles/kvm_provisioner/tasks/kvm_net_simple.xml"
+      - "roles/kvm_provisioner/tasks/kvm_net.xml"
+      - "roles/kvm_provisioner/tasks/kvm_pool.xml"
+  - file: "playbooks/setup-quay-registry.yml"
+    relationship: "Deploys Red Hat Quay mirror registry"
+    dependencies:
+      - "playbooks/templates/quay-config.yaml.j2"
+      - "playbooks/templates/quay-container.service.j2"
+  - file: "playbooks/setup-harbor-registry.yml"
+    relationship: "Deploys Harbor registry"
+    dependencies:
+      - "playbooks/templates/harbor.yml.j2"
+      - "playbooks/templates/docker-proxy.conf.j2"
+  - file: "playbooks/setup-jfrog-registry.yml"
+    relationship: "Deploys JFrog Artifactory"
+    dependencies:
+      - "playbooks/templates/jfrog-system.yaml.j2"
+      - "playbooks/templates/jfrog-container.service.j2"
+      - "playbooks/templates/haproxy.cfg.j2"
+      - "playbooks/templates/haproxy-container.service.j2"
+  - file: "molecule/default/converge.yml"
+    relationship: "Ansible playbook for Molecule convergence"
+  - file: "molecule/default/verify.yml"
+    relationship: "Ansible playbook for Molecule verification"
+  - file: "run_all_molecule_tests.sh"
+    relationship: "Runs all Molecule tests"
+  - file: "run_e2e.sh"
+    relationship: "Runs end-to-end tests"
+  - file: "bootstrap_env.sh"
+    relationship: "Installs and configures all system prerequisites"
+  - file: "validate_env.sh"
+    relationship: "Verifies system meets all requirements"
 
 deployment_requirements:
-  - name: Air-gapped Environment
-    description: The system must be deployed in an air-gapped/disconnected environment without direct access to external registries or the internet.
-  - name: Secure Transfer
-    description: The OpenShift release tar file must be securely transferred from the mirroring environment to the air-gapped environment.
-  - name: Automated Provisioning
-    description: KVM virtual machines must be automatically provisioned with the desired specifications (CPU, RAM, storage, networking) to host the container registries.
-  - name: Automated Registry Setup
-    description: The Harbor or JFrog Artifactory registries must be automatically set up and configured on the provisioned KVM virtual machines.
-  - name: CI/CD Integration
-    description: The deployment process should be integrated with a CI/CD pipeline for automated testing and deployment.
+  - name: Lab Environment
+    description: "Suitable for testing, learning, and running Molecule tests"
+  - name: Basic Security
+    description: "Simple authentication and SSL for lab use"
+  - name: Testing Focus
+    description: "Emphasis on functionality verification and Molecule-based testing"
+
+inventory_management:
+  groups:
+    - name: quay_vms
+      description: "Virtual machines designated for Quay deployment"
+    - name: harbor_vms
+      description: "Virtual machines designated for Harbor deployment"
+    - name: jfrog_vms
+      description: "Virtual machines designated for JFrog deployment"
+  targeting:
+    description: "Use the -l or --limit option with Ansible playbooks to target specific VM groups based on the container registry being deployed or tested."
+
+development_guidelines:
+  tdd_practices:
+    - "Write tests before implementing features."
+    - "Use Molecule for test-driven development."
+    - "Ensure tests cover all critical functionality."
+  coding_standards:
+    - "Follow Ansible best practices."
+    - "Use clear and consistent naming conventions."
+    - "Document code thoroughly."
+  static_analysis:
+    - "Use ansible-lint for static analysis."
+  dynamic_analysis:
+    - "Perform dynamic analysis during Molecule testing."
+
+testing_and_quality_assurance:
+  strategies:
+    - "Unit tests for individual components."
+    - "Integration tests for interactions between components."
+    - "End-to-end tests for complete system functionality."
+  coverage_requirements:
+    - "Aim for high test coverage of critical components."
+    - "Use coverage reports to identify gaps in testing."
 
 environment_constraints:
   operating_system: Red Hat Enterprise Linux
   os_release: "9.5"
   os_codename: Plow
-  kernel_version: ">=5.14" # RHEL 9.5 uses kernel 5.14
-  ansible_version: ">=2.9" # Ansible core 2.14 is compatible with RHEL 9.5
-  libvirt_version: ">=7.0" # RHEL 9.5 ships with libvirt 8.0
+  kernel_version: ">=5.14"
+  ansible_version: ">=2.14.0"
+  libvirt_version: ">=8.0.0"
   kvm_enabled: true
 
 ansible_requirements:
   collections:
     - name: community.general
-      version: ">=6.4.0" # Ensure compatibility with RHEL 9.5
-      description: Required for extended Ansible functionality including firewall management, service configuration, and system modifications
+      version: ">=6.4.0"
     - name: community.libvirt
       version: ">=1.9.1"
-      description: Required for managing KVM infrastructure
     - name: ansible.posix
       version: ">=1.5.4"
-      description: Required for managing POSIX-related tasks
     - name: containers.podman
       version: ">=1.10.1"
-      description: Required for managing Podman containers
+
+deployment_strategy:
+  methods:
+    - "Manual deployment for initial setup and testing."
+    - "Automated deployment using Ansible playbooks."
+  rollback_mechanisms:
+    - "Use snapshots or backups for easy rollback in case of issues."
+  logging_frameworks:
+    - "Utilize standard logging practices for troubleshooting."
+
+scalability_and_performance:
+  recommendations:
+    - "This is a lab environment, so scalability is not a primary concern."
+    - "Focus on functionality and testing rather than performance optimization."
+  security:
+    - "Basic security measures are sufficient for a lab environment."
+    - "Use simple authentication and SSL for testing purposes."
+  optimization:
+    - "Optimization is not a priority in this lab environment."
+
+documentation_requirements:
+  standards:
+    - "Maintain clear and concise documentation."
+    - "Document all configuration steps and testing procedures."
+    - "Use comments to explain complex logic or decisions."
+  types:
+    - "README.md for overall project overview and instructions."
+    - "troubleshooting.md for common issues and solutions."
+    - "versions_check.md for version compatibility information."
+    - "System card (system_card.yml) for detailed system specifications."
+
+development_status:
+  current_phase: "Initial setup and configuration"
+  milestones:
+    - name: "Environment setup and validation"
+      status: "Complete"
+    - name: "VM deployment for container registries"
+      status: "In progress"
+    - name: "Container registry deployment (Quay, Harbor, or JFrog)"
+      status: "Not started"
+    - name: "Molecule testing"
+      status: "Not started"
+    - name: "GitHub Actions integration"
+      status: "Planned"
+  key_deliverables:
+    - "Functional lab environment for Molecule testing"
+    - "Successful deployment of container registries"
+    - "Passing Molecule tests"
+    - "Documentation of the system and testing procedures"
+
+notes:
+  - "This is a lab environment intended for learning, testing, and running Molecule tests."
+  - "Performance and high availability features are not prioritized in this context."
+  - "Security is implemented at a basic level appropriate for a lab environment."
+  - "Focus is on functionality, testing, and learning rather than production readiness."
+  - "Future plans include integrating with GitHub Actions for CI/CD."

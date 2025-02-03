@@ -3,7 +3,7 @@
 # local_rh_pull_secret_path and rh_pull_secret are mutually exclusive
 
 # local_rh_pull_secret_path: /home/kemo/rh-pull-secret
-rh_pull_secret: "{{ lookup('file', '/root/rh-pull-secret') }}"
+rh_pull_secret: /home/lab-user/pullsecret.json
 
 # Variables for the oc-mirror command
 # https://github.com/openshift/oc-mirror/blob/main/docs/usage.md
@@ -19,7 +19,7 @@ skip_missing: true
 mirror_retry: 5 # 3 is the default
 
 # target_rh_pull_secret_path is the user path where the authentication file will be stored on the remote host
-target_rh_pull_secret_path: /root/.docker/config.json
+target_rh_pull_secret_path: /home/lab-user/pullsecret.json
 
 # =====================================
 # Mirror Configuration
@@ -33,8 +33,12 @@ openshift_releases:
 
   # An upgrade release - check paths: https://access.redhat.com/labs/ocpupgradegraph/update_path/
   - name: stable-4.16
-    minVersion: 4.16.3
-    maxVersion: 4.16.3
+    minVersion: 4.16.30
+    maxVersion: 4.16.30
+
+  - name: stable-4.17
+    minVersion: 4.17.0
+    maxVersion: 4.17.0
     shortestPath: true
 
 certified_catalog_operator_packages:

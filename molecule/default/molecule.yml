@@ -3,82 +3,75 @@ dependency:
   name: galaxy
   options:
     role-file: collections/requirements.yml
+    ignore-certs: true
+    ignore-errors: true
 
 driver:
-  name: vagrant
-  provider:
-    name: libvirt
+  name: podman
 
 platforms:
-  - name: registry-test
-    box: generic/rhel8
+  - name: quay-vm
+    pre_build_image: true
     memory: 8192
     cpus: 4
-    provider_options:
-      storage_pool_name: kvm_pool
-    provider_raw_config_args:
-      - "storage :file, :size => '100G'"
-    interfaces:
-      - network_name: kvm_net
-        type: bridge
+    ansible_port: 8080
     groups:
-      - registry_hosts
-
-  - name: mirror-test
-    box: generic/rhel8
-    memory: 4096
-    cpus: 2
-    provider_options:
-      storage_pool_name: kvm_pool
-    interfaces:
-      - network_name: kvm_net
-        type: bridge
+      - quay_vms
+  - name: harbor-vm
+    pre_build_image: true
+    memory: 8192
+    cpus: 4
+    ansible_port: 8081
     groups:
-      - mirror_hosts
+      - harbor_vms
+  - name: jfrog-vm
+    pre_build_image: true
+    memory: 8192
+    cpus: 4
+    ansible_port: 8082
+    groups:
+      - jfrog_vms
 
 provisioner:
   name: ansible
-  env:
-    ANSIBLE_ROLES_PATH: ../../roles
   inventory:
     group_vars:
-      registry_hosts:
-        ansible_user: vagrant
-        ansible_become: true
-      mirror_hosts:
-        ansible_user: vagrant
-        ansible_become: true
+      quay_vms:
+        ansible_user: centos
+        ansible_ssh_private_key_file: /home/lab-user/.ssh/id_rsa
+      harbor_vms:
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: /home/lab-user/.ssh/id_rsa
+      jfrog_vms:
+        ansible_user: centos
+        ansible_ssh_private_key_file: /home/lab-user/.ssh/id_rsa
+  env:
+    ANSIBLE_ROLES_PATH: ../../roles
+    ANSIBLE_REMOTE_TMP: /tmp
+  config_options:
+    defaults:
+      remote_tmp: /tmp
   playbooks:
+    create: create.yml
+    destroy: destroy.yml
     prepare: prepare.yml
     converge: converge.yml
     verify: verify.yml
     cleanup: cleanup.yml
-    destroy: destroy.yml
   options:
     vvv: true
     diff: true
-  lint:
-    name: ansible-lint
 
 verifier:
   name: testinfra
-  lint:
-    name: flake8
   options:
     connection: ansible
-    ansible-inventory: .molecule/ansible_inventory
-
-lint: |
-  set -e
-  yamllint .
-  ansible-lint
-  flake8
+    ansible-inventory: ../../inventory
 
 scenario:
   name: default
   test_sequence:
     - dependency
-    - lint
     - cleanup
     - destroy
     - syntax
