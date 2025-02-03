@@ -139,6 +139,24 @@ else
     print_status "kcli is already installed" 0
 fi
 
+print_section "Setting up SSH keys"
+if [ ! -f "/root/.ssh/id_rsa" ]; then
+    print_info "Generating SSH keys..."
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N '' -C "root@$(hostname)"
+    chmod 600 /root/.ssh/id_rsa
+    chmod 644 /root/.ssh/id_rsa.pub
+    print_status "SSH keys generated" $?
+else
+    print_status "SSH keys already exist" 0
+fi
+
+# Ensure proper permissions on SSH directory and keys
+chmod 700 /root/.ssh
+chmod 600 /root/.ssh/id_rsa
+chmod 644 /root/.ssh/id_rsa.pub
+
 print_section "Setting up libvirt storage pool"
 # Check existing storage pools
 if virsh pool-list --all | grep -q "kvm_pool"; then
@@ -190,8 +208,12 @@ if [ ! -f "/var/lib/libvirt/images/rhel8" ]; then
     print_info "Downloading RHEL 8 KVM image using kcli..."
     if sudo kcli download image rhel8; then
         # Create a symlink if kcli downloads to a different location
-        if [ ! -f "/var/lib/libvirt/images/rhel8.qcow2" ] && [ -f "/root/.kcli/pool/rhel8" ]; then
+        if [ ! -f "/var/lib/libvirt/images/rhel8" ] && [ -f "/root/.kcli/pool/rhel8" ]; then
             ln -s /root/.kcli/pool/rhel8 /var/lib/libvirt/images/rhel8
+            chown root:root /var/lib/libvirt/images/rhel8
+            chmod 644 /var/lib/libvirt/images/rhel8
+            # Set proper SELinux context
+            restorecon -Rv /var/lib/libvirt/images/rhel8
         fi
         print_status "RHEL 8 KVM image downloaded successfully" 0
     else
@@ -206,10 +228,63 @@ if [ ! -f "/var/lib/libvirt/images/rhel8" ]; then
         echo "sudo mv ~/Downloads/rhel-8.10-x86_64-kvm /var/lib/libvirt/images/rhel8"
         echo "sudo chown root:root /var/lib/libvirt/images/rhel8"
         echo "sudo chmod 644 /var/lib/libvirt/images/rhel8"
+        echo "sudo restorecon -Rv /var/lib/libvirt/images/rhel8"
     fi
 else
+    # Ensure proper permissions and SELinux context even if image exists
+    chown root:root /var/lib/libvirt/images/rhel8
+    chmod 644 /var/lib/libvirt/images/rhel8
+    restorecon -Rv /var/lib/libvirt/images/rhel8
     print_status "RHEL 8 KVM image already exists" 0
 fi
+
+# Verify image is accessible by libvirt
+if ! virsh pool-refresh kvm_pool; then
+    print_status "Failed to refresh libvirt storage pool" 1
+    exit 1
+fi
+
+# Verify image exists and has proper permissions
+if [ -f "/var/lib/libvirt/images/rhel8" ]; then
+    PERMS=$(stat -c "%a" /var/lib/libvirt/images/rhel8)
+    OWNER=$(stat -c "%U:%G" /var/lib/libvirt/images/rhel8)
+    if [ "$PERMS" = "644" ] && [ "$OWNER" = "root:root" ]; then
+        print_status "RHEL 8 image permissions are correct" 0
+    else
+        print_status "RHEL 8 image permissions are incorrect" 1
+        exit 1
+    fi
+else
+    print_status "RHEL 8 image not found" 1
+    exit 1
+fi
+
+print_section "Verifying SSH Setup"
+# Check SSH directory and key permissions
+if [ ! -d "/root/.ssh" ]; then
+    print_status "SSH directory does not exist" 1
+    exit 1
+fi
+
+SSH_DIR_PERMS=$(stat -c "%a" /root/.ssh)
+if [ "$SSH_DIR_PERMS" != "700" ]; then
+    print_status "SSH directory permissions are incorrect" 1
+    exit 1
+fi
+
+if [ ! -f "/root/.ssh/id_rsa" ] || [ ! -f "/root/.ssh/id_rsa.pub" ]; then
+    print_status "SSH keys are missing" 1
+    exit 1
+fi
+
+PRIV_KEY_PERMS=$(stat -c "%a" /root/.ssh/id_rsa)
+PUB_KEY_PERMS=$(stat -c "%a" /root/.ssh/id_rsa.pub)
+if [ "$PRIV_KEY_PERMS" != "600" ] || [ "$PUB_KEY_PERMS" != "644" ]; then
+    print_status "SSH key permissions are incorrect" 1
+    exit 1
+fi
+
+print_status "SSH setup is correct" 0
 
 print_section "Verifying Installation"
 echo "Running environment validation script..."
