@@ -15,6 +15,23 @@
         name: "{{ base_packages }}"
         state: present
 
+    - name: Install yq
+      block:
+        - name: Check if yq is installed
+          ansible.builtin.command: which yq
+          changed_when: false
+          failed_when: yq_installed.rc not in [0, 1]
+          register: yq_installed
+
+        - name: Download and install yq
+          when: yq_installed.rc not in [0]
+          block:
+            - name: Download yq binary
+              ansible.builtin.get_url:
+                url: https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                dest: /usr/local/bin/yq
+                mode: "0755"
+
     - name: Setup Cockpit because I am a lazy admin
       when: setup_cockpit
       block:

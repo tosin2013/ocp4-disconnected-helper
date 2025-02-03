@@ -37,16 +37,16 @@ get_recent_releases() {
     echo "$result" | jq -r ".nodes | map(select(.version | startswith(\"${version}\"))) | sort_by(.version) | reverse | .[0:10] | .[].version"
 }
 
-# Get recent 4.15 and 4.16 releases
+# Get recent 4.16 and 4.17 releases
 # This script prints the recent releases for specified OpenShift versions.
 # It uses the function `get_recent_releases` to fetch and display the recent releases.
-# The script currently checks for recent releases of versions 4.15 and 4.16.
-echo "Recent 4.15 releases:"
-get_recent_releases "4.15"
-echo
-
+# The script currently checks for recent releases of versions 4.16 and 4.17.
 echo "Recent 4.16 releases:"
 get_recent_releases "4.16"
+echo
+
+echo "Recent 4.17 releases:"
+get_recent_releases "4.17"
 echo
 
 # Function to get the latest patch version for a given minor version
@@ -65,26 +65,26 @@ get_latest_patch() {
     jq -r ".nodes[] | select(.version | startswith(\"${version}\")) | .version" | sort -V | tail -1
 }
 
-# Get the latest 4.15 and 4.16 releases
-# This script fetches the latest patch versions for OpenShift 4.15 and 4.16 releases.
+# Get the latest 4.16 and 4.17 releases
+# This script fetches the latest patch versions for OpenShift 4.16 and 4.17 releases.
 # It uses a function `get_latest_patch` to retrieve the latest patch version for the specified release.
 # If the script fails to fetch the latest releases, it will output an error message and exit with status code 1.
 echo "Fetching the two latest minor versions..."
-echo "Latest minor versions: 4.15, 4.16"
-echo "Fetching the latest patch versions for 4.15 and 4.16..."
-latest_4_15=$(get_latest_patch "4.15")
-echo "Fetching latest 4.16 release..."
-latest_4_16=$(get_latest_patch "4.16")
+echo "Latest minor versions: 4.16, 4.17"
+echo "Fetching the latest patch versions for 4.16 and 4.17..."
+latest_4_15=$(get_latest_patch "4.16")
+echo "Fetching latest 4.17 release..."
+latest_4_16=$(get_latest_patch "4.17")
 
 if [[ -z "$latest_4_15" || -z "$latest_4_16" ]]; then
     echo "Failed to fetch latest releases. Please check your network connection."
     exit 1
 fi
 
-# This script prints the latest releases for versions 4.15 and 4.16.
+# This script prints the latest releases for versions 4.16 and 4.17.
 # It uses the variables `latest_4_15` and `latest_4_16` to display the respective release versions.
-echo "Latest 4.15 release: $latest_4_15"
-echo "Latest 4.16 release: $latest_4_16"
+echo "Latest 4.16 release: $latest_4_15"
+echo "Latest 4.17 release: $latest_4_16"
 
 # Function to display release info
 # This script defines a function `display_release_info` that fetches and displays release information for a specified OpenShift version.
@@ -117,19 +117,19 @@ display_release_info() {
 # Display information for both latest releases
 # This script displays release information for the specified versions.
 # It calls the `display_release_info` function with the latest versions
-# of 4.15 and 4.16 releases as arguments.
+# of 4.16 and 4.17 releases as arguments.
 display_release_info $latest_4_15
 display_release_info $latest_4_16
 
 # Check upgrade path
 # This script checks the upgrade path between two OpenShift versions.
-# It fetches the upgrade graph from the OpenShift API for the stable-4.16 channel.
+# It fetches the upgrade graph from the OpenShift API for the stable-4.17 channel.
 # The script uses the `curl` command to make an HTTP GET request to the API.
 # The response is filtered using `jq` to select nodes matching the specified versions.
 # The versions to check are provided by the variables $latest_4_15 and $latest_4_16.
 # If the API request fails, an error message "Failed to fetch upgrade path information" is displayed.
 echo "Checking upgrade path from $latest_4_15 to $latest_4_16"
-upgrade_path=$(curl -s -H "Accept: application/json" "https://api.openshift.com/api/upgrades_info/v1/graph?channel=stable-4.16" | \
+upgrade_path=$(curl -s -H "Accept: application/json" "https://api.openshift.com/api/upgrades_info/v1/graph?channel=stable-4.17" | \
     jq --arg from "$latest_4_15" --arg to "$latest_4_16" \
     '.nodes[] | select(.version == $from or .version == $to) | {version: .version, release: .payload}')
 
