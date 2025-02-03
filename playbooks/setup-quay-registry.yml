@@ -1,6 +1,6 @@
 ---
 - name: Setup Quay Registry
-  hosts: kvm_quay_vms
+  hosts: quay
   become: true
 
   roles:
@@ -10,26 +10,81 @@
     kvm_quay_vms:
       - 1
       - 2
-  gather_facts: false
+  gather_facts: true
   tasks:
+    - name: Install required packages
+      ansible.builtin.package:
+        name:
+          - podman
+          - openssl
+          - python3
+          - python3-pip
+          - firewalld
+          - tar
+          - gzip
+          - unzip
+        state: present
+
+    - name: Start and enable firewalld
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Open required ports in firewall
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - 8443/tcp  # Quay registry
+        - 443/tcp   # HTTPS
+        - 80/tcp    # HTTP
+
+    - name: Create SSL certificate directory
+      ansible.builtin.file:
+        path: "{{ ssl_cert_dir }}"
+        state: directory
+        mode: '0755'
+      when: enable_ssl | bool
+
+    - name: Generate self-signed SSL certificate
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout {{ ssl_cert_dir }}/quay.key
+        -out {{ ssl_cert_dir }}/quay.crt
+        -subj "/CN={{ quay_hostname }}.{{ base_domain }}/O=Quay Enterprise/C=US"
+      args:
+        creates: "{{ ssl_cert_dir }}/quay.crt"
+      when: enable_ssl | bool
+
     - name: Create quay_installer directory
       ansible.builtin.file:
         path: quay_installer
         state: directory
+        mode: '0755'
+
     - name: Download Quay offline installer
       ansible.builtin.get_url:
         url: https://github.com/quay/mirror-registry/releases/download/v2.0.3/mirror-registry-offline.tar.gz
-        dest: quay_installer/mirror-registry-offline.tar.gz
+        dest: /root/mirror-registry-offline.tar.gz
+        mode: '0644'
 
     - name: Extract Quay installer
       ansible.builtin.unarchive:
-        src: quay_installer/mirror-registry-offline.tar.gz
+        src: /root/mirror-registry-offline.tar.gz
         dest: quay_installer
         remote_src: true
 
+    - name: Make mirror-registry executable
+      ansible.builtin.file:
+        path: quay_installer/mirror-registry
+        mode: '0755'
+
     - name: Install Quay
       ansible.builtin.command: >
-        quay_installer/mirror-registry install
+        ./mirror-registry install
         --quayRoot={{ quay_root_dir }}
         --quayStorage={{ quay_storage_dir }}
         --quayHostname={{ quay_hostname }}.{{ base_domain }}
@@ -39,25 +94,31 @@
         --sslCert={{ ssl_cert_dir }}/quay.crt
         --sslKey={{ ssl_cert_dir }}/quay.key
         {% endif %}
+      args:
+        chdir: quay_installer
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
 
     - name: Create Quay organization
       ansible.builtin.command: >
-        quay_installer/mirror-registry org create
+        ./mirror-registry org create
         --name openshift-mirror
         --description "Organization for OpenShift mirror content"
         --public
+      args:
+        chdir: quay_installer
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
 
     - name: Create Quay robot account
       ansible.builtin.command: >
-        quay_installer/mirror-registry robot create
+        ./mirror-registry robot create
         --name openshift-mirror-robot
         --description "Robot account for pushing OpenShift mirror content"
         --org openshift-mirror
         --role write
+      args:
+        chdir: quay_installer
       register: quay_robot_output
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
