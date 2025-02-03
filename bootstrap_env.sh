@@ -69,8 +69,9 @@ print_status "Package lists updated" $?
 print_section "Installing Prerequisites"
 dnf install -y epel-release
 dnf install -y @development
-dnf install -y python3-pip python3-devel gcc libffi-devel openssl-devel qemu-kvm
+dnf install -y python3-pip python3-devel gcc libffi-devel openssl-devel qemu-kvm cockpit-machines
 dnf install -y ansible ansible-core
+dnf install -y genisoimage cloud-utils-growpart cloud-init
 print_status "Prerequisites installed" $?
 
 print_section "Installing Ansible Collections"

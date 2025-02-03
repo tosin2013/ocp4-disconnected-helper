@@ -6,10 +6,54 @@
 # These tasks should be further modified to properly configure the VMs using supported parameters,
 # such as defining the VM using an XML template.
 
+- name: Ensure root SSH key exists
+  ansible.builtin.command:
+    cmd: ssh-keygen -t rsa -f /root/.ssh/id_rsa -N '' -q
+    creates: /root/.ssh/id_rsa.pub
+
+- name: Read root SSH public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_rsa.pub
+  register: ssh_pub_key
+
 - name: Create disk for Quay VM
   ansible.builtin.command:
-    cmd: qemu-img create -f qcow2 -o preallocation=metadata /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2 100G
+    cmd: qemu-img create -f qcow2 -b /var/lib/libvirt/images/rhel8 -F qcow2 /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2 100G
     creates: /var/lib/libvirt/images/quay-vm-{{ item }}.qcow2
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Create cloud-init user-data
+  ansible.builtin.copy:
+    dest: "/var/lib/libvirt/images/user-data-{{ item }}"
+    content: |
+      #cloud-config
+      users:
+        - name: cloud-user
+          sudo: ALL=(ALL) NOPASSWD:ALL
+          ssh_authorized_keys:
+            - {{ (ssh_pub_key.content | b64decode).strip() }}
+      chpasswd:
+        list: |
+          cloud-user:redhat
+        expire: False
+      ssh_pwauth: True
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Create cloud-init meta-data
+  ansible.builtin.copy:
+    dest: "/var/lib/libvirt/images/meta-data-{{ item }}"
+    content: |
+      instance-id: {{ item }}
+      local-hostname: {{ item }}
+  loop: "{{ groups['kvm_quay_vms'] }}"
+  when: "'kvm_quay_vms' in groups"
+
+- name: Create cloud-init ISO
+  ansible.builtin.command:
+    cmd: genisoimage -output /var/lib/libvirt/images/cloud-init-{{ item }}.iso -volid cidata -joliet -rock /var/lib/libvirt/images/user-data-{{ item }} /var/lib/libvirt/images/meta-data-{{ item }}
+    creates: /var/lib/libvirt/images/cloud-init-{{ item }}.iso
   loop: "{{ groups['kvm_quay_vms'] }}"
   when: "'kvm_quay_vms' in groups"
 
@@ -37,6 +81,12 @@
             <source file='/var/lib/libvirt/images/quay-vm-{{ item }}.qcow2'/>
             <target dev='vda' bus='virtio'/>
           </disk>
+          <disk type='file' device='cdrom'>
+            <driver name='qemu' type='raw'/>
+            <source file='/var/lib/libvirt/images/cloud-init-{{ item }}.iso'/>
+            <target dev='sda' bus='sata'/>
+            <readonly/>
+          </disk>
           <interface type='network'>
             <source network='default'/>
             <model type='virtio'/>
@@ -46,6 +96,9 @@
           <channel type='unix'>
             <target type='virtio' name='org.qemu.guest_agent.0'/>
           </channel>
+          <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'>
+            <listen type='address' address='0.0.0.0'/>
+          </graphics>
         </devices>
       </domain>
   loop: "{{ groups['kvm_quay_vms'] }}"
