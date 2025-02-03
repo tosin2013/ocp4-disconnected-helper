@@ -71,7 +71,7 @@ dnf install -y epel-release
 dnf install -y @development
 dnf install -y python3-pip python3-devel gcc libffi-devel openssl-devel qemu-kvm cockpit-machines
 dnf install -y ansible ansible-core
-dnf install -y genisoimage cloud-utils-growpart cloud-init
+dnf install -y genisoimage cloud-utils-growpart cloud-init libguestfs-tools libguestfs-tools-c
 print_status "Prerequisites installed" $?
 
 print_section "Installing Ansible Collections"
