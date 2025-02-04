@@ -132,14 +132,6 @@
       register: oc_path
       changed_when: false
 
-    - name: Create the docker configuration directory
-      ansible.builtin.file:
-        path: /root/.docker
-        state: directory
-        owner: root
-        group: root
-        mode: "0700"
-
     - name: Create target mirror directory if it does not exist
       ansible.builtin.file:
         path: "{{ target_mirror_path }}"
@@ -165,10 +157,20 @@
         backup: true
 
     - name: Configure Docker authentication
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.docker"
+        state: directory
+        mode: "0700"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_gid }}"
+
+    - name: Copy Docker authentication config
       ansible.builtin.copy:
         src: /home/lab-user/pullsecret.json
-        dest: /root/.docker/config.json
+        dest: "{{ ansible_env.HOME }}/.docker/config.json"
         mode: "0600"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_gid }}"
         remote_src: true
 
     - name: Clear the mirror path if requested

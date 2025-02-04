@@ -286,6 +286,31 @@ fi
 
 print_status "SSH setup is correct" 0
 
+print_section "Setting up Registry Authentication"
+# Set up Docker config directory in user's home
+if [ -n "$SUDO_USER" ]; then
+    USER_HOME=$(eval echo ~$SUDO_USER)
+    if [ ! -d "$USER_HOME/.docker" ]; then
+        mkdir -p "$USER_HOME/.docker"
+        chmod 700 "$USER_HOME/.docker"
+    fi
+
+    # Copy pull secret to user's Docker config if it exists
+    if [ -f "/home/lab-user/pullsecret.json" ]; then
+        cp /home/lab-user/pullsecret.json "$USER_HOME/.docker/config.json"
+        chmod 600 "$USER_HOME/.docker/config.json"
+        chown -R "$SUDO_USER:$(id -gn $SUDO_USER)" "$USER_HOME/.docker"
+        print_status "Registry authentication configured for user $SUDO_USER" 0
+    else
+        print_status "Pull secret not found at /home/lab-user/pullsecret.json" 1
+        echo "Please ensure pull secret is available at /home/lab-user/pullsecret.json"
+        exit 1
+    fi
+else
+    print_status "Could not determine user to configure registry authentication for" 1
+    exit 1
+fi
+
 print_section "Verifying Installation"
 echo "Running environment validation script..."
 ./validate_env.sh
