@@ -197,7 +197,36 @@
       loop_control:
         loop_var: item
 
+    - name: Get registry storage information (Quay)
+      ansible.builtin.uri:
+        url: "https://{{ registry.server }}:8443/api/v1/repository"
+        method: GET
+        status_code: 200
+        return_content: yes
+        validate_certs: no
+      register: quay_storage_info
+      when: registry.registry_type == "quay"
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+
+    - name: Generate checksums for local TAR files
+      ansible.builtin.shell: "sha256sum {{ source_mirror_path }}/{{ mirror_tar_file }}"
+      register: local_checksums
+      changed_when: false
+
+    - name: Fail if Quay storage is full
+      ansible.builtin.fail:
+        msg: "Quay registry storage is full.  Please free up space before proceeding."
+      when: >
+        registry.registry_type == "quay" and
+        (quay_storage_info.json | from_json).storage.used / (quay_storage_info.json | from_json).storage.total * 100 >= 95
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+
     - name: Push the mirror to the remote registry
+      delegate_to: localhost # Ensure oc mirror runs on the control node
       ansible.builtin.shell:
         cmd: |-
           {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/{{ mirror_tar_file }} docker://{{ registry.server }}/{{ registry.path | default(omit) }}
@@ -207,10 +236,49 @@
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
       register: oc_mirror_output
+      async: 1000
+      poll: 0
 
-    - name: Display oc_mirror_output variable
+    - name: Wait for oc mirror to complete
+      ansible.builtin.async_status:
+        jid: "{{ oc_mirror_output.ansible_job_id }}"
+      register: job_result
+      retries: 5 # Retry up to 5 times
+      delay: 60
+      until: job_result.finished
+      delegate_to: localhost
+
+    - name: Fail if oc mirror failed after retries
+      ansible.builtin.fail:
+        msg: "oc mirror failed after multiple retries. Please check the logs for details."
+      when: not job_result.finished
+
+    - name: Get remote checksums (Quay)
+      ansible.builtin.uri:
+        url: "https://{{ registry.server }}:8443/api/v1/repository/{{ registry.path | default(omit) }}/{{ mirror_tar_file | basename | replace('.tar', '') }}/tag"
+        method: GET
+        status_code: 200
+        return_content: yes
+        validate_certs: no
+      register: quay_remote_checksums
+      when: registry.registry_type == "quay"
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+
+    - name: Verify checksums (Quay)
+      ansible.builtin.fail:
+        msg: "Checksum verification failed for {{ registry.server }}/{{ registry.path | default(omit) }}/{{ mirror_tar_file | basename | replace('.tar', '') }}"
+      when: >
+        registry.registry_type == "quay" and
+        local_checksums.stdout | regex_search('(\\w+)\\s+{{ source_mirror_path }}/{{ mirror_tar_file }}', '\\1') != (quay_remote_checksums.json | from_json)[0].manifest_digest | regex_search('sha256:(\\w+)', '\\1')
+      loop: "{{ registries }}"
+      loop_control:
+        loop_var: registry
+
+    - name: Display oc mirror results
       ansible.builtin.debug:
-        msg: "{{ oc_mirror_output }}"
+        var: job_result.stdout
 
     - name: Display the command output
       ansible.builtin.debug:

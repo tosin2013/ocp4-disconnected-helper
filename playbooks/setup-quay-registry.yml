@@ -12,10 +12,15 @@
       - 2
   gather_facts: true
   tasks:
+    - name: Check if VM is reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+
     - name: Install required packages
       ansible.builtin.package:
         name:
           - podman
+          - skopeo
           - openssl
           - python3
           - python3-pip
@@ -23,6 +28,7 @@
           - tar
           - gzip
           - unzip
+          - qemu-img
         state: present
 
     - name: Start and enable firewalld
@@ -30,6 +36,14 @@
         name: firewalld
         state: started
         enabled: true
+
+    - name: Check firewalld status
+      ansible.builtin.service_facts:
+
+    - name: Ensure firewalld is running
+      ansible.builtin.fail:
+        msg: "Firewalld is not running. Please start firewalld."
+      when: not ansible_facts.services['firewalld.service']['state'] == "running"
 
     - name: Open required ports in firewall
       ansible.posix.firewalld:

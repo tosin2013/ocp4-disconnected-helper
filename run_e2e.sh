@@ -100,7 +100,7 @@ deploy_quay() {
   
   # First provision the VM using KVM provisioner
   echo "[INFO] Provisioning VM for Quay..."
-  ansible-playbook -i localhost, playbooks/provision-quay-vm.yml -e "@extra_vars/setup-quay-registry-vars.yml" --connection=local --vault-password-file /root/.vault_pass
+  ansible-playbook -i localhost, playbooks/provision-quay-vm.yml -e "@playbooks/vars/quay-vars.yml" -e "@vars/rh_secrets.yml" --connection=local
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Failed to provision VM for Quay."
     exit 1
@@ -118,7 +118,7 @@ deploy_quay() {
   
   # Run the Quay setup playbook against the provisioned VM
   echo "[INFO] Setting up Quay registry..."
-  ansible-playbook playbooks/setup-quay-registry.yml -i playbooks/inventory/quay -e "@extra_vars/setup-quay-registry-vars.yml" --vault-password-file /root/.vault_pass
+  ansible-playbook playbooks/setup-quay-only.yml -i playbooks/inventory/quay -e "@playbooks/vars/quay-vars.yml" -e "@vars/rh_secrets.yml"
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Failed to setup Quay registry."
     exit 1
@@ -130,17 +130,35 @@ deploy_quay() {
     echo "[ERROR] Failed to get Quay host from inventory."
     exit 1
   fi
+
+  # Allow time for containers to start
+  echo "[INFO] Waiting for containers to initialize..."
+  sleep 30
   
-  # Wait for Quay to be ready
+  # Verify Quay containers are running
+  echo "[INFO] Verifying Quay containers..."
+  ansible quay -i playbooks/inventory/quay -b -m shell -a "podman ps | grep -E 'quay|redis'"
+
+  # Wait for Quay to be ready with longer timeout and better diagnostics
   echo "[INFO] Waiting for Quay to be ready..."
-  for i in {1..30}; do
-    if curl -k -s "https://${QUAY_HOST}:8443/health/instance" | grep -q "\"status\": \"healthy\""; then
+  for i in {1..60}; do
+    curl_out=$(curl -k -s -m 5 "https://${QUAY_HOST}:8443/health/endtoend" || true)
+    if echo "$curl_out" | grep -q "\"status\": \"healthy\""; then
       echo "[SUCCESS] Quay registry is healthy"
       break
     fi
-    if [ $i -eq 30 ]; then
-      echo "[ERROR] Quay registry health check failed after 5 minutes."
+    if [ $i -eq 60 ]; then
+      echo "[ERROR] Quay registry health check failed after 10 minutes."
+      echo "[DEBUG] Last health check output: $curl_out"
+      echo "[DEBUG] Container status:"
+      ansible quay -i playbooks/inventory/quay -b -m shell -a "podman ps -a"
+      echo "[DEBUG] Container logs:"
+      ansible quay -i playbooks/inventory/quay -b -m shell -a "for c in \$(podman ps -aq); do echo \"=== \$c ===\"; podman logs \$c; done"
       exit 1
+    fi
+    if [ $(($i % 5)) -eq 0 ]; then
+      echo "[DEBUG] Current container status:"
+      ansible quay -i playbooks/inventory/quay -b -m shell -a "podman ps -a"
     fi
     echo "Attempt $i: Waiting for Quay to be ready..."
     sleep 10

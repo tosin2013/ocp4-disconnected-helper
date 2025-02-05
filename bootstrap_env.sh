@@ -4,6 +4,21 @@
 # See: Environment Setup and Validation section
 ### Completed Tasks
 # 1. pip install molecule - Added 2025-02-03
+# --- Get Red Hat credentials ---
+read -r -s -p "Enter your Red Hat Organization ID: " ORG_ID
+read -r -s -p "Enter your Red Hat Activation Key: " ACTIVATION_KEY
+echo
+
+# --- Populate rh_secrets.yml ---
+cat <<EOF > vars/rh_secrets.yml
+---
+# Red Hat Subscription Manager Credentials
+rh_credentials:
+  org_id: "$ORG_ID"
+  activation_key: "$ACTIVATION_KEY"
+EOF
+
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,6 +66,7 @@ fi
 
 print_section "Enabling libvirt"
 dnf install -y libvirt libvirt-daemon libvirt-daemon-driver-qemu
+sudo usermod -aG libvirt lab-user && sudo chmod 775 /var/lib/libvirt/images
 if [[ $? -ne 0 ]]; then
     print_status "Failed to enable libvirt module" 1
     exit 1
@@ -84,7 +100,7 @@ fi
 print_status "Molecule installed successfully" 0
 
 print_section "Installing Ansible Collections"
-ansible-galaxy collection install community.general community.libvirt ansible.posix containers.podman
+ansible-galaxy collection install community.general community.libvirt ansible.posix containers.podman community.libvirt
 print_status "Required Ansible collections installed" $?
 
 # Verify Ansible version
@@ -125,9 +141,9 @@ print_section "Installing kcli"
 if ! command_exists kcli; then
     print_info "Installing kcli..."
     curl -s https://raw.githubusercontent.com/karmab/kcli/main/install.sh | bash
-    if [ ! -f /root/.vault_pass ];
+    if [ ! -f /home/lab-user/.vault ];
     then 
-        sudo bash -c "openssl rand -base64 32 > /root/.vault_pass && chmod 600 /root/.vault_pass"
+        bash -c "openssl rand -base64 32 > /home/lab-user/.vault && chmod 600 /home/lab-user/.vault"
     fi
     if [ $? -eq 0 ]; then
         print_status "kcli installed successfully" 0
