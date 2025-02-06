@@ -1,34 +1,39 @@
 ---
 - name: Verify
-  hosts: localhost
-  gather_facts: false
+  hosts: quay_vms
+  gather_facts: true
   tasks:
-    - name: Check Quay container status
-      containers.podman.podman_container_info:
-        name: "{{ item.name }}"
-      register: container_info
-      loop: "{{ molecule_yml.platforms }}"
-      failed_when: not container_info.containers[0].State.Running
+    - name: Check Quay service status
+      service_facts:
+      register: services_state
 
-    - name: Check Quay port availability
+    - name: Get list of running containers
+      command: podman ps --format "{{.Names}}"
+      register: container_list
+      changed_when: false
+
+    - name: Verify Quay container is running
+      assert:
+        that:
+          - "'quay-mirror' in container_list.stdout"
+        fail_msg: "Quay container is not running"
+
+    - name: Check Quay ports availability
       wait_for:
-        host: localhost
-        port: "{{ item.ansible_port }}"
-        timeout: 10
+        host: "{{ inventory_hostname }}"
+        port: "{{ item }}"
+        timeout: 30
+      loop:
+        - 8443
+        - 80
       register: port_check
-      loop: "{{ molecule_yml.platforms }}"
       failed_when: not port_check.state == "started"
 
     - name: Check Quay health endpoint
       uri:
-        url: "http://localhost:{{ item.ansible_port }}/health/instance"
+        url: "https://{{ inventory_hostname }}:8443/health/instance"
         method: GET
         return_content: yes
+        validate_certs: no
       register: health_check
-      loop: "{{ molecule_yml.platforms }}"
       failed_when: health_check.status != 200
-
-    - name: Debug test container status
-      debug:
-        var: container_info
-        verbosity: 1

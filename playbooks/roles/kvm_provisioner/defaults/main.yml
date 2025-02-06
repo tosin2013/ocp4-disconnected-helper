@@ -1,0 +1,29 @@
+---
+# Base VM configuration
+vm_name: registry-vm
+vm_memory: 8192  # 8GB RAM
+vm_cpus: 4
+vm_disk_size: 40  # 40GB disk
+
+# Registry-specific configurations
+registry_type: quay  # Supported values: quay, harbor, jfrog
+
+# Base packages for all registries
+base_packages:
+  - podman
+  - openssl
+  - tar
+  - gzip
+
+# Registry-specific packages
+quay_packages: "{{ base_packages }}"
+harbor_packages: "{{ base_packages }} + ['docker-ce', 'docker-ce-cli']"
+jfrog_packages: "{{ base_packages }} + ['java-11-openjdk']"
+
+# Default cloud-init settings
+cloud_init_default_user: root
+cloud_init_default_password: redhat
+
+# Inventory settings
+inventory_group: "{{ registry_type }}"
+inventory_file: "{{ registry_type }}"

@@ -1,0 +1,29 @@
+---
+# Include Quay installation tasks
+- name: Install Quay
+  ansible.builtin.import_tasks: install.yml
+
+# Include hosts configuration
+- name: Configure hosts entries
+  ansible.builtin.import_tasks: hosts.yml
+  when: configure_hosts | default(true)
+
+# Configure Quay with FQDN
+- name: Create Quay configuration directory
+  ansible.builtin.file:
+    path: /etc/quay
+    state: directory
+    mode: '0755'
+  when: configure_quay | default(true)
+
+- name: Configure Quay to use FQDN
+  ansible.builtin.template:
+    src: quay-config.yaml.j2
+    dest: /etc/quay/config.yaml
+    mode: '0644'
+  notify: Restart Quay service
+  when: configure_quay | default(true)
+
+# Add handler notifications
+- name: Ensure handler imports exist
+  ansible.builtin.meta: flush_handlers

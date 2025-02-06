@@ -1,0 +1,14 @@
+---
+# Quay Admin Credentials
+quay_admin_password: redhat123
+
+# FQDN Configuration
+quay_fqdn: quay.example.com
+quay_ip: 192.168.122.204
+
+# SSL Configuration
+ssl_cert_path: "{{ ssl_cert_dir }}/quay.crt"
+ssl_key_path: "{{ ssl_cert_dir }}/quay.key"
+
+# SSH Configuration
+ssh_key_path: "~/.ssh/quay_installer"

@@ -1,0 +1,25 @@
+#cloud-config
+packages:
+{% for package in packages %}
+  - {{ package }}
+{% endfor %}
+
+ssh_pwauth: true
+disable_root: false
+
+system_info:
+  default_user:
+    name: {{ cloud_init_default_user }}
+
+chpasswd:
+  list: |
+    {{ cloud_init_default_user }}:{{ cloud_init_default_password }}
+  expire: false
+
+runcmd:
+  - subscription-manager register --org={{ rh_credentials.org_id }} --activationkey={{ rh_credentials.activation_key }}
+  - subscription-manager repos --enable=rhel-8-for-x86_64-appstream-rpms
+  - systemctl enable --now podman.socket
+  - sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  - sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - systemctl restart sshd

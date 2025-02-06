@@ -1,0 +1,53 @@
+---
+- name: Install required packages
+  ansible.builtin.package:
+    name:
+      - podman
+      - openssl
+      - tar
+      - gzip
+    state: present
+
+- name: Create installer directory
+  ansible.builtin.file:
+    path: "{{ installer_dir | default('/root/mirror-registry') }}"
+    state: directory
+    mode: '0755'
+
+- name: Download mirror-registry installer
+  ansible.builtin.get_url:
+    url: "https://github.com/quay/mirror-registry/releases/download/{{ mirror_registry_version | default('v2.0.3') }}/mirror-registry-offline.tar.gz"
+    dest: "{{ installer_dir | default('/root/mirror-registry') }}/mirror-registry-offline.tar.gz"
+    mode: '0644'
+
+- name: Extract mirror-registry installer
+  ansible.builtin.unarchive:
+    src: "{{ installer_dir | default('/root/mirror-registry') }}/mirror-registry-offline.tar.gz"
+    dest: "{{ installer_dir | default('/root/mirror-registry') }}"
+    remote_src: true
+
+- name: Generate SSH key if it doesn't exist
+  ansible.builtin.command:
+    cmd: >
+      ssh-keygen -t rsa -b 4096 -f {{ ssh_key_path }} -N ""
+  args:
+    creates: "{{ ssh_key_path }}"
+
+- name: Create .ssh directory with proper permissions
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Add generated key to authorized_keys
+  ansible.builtin.shell: |
+    cat {{ ssh_key_path }}.pub >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+
+- name: Update hosts file to resolve quay.example.com
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.0.1 quay.example.com"
+    state: present

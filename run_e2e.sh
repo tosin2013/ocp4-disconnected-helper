@@ -1,14 +1,23 @@
 #!/bin/bash
 
 # --- Configuration ---
-# Allow users to specify the test scenario (default: full deployment with Quay)
-TEST_SCENARIO="${1:-quay}"
-
-# Allow users to specify whether to skip environment validation (default: no)
+# Default configurations
+REGISTRY_TYPE="${1:-quay}"  # Supported: quay, harbor, jfrog
 SKIP_VALIDATION="${2:-no}"
-
-# Allow users to specify whether to destroy VMs after tests (default: no)
 DESTROY_VMS="no"
+
+# Validate registry type
+validate_registry_type() {
+  case "$REGISTRY_TYPE" in
+    quay|harbor|jfrog)
+      return 0
+      ;;
+    *)
+      echo "Error: Invalid registry type. Supported types: quay, harbor, jfrog"
+      exit 1
+      ;;
+  esac
+}
 
 # --- Functions ---
 
@@ -94,77 +103,108 @@ validate_tar_files() {
   echo "[SUCCESS] Tar file validation completed successfully"
 }
 
-# Function to deploy Quay registry
-deploy_quay() {
-  echo "Deploying Quay infrastructure..."
-  
-  # First provision the VM using KVM provisioner
-  echo "[INFO] Provisioning VM for Quay..."
-  ansible-playbook -i localhost, playbooks/provision-quay-vm.yml -e "@playbooks/vars/quay-vars.yml" -e "@vars/rh_secrets.yml" --connection=local
-  if [[ $? -ne 0 ]]; then
-    echo "[ERROR] Failed to provision VM for Quay."
-    exit 1
-  fi
-  
-  # Wait for VM to be ready
-  echo "[INFO] Waiting for VM to be ready..."
-  sleep 30
-  
-  # Verify inventory file exists
-  if [ ! -f "playbooks/inventory/quay" ]; then
-    echo "[ERROR] Quay inventory file not found at playbooks/inventory/quay"
-    exit 1
-  fi
-  
-  # Run the Quay setup playbook against the provisioned VM
-  echo "[INFO] Setting up Quay registry..."
-  ansible-playbook playbooks/setup-quay-only.yml -i playbooks/inventory/quay -e "@playbooks/vars/quay-vars.yml" -e "@vars/rh_secrets.yml"
-  if [[ $? -ne 0 ]]; then
-    echo "[ERROR] Failed to setup Quay registry."
-    exit 1
-  fi
-  
-  # Get the Quay host from inventory
-  echo "[INFO] Verifying Quay registry..."
-  if ! QUAY_HOST=$(grep -A1 '\[quay\]' playbooks/inventory/quay | tail -n1 | awk '{print $1}'); then
-    echo "[ERROR] Failed to get Quay host from inventory."
-    exit 1
-  fi
-
-  # Allow time for containers to start
-  echo "[INFO] Waiting for containers to initialize..."
-  sleep 30
-  
-  # Verify Quay containers are running
-  echo "[INFO] Verifying Quay containers..."
-  ansible quay -i playbooks/inventory/quay -b -m shell -a "podman ps | grep -E 'quay|redis'"
-
-  # Wait for Quay to be ready with longer timeout and better diagnostics
-  echo "[INFO] Waiting for Quay to be ready..."
-  for i in {1..60}; do
-    curl_out=$(curl -k -s -m 5 "https://${QUAY_HOST}:8443/health/endtoend" || true)
-    if echo "$curl_out" | grep -q "\"status\": \"healthy\""; then
-      echo "[SUCCESS] Quay registry is healthy"
-      break
-    fi
-    if [ $i -eq 60 ]; then
-      echo "[ERROR] Quay registry health check failed after 10 minutes."
-      echo "[DEBUG] Last health check output: $curl_out"
-      echo "[DEBUG] Container status:"
-      ansible quay -i playbooks/inventory/quay -b -m shell -a "podman ps -a"
-      echo "[DEBUG] Container logs:"
-      ansible quay -i playbooks/inventory/quay -b -m shell -a "for c in \$(podman ps -aq); do echo \"=== \$c ===\"; podman logs \$c; done"
+# Function to ensure sshpass is installed
+ensure_sshpass() {
+  if ! command -v sshpass &> /dev/null; then
+    echo "[INFO] Installing sshpass..."
+    if command -v apt-get &> /dev/null; then
+      sudo apt-get update && sudo apt-get install -y sshpass
+    elif command -v dnf &> /dev/null; then
+      sudo dnf install -y sshpass
+    elif command -v yum &> /dev/null; then
+      sudo yum install -y sshpass
+    else
+      echo "[ERROR] Package manager not found. Please install sshpass manually."
       exit 1
     fi
-    if [ $(($i % 5)) -eq 0 ]; then
-      echo "[DEBUG] Current container status:"
-      ansible quay -i playbooks/inventory/quay -b -m shell -a "podman ps -a"
-    fi
-    echo "Attempt $i: Waiting for Quay to be ready..."
-    sleep 10
-  done
+  fi
+}
+
+# Function to deploy registry infrastructure
+deploy_registry() {
+  echo "Deploying ${REGISTRY_TYPE} infrastructure..."
   
-  echo "[SUCCESS] Quay registry deployed and verified"
+  # Ensure sshpass is installed
+  ensure_sshpass
+  
+  # Provision VM with registry-specific configuration
+  echo "[INFO] Provisioning ${REGISTRY_TYPE} VM..."
+  ansible-playbook playbooks/provision-registry-vm.yml \
+    -e "registry_type=${REGISTRY_TYPE}" \
+    -e "@vars/rh_secrets.yml"
+  if [[ $? -ne 0 ]]; then
+    echo "[ERROR] Failed to provision ${REGISTRY_TYPE} VM."
+    exit 1
+  fi
+  
+echo "[INFO] Setting up ${REGISTRY_TYPE} prerequisites..."
+case "$REGISTRY_TYPE" in
+  quay)
+    ansible-playbook -i playbooks/inventory/quay playbooks/setup-quay-only.yml \
+      -e "@playbooks/vars/quay-vars.yml" \
+      -e "@vars/rh_secrets.yml"
+
+    echo "[INFO] Installing mirror-registry..."
+    # Get Quay VM IP from inventory
+    QUAY_IP=$(grep -A1 '\[quay\]' playbooks/inventory/quay | tail -n1 | awk '{print $1}')
+    if [ -z "$QUAY_IP" ]; then
+      echo "[ERROR] Failed to get Quay host IP from inventory"
+      exit 1
+    fi
+
+    # Run mirror-registry installation directly via SSH using sshpass
+    SSHPASS='redhat' sshpass -e ssh -o StrictHostKeyChecking=no root@$QUAY_IP \
+      "cd /root/mirror-registry && ./mirror-registry install --quayHostname=quay.example.com --initUser=admin --initPassword=redhat123 --ssh-key=/root/.ssh/quay_installer"
+    if [ $? -ne 0 ]; then
+      echo "[ERROR] Failed to install mirror-registry"
+      exit 1
+    fi
+
+    # Update local hosts file
+    echo "[INFO] Updating local /etc/hosts file..."
+    if ! grep -q "quay.example.com" /etc/hosts; then
+      echo "$QUAY_IP quay.example.com" | sudo tee -a /etc/hosts > /dev/null
+    else
+      sudo sed -i "s/.*quay\.example\.com/$QUAY_IP quay.example.com/" /etc/hosts
+    fi
+      
+    # Verify Quay health
+      if ! REGISTRY_HOST=$(grep -A1 '\[quay\]' playbooks/inventory/quay | tail -n1 | awk '{print $1}'); then
+        echo "[ERROR] Failed to get Quay host from inventory."
+        exit 1
+      fi
+      
+      for i in {1..30}; do
+        if curl -k -s "https://${REGISTRY_HOST}:8443/health/endtoend" | grep -q "\"status\": \"healthy\""; then
+          echo "[SUCCESS] Quay registry is healthy"
+          break
+        fi
+        if [ $i -eq 30 ]; then
+          echo "[ERROR] Quay registry health check failed"
+          exit 1
+        fi
+        echo "Attempt $i: Waiting for Quay to be ready..."
+        sleep 10
+      done
+      ;;
+      
+    harbor)
+      ansible-playbook playbooks/setup-harbor-registry.yml \
+        -e "@extra_vars/setup-harbor-registry-vars.yml" \
+        -e "@vars/rh_secrets.yml"
+      ;;
+      
+    jfrog)
+      ansible-playbook playbooks/setup-jfrog-registry.yml \
+        -e "@extra_vars/setup-jfrog-registry-vars.yml" \
+        -e "@vars/rh_secrets.yml"
+      ;;
+  esac
+  
+  if [[ $? -ne 0 ]]; then
+    echo "[ERROR] Failed to deploy ${REGISTRY_TYPE} registry."
+    exit 1
+  fi
 }
 
 # Function to push tar files to registry
@@ -255,8 +295,11 @@ fi
 # Validate the tar files
 validate_tar_files
 
-# Deploy Quay registry
-deploy_quay
+# Validate registry type
+validate_registry_type
+
+# Deploy selected registry
+deploy_registry
 
 # Push tar files to registry
 push_to_registry

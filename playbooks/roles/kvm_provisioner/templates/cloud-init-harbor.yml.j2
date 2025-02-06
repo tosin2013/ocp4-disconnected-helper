@@ -1,0 +1,37 @@
+#cloud-config
+packages:
+{% for package in packages %}
+  - {{ package }}
+{% endfor %}
+
+ssh_pwauth: true
+disable_root: false
+
+system_info:
+  default_user:
+    name: {{ cloud_init_default_user }}
+
+chpasswd:
+  list: |
+    {{ cloud_init_default_user }}:{{ cloud_init_default_password }}
+  expire: false
+
+write_files:
+  - path: /etc/yum.repos.d/docker-ce.repo
+    content: |
+      [docker-ce-stable]
+      name=Docker CE Stable - $basearch
+      baseurl=https://download.docker.com/linux/centos/8/$basearch/stable
+      enabled=1
+      gpgcheck=1
+      gpgkey=https://download.docker.com/linux/centos/gpg
+
+runcmd:
+  - subscription-manager register --org={{ rh_credentials.org_id }} --activationkey={{ rh_credentials.activation_key }}
+  - subscription-manager repos --enable=rhel-8-for-x86_64-appstream-rpms
+  - dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+  - dnf install -y docker-ce docker-ce-cli containerd.io
+  - systemctl enable --now docker
+  - sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  - sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - systemctl restart sshd

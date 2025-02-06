@@ -1,0 +1,44 @@
+<![CDATA[
+<domain type='kvm'>
+  <name>{{ quay_vm_name }}</name>
+  <memory unit='MiB'>{{ quay_vm_memory }}</memory>
+  <vcpu placement='static'>{{ quay_vm_cpus }}</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc-i440fx-7.0'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <cpu mode='host-model' check='partial'/>
+  <guest>
+    <os_type arch='x86_64' machine='pc-i440fx-rhel7.0'>hvm</os_type>
+    <boot dev='hd'/>
+  </guest>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <features>
+    <acpi/>
+    <apic/>
+    <vmport state='off'/>
+  </features>
+  <cpu mode='host-model' check='partial'/>
+
+  <devices>
+    <emulator>/usr/bin/qemu-kvm</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='raw'/>
+      <source file='/home/lab-user/{{ quay_vm_name }}.img'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <interface type='network'>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+    <graphics type='vnc' port='-1' autoport='yes'/>
+    <console type='pty'/>
+    <video>
+      <model type='virtio'/>
+    </video>
+  </devices>
+</domain>
+]]>
