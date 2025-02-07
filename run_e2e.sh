@@ -175,15 +175,15 @@ case "$REGISTRY_TYPE" in
       fi
       
       for i in {1..30}; do
-        if curl -k -s "https://${REGISTRY_HOST}:8443/health" | grep -q "\"status\": \"healthy\""; then
-          echo "[SUCCESS] Quay registry is healthy"
+        if curl -k -s "https://${REGISTRY_HOST}:8443/health" | jq -e '.data.services.auth' >/dev/null; then
+          echo "[SUCCESS] Quay registry auth service is healthy"
           break
         fi
         if [ $i -eq 30 ]; then
-          echo "[ERROR] Quay registry health check failed"
+          echo "[ERROR] Quay registry auth service health check failed"
           exit 1
         fi
-        echo "Attempt $i: Waiting for Quay to be ready..."
+        echo "Attempt $i: Waiting for Quay auth service to be ready..."
         sleep 10
       done
       ;;
@@ -270,8 +270,8 @@ push_to_registry() {
         # For Quay: Verify registry health before retry
         if [[ "$REGISTRY_TYPE" == "quay" ]]; then
           echo "Verifying Quay registry health before retry..."
-          if ! curl -k -s "https://${QUAY_IP}:8443/health/endtoend" | grep -q "\"status\": \"healthy\""; then
-            echo "[ERROR] Quay registry is unhealthy. Attempting recovery..."
+          if ! curl -k -s "https://${QUAY_IP}:8443/health" | jq -e '.data.services.auth' >/dev/null; then
+            echo "[ERROR] Quay registry auth service is unhealthy. Attempting recovery..."
             # Simple recovery: restart Quay container
             SSHPASS='redhat' sshpass -e ssh -o StrictHostKeyChecking=no root@$QUAY_IP "podman restart quay"
             sleep 30
