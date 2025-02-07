@@ -32,7 +32,7 @@
     -F qcow2 
     -b /var/lib/libvirt/images/rhel8 
     /var/lib/libvirt/images/{{ vm_name }}.qcow2 
-    {{ vm_disk_size | default('40') }}G
+    {{ vm_disk_size | default('250') }}G
 
 - name: Set registry-specific packages
   set_fact:

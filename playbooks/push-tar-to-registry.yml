@@ -11,118 +11,6 @@
   become: true
 
   tasks:
-
-    - name: Make sure basic packages are installed
-      ansible.builtin.package:
-        name: "{{ base_packages }}"
-        state: present
-      environment:
-        http_proxy: "{{ proxy.http_proxy | default(omit) }}"
-        https_proxy: "{{ proxy.https_proxy | default(omit) }}"
-        no_proxy: "{{ proxy.no_proxy | default(omit) }}"
-
-    - name: Setup Cockpit because I am a lazy admin
-      when: setup_cockpit
-      block:
-        - name: Install Cockpit because it's nice to have
-          ansible.builtin.package:
-            name: ['cockpit', 'cockpit-storaged']
-            state: present
-          environment:
-            http_proxy: "{{ proxy.http_proxy | default(omit) }}"
-            https_proxy: "{{ proxy.https_proxy | default(omit) }}"
-            no_proxy: "{{ proxy.no_proxy | default(omit) }}"
-
-        - name: Enable Cockpit
-          ansible.builtin.service:
-            name: cockpit.socket
-            state: started
-            enabled: true
-
-    - name: Check for the oc binary
-      block:
-        - name: Check if oc is installed
-          ansible.builtin.command: which oc
-          changed_when: false
-          failed_when: oc_installed.rc not in [0, 1]
-          register: oc_installed
-
-        - name: Install the oc binary
-          when: oc_installed.rc not in [0]
-          block:
-            - name: Download the OC binary if proxy is not present 
-              ansible.builtin.get_url:
-                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
-                dest: /tmp/openshift-client-linux.tar.gz
-                mode: 0755
-              when: proxy is not defined
-
-            - name: Download the OC binary if it is not present
-              ansible.builtin.get_url:
-                url: https://mirror.openshift.com/pub/openshift-v4/{{ ansible_architecture }}/clients/ocp/stable/openshift-client-linux.tar.gz
-                dest: /tmp/openshift-client-linux.tar.gz
-                mode: 0755
-              environment:
-                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
-                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
-                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
-              when: proxy is defined
-
-            - name: Extract the oc binary
-              ansible.builtin.unarchive:
-                src: /tmp/openshift-client-linux.tar.gz
-                dest: /usr/local/bin
-                remote_src: true
-                creates: /usr/local/bin/oc
-                mode: 0755
-
-            - name: Enable binary completion for oc
-              ansible.builtin.shell: /usr/local/bin/oc completion bash > /etc/bash_completion.d/oc_completion.sh
-              args:
-                creates: /etc/bash_completion.d/oc_completion.sh
-
-    - name: Check for the oc mirror plugin
-      block:
-        - name: Check if oc is installed
-          ansible.builtin.command: which oc-mirror
-          changed_when: false
-          failed_when: oc_mirror_installed.rc not in [0, 1]
-          register: oc_mirror_installed
-
-        - name: Install the oc-mirror plugin
-          when: oc_mirror_installed.rc not in [0]
-          block:
-            - name: Download the oc-mirror plugin when proxy is not defined 
-              ansible.builtin.get_url:
-                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
-                dest: /tmp/oc-mirror.tar.gz
-                mode: 0755
-              when: proxy is not defined
-
-            - name: Download the oc-mirror plugin
-              ansible.builtin.get_url:
-                url: https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
-                dest: /tmp/oc-mirror.tar.gz
-                mode: 0755
-              environment:
-                http_proxy: "{{ proxy.http_proxy | default(omit) }}"
-                https_proxy: "{{ proxy.https_proxy | default(omit) }}"
-                no_proxy: "{{ proxy.no_proxy | default(omit) }}"
-              when: proxy is defined
-
-            - name: Extract the oc-mirror binary
-              ansible.builtin.unarchive:
-                src: /tmp/oc-mirror.tar.gz
-                dest: /usr/local/bin
-                remote_src: true
-                creates: /usr/local/bin/oc-mirror
-                mode: 0755
-
-            - name: Enable binary completion for oc-mirror
-              ansible.builtin.shell: /usr/local/bin/oc-mirror completion bash > /etc/bash_completion.d/oc-mirror_completion.sh
-              args:
-                creates: /etc/bash_completion.d/oc-mirror_completion.sh
-
     - name: Make sure that the root user has /usr/local/bin in its PATH
       block:
         - name: Check if /usr/local/bin is already defined
@@ -197,61 +85,17 @@
       loop_control:
         loop_var: item
 
-    - name: Get registry storage information (Quay)
-      ansible.builtin.uri:
-        url: "https://{{ registry.server }}:8443/api/v1/repository"
-        method: GET
-        status_code: 200
-        return_content: yes
-        validate_certs: no
-      register: quay_storage_info
-      when: registry.registry_type == "quay"
-      loop: "{{ registries }}"
-      loop_control:
-        loop_var: registry
-
-    - name: Generate checksums for local TAR files
-      ansible.builtin.shell: "sha256sum {{ source_mirror_path }}/{{ mirror_tar_file }}"
-      register: local_checksums
-      changed_when: false
-
-    - name: Fail if Quay storage is full
-      ansible.builtin.fail:
-        msg: "Quay registry storage is full.  Please free up space before proceeding."
-      when: >
-        registry.registry_type == "quay" and
-        (quay_storage_info.json | from_json).storage.used / (quay_storage_info.json | from_json).storage.total * 100 >= 95
-      loop: "{{ registries }}"
-      loop_control:
-        loop_var: registry
-
     - name: Push the mirror to the remote registry
       delegate_to: localhost # Ensure oc mirror runs on the control node
       ansible.builtin.shell:
         cmd: |-
-          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/{{ mirror_tar_file }} docker://{{ registry.server }}/{{ registry.path | default(omit) }}
+          {{ oc_path.stdout }} mirror --from={{ source_mirror_path }}/{{ mirror_tar_file }} docker://{{ registry.server }}/{{ registry.path | default(omit) }} --dest-skip-tls
       loop: "{{ registries }}"
       loop_control:
         loop_var: registry
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
       register: oc_mirror_output
-      async: 1000
-      poll: 0
-
-    - name: Wait for oc mirror to complete
-      ansible.builtin.async_status:
-        jid: "{{ oc_mirror_output.ansible_job_id }}"
-      register: job_result
-      retries: 5 # Retry up to 5 times
-      delay: 60
-      until: job_result.finished
-      delegate_to: localhost
-
-    - name: Fail if oc mirror failed after retries
-      ansible.builtin.fail:
-        msg: "oc mirror failed after multiple retries. Please check the logs for details."
-      when: not job_result.finished
 
     - name: Get remote checksums (Quay)
       ansible.builtin.uri:
@@ -278,11 +122,7 @@
 
     - name: Display oc mirror results
       ansible.builtin.debug:
-        var: job_result.stdout
-
-    - name: Display the command output
-      ansible.builtin.debug:
-        msg: "{{ oc_mirror_output.stdout_lines if oc_mirror_output.stdout_lines is defined else 'No output available' }}"
+        var: oc_mirror_output
 
     - name: Run oc mirror with --manifests-only if no output available
       ansible.builtin.shell:

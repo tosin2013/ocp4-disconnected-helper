@@ -3,10 +3,10 @@
 # Remote Registry Configuration
 registries:
   - username: admin
-    password: notHarbor12345
-    server: disconn-harbor.d70.kemo.labs
+    password: redhat123
+    server: quay.example.com:8443
     path: oc-mirror
-    registry_type: harbor
+    registry_type: quay
 
 # target_registry_auth_path is the user path where the authentication file will be stored on the remote host
 target_registry_auth_path: /root/.docker
@@ -33,14 +33,5 @@ source_path_report_location:  /opt/images/oc-mirror-workspace/
 # Optionally set up Cockpit on the remote host - handy when needing to set up a storage volume
 setup_cockpit: true
 
-# base_packages defines the packages that will be installed on the remote host - mostly just handy
-base_packages:
-  - nano
-  - curl
-  - wget
-  - tar
-  - unzip
-  - bash-completion
-  - bind-utils
-  - httpd-tools
-  - procps-ng
+# No base packages needed since we're in a disconnected environment
+base_packages: []
