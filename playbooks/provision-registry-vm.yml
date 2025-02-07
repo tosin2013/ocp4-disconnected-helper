@@ -1,0 +1,30 @@
+---
+- hosts: localhost
+  connection: local
+  vars_files:
+    - ../vars/rh_secrets.yml
+  vars:
+    registry_type: quay  # Default, overridden by -e
+    vm_name: "{{ registry_type }}-vm"
+    inventory_group: "{{ registry_type }}"
+    inventory_file: "{{ registry_type }}"
+
+  roles:
+    - kvm_provisioner
+
+  tasks:
+    - name: Run registry setup playbook
+      shell: >-
+        cd {{ playbook_dir }} && 
+        ansible-playbook 
+        -i inventory/{{ registry_type }}
+        setup-{{ registry_type }}-only.yml
+        -e "@vars/{{ registry_type }}-vars.yml"
+        -e "@../vars/rh_secrets.yml"
+      register: setup_result
+      failed_when: setup_result.rc != 0
+
+    - name: Display setup result
+      debug:
+        msg: "{{ registry_type | capitalize }} setup playbook completed successfully"
+      when: setup_result is success

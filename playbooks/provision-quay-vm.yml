@@ -1,0 +1,55 @@
+---
+- hosts: localhost
+  connection: local
+  vars_files:
+    - ../vars/rh_secrets.yml
+  vars:
+    vm_name: quay-vm
+    vm_memory: 8192 # 8GB RAM
+    vm_cpus: 4
+    vm_disk_size: 40 # 40GB disk
+    inventory_group: quay
+    inventory_file: quay
+    vm_cloud_init: |
+      #cloud-config
+      packages:
+        - podman
+        - openssl
+        - tar
+        - gzip
+      ssh_pwauth: true
+      disable_root: false
+      system_info:
+        default_user:
+          name: root
+      chpasswd:
+        list: |
+          root:redhat
+        expire: false
+      runcmd:
+        - subscription-manager register --org={{ rh_credentials.org_id }} --activationkey={{ rh_credentials.activation_key }}
+        - subscription-manager repos --enable=rhel-8-for-x86_64-appstream-rpms
+        - systemctl enable --now podman.socket
+        - sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        - sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+        - systemctl restart sshd
+  
+  roles:
+    - kvm_provisioner
+
+  tasks:
+    - name: Run Quay setup playbook
+      shell: >-
+        cd {{ playbook_dir }} && 
+        ansible-playbook 
+        -i inventory/quay
+        setup-quay-only.yml
+        -e "@vars/quay-vars.yml"
+        -e "@../vars/rh_secrets.yml"
+      register: setup_result
+      failed_when: setup_result.rc != 0
+
+    - name: Display setup result
+      debug:
+        msg: "Quay setup playbook completed successfully"
+      when: setup_result is success

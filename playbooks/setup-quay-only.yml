@@ -1,0 +1,21 @@
+---
+- name: Setup Quay Registry
+  hosts: quay
+  become: true
+  vars_files:
+    - ../vars/rh_secrets.yml
+    - vars/quay-vars.yml
+  vars:
+    mirror_registry_version: v2.0.3
+    installer_dir: /root/mirror-registry
+    auto_approve: true
+    configure_hosts: false
+    configure_quay: false
+  
+  pre_tasks:
+    - name: Enable container-tools repository
+      ansible.builtin.command:
+        cmd: subscription-manager repos --enable=rhel-8-for-x86_64-appstream-rpms
+
+  roles:
+    - quay

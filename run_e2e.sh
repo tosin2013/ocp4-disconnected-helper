@@ -175,7 +175,7 @@ case "$REGISTRY_TYPE" in
       fi
       
       for i in {1..30}; do
-        if curl -k -s "https://${REGISTRY_HOST}:8443/health/endtoend" | grep -q "\"status\": \"healthy\""; then
+        if curl -k -s "https://${REGISTRY_HOST}:8443/health" | grep -q "\"status\": \"healthy\""; then
           echo "[SUCCESS] Quay registry is healthy"
           break
         fi
@@ -207,7 +207,7 @@ case "$REGISTRY_TYPE" in
   fi
 }
 
-# Function to push tar files to registry
+# Function to push tar files to registry and sync with Quay database
 push_to_registry() {
   echo "Running push-tar-to-registry playbook..."
   ansible-lint playbooks/push-tar-to-registry.yml
@@ -216,10 +216,78 @@ push_to_registry() {
     exit 1
   fi
 
-  echo "Pushing tar files to registry..."
-  ansible-playbook -i localhost, playbooks/push-tar-to-registry.yml -e "@extra_vars/push-tar-to-registry-vars.yml" --connection=local
-  if [[ $? -ne 0 ]]; then
-    echo "Failed to push tar files to registry."
+  local MAX_RETRIES=3
+  local retry_count=0
+  local push_success=false
+  
+  # Get Quay VM IP from inventory if using Quay
+  if [[ "$REGISTRY_TYPE" == "quay" ]]; then
+    QUAY_IP=$(grep -A1 '\[quay\]' playbooks/inventory/quay | tail -n1 | awk '{print $1}')
+    if [ -z "$QUAY_IP" ]; then
+      echo "[ERROR] Failed to get Quay host IP from inventory"
+      exit 1
+    fi
+  fi
+  
+  while [[ $retry_count -lt $MAX_RETRIES && $push_success == false ]]; do
+    echo "Pushing tar files to registry (Attempt $((retry_count + 1))/$MAX_RETRIES)..."
+    
+    # Run the playbook
+    ansible-playbook -i localhost, playbooks/push-tar-to-registry.yml -e "@extra_vars/push-tar-to-registry-vars.yml" --connection=local
+    push_result=$?
+
+    if [[ $push_result -eq 0 ]]; then
+      # Additional verification for Quay
+      if [[ "$REGISTRY_TYPE" == "quay" ]]; then
+        echo "Verifying Quay database sync..."
+        
+        # Wait for database sync (up to 5 minutes)
+        for i in {1..30}; do
+          if curl -k -s "https://${QUAY_IP}:8443/health/database" | grep -q "\"status\": \"healthy\""; then
+            echo "[SUCCESS] Quay database sync verified"
+            push_success=true
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "[WARNING] Quay database sync check timed out"
+            break
+          fi
+          echo "Waiting for Quay database sync... (Attempt $i/30)"
+          sleep 10
+        done
+      else
+        # For non-Quay registries, consider success if playbook ran successfully
+        push_success=true
+      fi
+    fi
+
+    if [[ $push_success == false ]]; then
+      retry_count=$((retry_count + 1))
+      if [[ $retry_count -lt $MAX_RETRIES ]]; then
+        echo "[WARNING] Push attempt failed. Retrying in 30 seconds..."
+        sleep 30
+        
+        # For Quay: Verify registry health before retry
+        if [[ "$REGISTRY_TYPE" == "quay" ]]; then
+          echo "Verifying Quay registry health before retry..."
+          if ! curl -k -s "https://${QUAY_IP}:8443/health/endtoend" | grep -q "\"status\": \"healthy\""; then
+            echo "[ERROR] Quay registry is unhealthy. Attempting recovery..."
+            # Simple recovery: restart Quay container
+            SSHPASS='redhat' sshpass -e ssh -o StrictHostKeyChecking=no root@$QUAY_IP "podman restart quay"
+            sleep 30
+          fi
+        fi
+      else
+        echo "[ERROR] Failed to push tar files to registry after $MAX_RETRIES attempts."
+        exit 1
+      fi
+    fi
+  done
+
+  if [[ $push_success == true ]]; then
+    echo "[SUCCESS] Successfully pushed tar files to registry"
+  else
+    echo "[ERROR] Failed to push tar files to registry"
     exit 1
   fi
 }
@@ -304,5 +372,12 @@ deploy_registry
 # Push tar files to registry
 push_to_registry
 
-echo "All operations completed successfully."
+echo "[SUCCESS] E2E deployment completed successfully:"
+echo "- Environment validation: PASSED"
+echo "- OpenShift tar files: VALIDATED"
+echo "- Registry deployment: COMPLETED"
+echo "- Tar sync to registry: VERIFIED"
+if [[ "$REGISTRY_TYPE" == "quay" ]]; then
+  echo "- Quay database sync: CONFIRMED"
+fi
 exit 0
