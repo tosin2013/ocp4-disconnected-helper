@@ -3,7 +3,7 @@
 vm_name: registry-vm
 vm_memory: 8192  # 8GB RAM
 vm_cpus: 4
-vm_disk_size: 40  # 40GB disk
+vm_disk_size: 300  # 300GB disk
 
 # Registry-specific configurations
 registry_type: quay  # Supported values: quay, harbor, jfrog
