@@ -87,7 +87,7 @@
     - name: View Output of oc-mirror Log @
       delegate_to: localhost
       ansible.builtin.debug:
-        msg: "view the log located /tmp/oc-mirror-' + item.path + '.log'  to follow along with the push."}}"
+        msg: "View the log located /tmp/oc-mirror-{{ item.path }}.log  to follow along with the push."
       loop: "{{ registries }}"
 
     - name: Push the mirror to the remote registry
