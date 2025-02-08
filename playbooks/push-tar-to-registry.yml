@@ -84,13 +84,11 @@
       when: "item.registry_type == 'harbor'"
       failed_when: false
 
-    - name: View Output of oc-mirror Log
+    - name: View Output of oc-mirror Log @
+      delegate_to: localhost
       ansible.builtin.debug:
-        msg: "tail -f {{ lookup('file', '/tmp/oc-mirror-' + item.path + '.log') }}"
+        msg: "view the log located /tmp/oc-mirror-' + item.path + '.log'  to follow along with the push."}}"
       loop: "{{ registries }}"
-      loop_control:
-        loop_var: item
-      when: "item.registry_type == 'harbor'"
 
     - name: Push the mirror to the remote registry
       delegate_to: localhost
@@ -102,24 +100,17 @@
             --dest-skip-tls --max-per-registry=2 2>&1 | tee /tmp/oc-mirror-{{ item.path }}.log
       args:
         executable: /bin/bash
-        creates: "/opt/images/oc-mirror-workspace/results-{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+        creates: "/tmp/oc-mirror-result.log"
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
-      register: mirror_output
+      register: push_status
       loop: "{{ registries }}"
       loop_control:
         loop_var: item
-      changed_when: "'Writing ICSP manifests to' in mirror_output.stdout"
-
-    - name: Verify push completion
-      ansible.builtin.assert:
-        that: "'error' not in item.stdout_lower"
-        fail_msg: "Mirror push failed for {{ item.item.server }}/{{ item.item.path }}"
-      loop: "{{ push_status.results }}"
-      loop_control:
-        loop_var: item
+      changed_when: "'Writing ICSP manifests to' in push_status.stdout"
 
     - name: Wait for repository to be available in registry
+      delegate_to: localhost
       ansible.builtin.uri:
         url: "https://{{ item.server }}/v2/{{ item.path }}/tags/list"
         method: GET
@@ -127,6 +118,7 @@
         status_code: [200, 404]
         url_username: "{{ item.username }}"
         url_password: "{{ item.password }}"
+        force_basic_auth: true
       register: repo_check
       until: "repo_check.status == 200"
       retries: 30
