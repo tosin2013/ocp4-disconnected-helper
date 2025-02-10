@@ -131,7 +131,7 @@ deploy_registry() {
   echo "[INFO] Provisioning ${REGISTRY_TYPE} VM..."
   ansible-playbook playbooks/provision-registry-vm.yml \
     -e "registry_type=${REGISTRY_TYPE}" \
-    -e "@vars/rh_secrets.yml"
+    -e "@/home/lab-user/ocp4-disconnected-helper/vars/rh_secrets.yml"
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Failed to provision ${REGISTRY_TYPE} VM."
     exit 1
