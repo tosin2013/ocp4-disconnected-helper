@@ -2,7 +2,7 @@
 - hosts: localhost
   connection: local
   vars_files:
-    - ../vars/rh_secrets.yml
+    - /home/lab-user/ocp4-disconnected-helper/vars/rh_secrets.yml
   vars:
     vm_name: quay-vm
     vm_memory: 8192 # 8GB RAM

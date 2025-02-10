@@ -2,7 +2,7 @@
 - hosts: localhost
   connection: local
   vars_files:
-    - ../vars/rh_secrets.yml
+    - /home/lab-user/ocp4-disconnected-helper/vars/rh_secrets.yml
   vars:
     registry_type: quay  # Default, overridden by -e
     vm_name: "{{ registry_type }}-vm"
@@ -20,7 +20,7 @@
         -i inventory/{{ registry_type }}
         setup-{{ registry_type }}-only.yml
         -e "@vars/{{ registry_type }}-vars.yml"
-        -e "@../vars/rh_secrets.yml"
+        -e "@/home/lab-user/ocp4-disconnected-helper/vars/rh_secrets.yml"
       register: setup_result
       failed_when: setup_result.rc != 0
 
