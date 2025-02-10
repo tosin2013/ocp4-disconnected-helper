@@ -1,6 +1,9 @@
 name: E2E Workflow
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
     inputs:
       registry_type:
