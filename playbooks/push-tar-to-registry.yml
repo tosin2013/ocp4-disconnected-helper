@@ -109,44 +109,23 @@
         loop_var: item
       changed_when: "'Writing ICSP manifests to' in push_status.stdout"
 
-    - name: Wait for repository to be available in registry
+    - name: Inspect remote repository
       delegate_to: localhost
-      ansible.builtin.uri:
-        url: "https://{{ item.server }}/v2/{{ item.path }}/tags/list"
-        method: GET
-        validate_certs: false
-        status_code: [200, 404]
-        url_username: "{{ item.username }}"
-        url_password: "{{ item.password }}"
-        force_basic_auth: true
-      register: repo_check
-      until: "repo_check.status == 200"
-      retries: 30
-      delay: 10
+      ansible.builtin.shell:
+        cmd: >-
+          skopeo inspect docker://{{ item.server }}/{{ item.path | default(omit) }}
+          --creds {{ item.username }}:{{ item.password }}
       loop: "{{ registries }}"
       loop_control:
         loop_var: item
+      register: inspect_result
+      failed_when: inspect_result.rc != 0
 
     - name: Calculate local checksums
       ansible.builtin.command:
         cmd: "sha256sum {{ source_mirror_path }}/{{ mirror_tar_file }}"
       register: local_checksums
       changed_when: false
-
-    - name: Get remote checksums
-      ansible.builtin.uri:
-        url: >-
-          https://{{ registry.server }}/api/v1/repository/{{ registry.path }}/
-          {{ mirror_tar_file | basename | replace('.tar', '') }}/tag
-        method: GET
-        status_code: 200
-        return_content: true
-        validate_certs: false
-      register: registry_checksums
-      loop: "{{ registries }}"
-      loop_control:
-        loop_var: registry
-      when: "registry.registry_type == 'quay'"
 
     - name: Verify checksums
       ansible.builtin.assert:
