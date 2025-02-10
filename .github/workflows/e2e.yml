@@ -1,0 +1,44 @@
+name: E2E Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      registry_type:
+        description: 'Registry type (quay, harbor, or jfrog)'
+        required: true
+        default: 'quay'
+      skip_validation:
+        description: 'Skip environment validation (yes or no)'
+        required: true
+        default: 'no'
+      destroy_vms:
+        description: 'Destroy VMs after run (yes or no)'
+        required: true
+        default: 'no'
+
+jobs:
+  e2e-tests:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Bootstrap Environment
+        run: |
+          sudo ./bootstrap_env.sh
+
+      - name: Validate Environment
+        run: |
+          ./validate_env.sh
+
+      - name: Run E2E Tests
+        run: |
+          ./run_e2e.sh ${{ inputs.registry_type }} ${{ inputs.skip_validation }}
+        env:
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Destroy VMs (if enabled)
+        if: inputs.destroy_vms == 'yes'
+        run: |
+          # Add VM destruction logic here (e.g., using Ansible playbooks)
+          echo "Destroying VMs..."
