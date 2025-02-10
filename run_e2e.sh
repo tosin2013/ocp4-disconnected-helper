@@ -142,7 +142,7 @@ case "$REGISTRY_TYPE" in
   quay)
     ansible-playbook -i playbooks/inventory/quay playbooks/setup-quay-only.yml \
       -e "@playbooks/vars/quay-vars.yml" \
-      -e "@vars/rh_secrets.yml"
+      -e "@/home/lab-user/ocp4-disconnected-helper/vars/rh_secrets.yml"
 
     echo "[INFO] Installing mirror-registry..."
     # Get Quay VM IP from inventory
