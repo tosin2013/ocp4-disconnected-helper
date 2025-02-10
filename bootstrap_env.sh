@@ -4,7 +4,25 @@
 # See: Environment Setup and Validation section
 ### Completed Tasks
 # 1. pip install molecule - Added 2025-02-03
+# --- Get Red Hat credentials ---
+if [ -f vars/rh_secrets.yml ]; then
+    echo "Red Hat credentials already set up."
+else
+    echo "Please enter your Red Hat credentials:"
 
+    read -r -s -p "Enter your Red Hat Organization ID: " ORG_ID
+    read -r -s -p "Enter your Red Hat Activation Key: " ACTIVATION_KEY
+    echo
+
+    # --- Populate rh_secrets.yml ---
+    cat <<EOF > vars/rh_secrets.yml
+    ---
+    # Red Hat Subscription Manager Credentials
+    rh_credentials:
+    org_id: "$ORG_ID"
+    activation_key: "$ACTIVATION_KEY"
+EOF
+fi 
 
 
 # Colors for output
@@ -33,35 +51,6 @@ print_info() {
     echo -e "${BLUE}$1${NC}"
 }
 
-# Check if running as root or with sudo
-if [ "$EUID" -eq 0 ]; then
-    echo "Please don't run this script as root or with sudo"
-    exit 1
-fi
-
-# Function to check if user has the required sudo permissions
-check_sudo_permissions() {
-    for cmd in "dnf install" "subscription-manager register" "subscription-manager repos" "alternatives" "systemctl restart"; do
-        if ! sudo -l | grep -q "NOPASSWD: /usr/bin/$cmd"; then
-            echo "Missing required sudo permission for: $cmd"
-            echo "Please ensure the following is in sudoers:"
-            echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/$cmd *"
-            exit 1
-        fi
-    done
-}
-
-# Check sudo permissions
-check_sudo_permissions
-
-# Create required directories with appropriate permissions
-mkdir -p ~/.local/share/kcli
-mkdir -p ~/.ssh
-
-# Set correct permissions
-chmod 700 ~/.ssh
-chmod 700 ~/.local/share/kcli
-
 # Check if script is run with sudo
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Please run this script with sudo privileges${NC}"
@@ -77,19 +66,6 @@ if ! subscription-manager status | grep -q "Overall Status: Current"; then
         exit 1
     fi
     print_status "System registered successfully" 0
-    # --- Get Red Hat credentials ---
-    read -r -s -p "Enter your Red Hat Organization ID: " ORG_ID
-    read -r -s -p "Enter your Red Hat Activation Key: " ACTIVATION_KEY
-    echo "Red Hat credentials received"`
-
-    # --- Populate rh_secrets.yml ---
-    cat <<EOF > vars/rh_secrets.yml
----
-# Red Hat Subscription Manager Credentials
-rh_credentials:
-  org_id: "$ORG_ID"
-  activation_key: "$ACTIVATION_KEY"
-EOF
 else
     print_status "System already registered" 0
 fi
@@ -367,9 +343,3 @@ echo "1. You may need to log out and back in for group changes to take effect"
 echo "2. Run './validate_env.sh' again after logging back in to verify the environment"
 echo "3. If any checks still fail, please check the error messages and system logs"
 echo "4. Make sure the RHEL 8 KVM image is properly set up"
-
-# Ensure any created files are owned by the current user
-find ~/.local/share/kcli -type f -exec chmod 600 {} \;
-find ~/.local/share/kcli -type d -exec chmod 700 {} \;
-
-echo "Environment setup completed for user: $USER"
