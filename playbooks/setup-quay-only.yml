@@ -3,7 +3,7 @@
   hosts: quay
   become: true
   vars_files:
-    - ../vars/rh_secrets.yml
+    - /home/lab-user/ocp4-disconnected-helper/vars/rh_secrets.yml
     - vars/quay-vars.yml
   vars:
     mirror_registry_version: v2.0.3
