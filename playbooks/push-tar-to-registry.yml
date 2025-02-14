@@ -119,14 +119,19 @@
 
     - name: Display repository tags
       ansible.builtin.debug:
-        msg: "Available tags for {{ item.server }}/{{ item.path }}/{{ item.path }}: {{ (skopeo_tags.results[ansible_loop.index0].stdout | from_json).Tags }}"
+        msg: >-
+          Available tags for {{ item.server }}/{{ item.path }}/{{ item.path }}:
+          {{ (skopeo_tags.results[ansible_loop.index0].stdout | from_json).Tags }}
       loop: "{{ registries }}"
       when: skopeo_tags.results[ansible_loop.index0].rc == 0
 
     - name: Inspect latest pushed tag
       delegate_to: localhost
       ansible.builtin.command:
-        cmd: "skopeo inspect docker://{{ item.server }}/{{ item.path }}/{{ item.path }}:{{ (skopeo_tags.results[ansible_loop.index0].stdout | from_json).Tags[-1] }} --tls-verify=false"
+        cmd: >-
+          skopeo inspect
+          docker://{{ item.server }}/{{ item.path }}/{{ item.path }}:{{ (skopeo_tags.results[ansible_loop.index0].stdout | from_json).Tags[-1] }}
+          --tls-verify=false
       register: skopeo_inspect
       changed_when: false
       loop: "{{ registries }}"
