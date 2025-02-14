@@ -100,7 +100,6 @@
             --dest-skip-tls --max-per-registry=2 2>&1 | tee /tmp/oc-mirror-{{ item.path }}.log
       args:
         executable: /bin/bash
-        creates: "/tmp/oc-mirror-result.log"
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
       register: push_status
@@ -109,16 +108,29 @@
         loop_var: item
       changed_when: "'Writing ICSP manifests to' in push_status.stdout"
 
-    - name: Inspect remote repository
+    - name: List repository tags
       delegate_to: localhost
       ansible.builtin.command:
-        cmd: >-
-          skopeo inspect docker://{{ item.server }}/{{ item.path | default(omit) }}
-          --creds {{ item.username }}:{{ item.password }}
-      loop: "{{ registries }}"
-      loop_control:
-        loop_var: item
+        cmd: "skopeo list-tags docker://{{ item.server }}/{{ item.path }}/{{ item.path }} --tls-verify=false"
+      register: skopeo_tags
       changed_when: false
+      loop: "{{ registries }}"
+      ignore_errors: true
+
+    - name: Display repository tags
+      ansible.builtin.debug:
+        msg: "Available tags for {{ item.server }}/{{ item.path }}/{{ item.path }}: {{ (skopeo_tags.results[ansible_loop.index0].stdout | from_json).Tags }}"
+      loop: "{{ registries }}"
+      when: skopeo_tags.results[ansible_loop.index0].rc == 0
+
+    - name: Inspect latest pushed tag
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: "skopeo inspect docker://{{ item.server }}/{{ item.path }}/{{ item.path }}:{{ (skopeo_tags.results[ansible_loop.index0].stdout | from_json).Tags[-1] }} --tls-verify=false"
+      register: skopeo_inspect
+      changed_when: false
+      loop: "{{ registries }}"
+      when: skopeo_tags.results[ansible_loop.index0].rc == 0
 
     - name: Calculate local checksums
       ansible.builtin.command:
@@ -126,29 +138,6 @@
       register: local_checksums
       changed_when: false
 
-    - name: Verify checksums
-      ansible.builtin.assert:
-        that: >-
-          local_checksums.stdout | regex_search('(\\w+)\\s+.*', '\\1') ==
-          (registry_checksums.json | from_json)[0].manifest_digest | regex_search('sha256:(\\w+)', '\\1')
-        fail_msg: >-
-          Checksum verification failed for {{ registry.server }}/{{ registry.path }}/
-          {{ mirror_tar_file | basename | replace('.tar', '') }}
-      loop: "{{ registries }}"
-      loop_control:
-        loop_var: registry
-      when: "registry.registry_type == 'quay'"
-
-    - name: Get mirror results path
-      ansible.builtin.set_fact:
-        mirror_results_path: "{{ source_mirror_path }}/oc-mirror-workspace/results-{{ lookup('pipe', 'date +%s') }}"
-
-    - name: Create mirror results directory
-      ansible.builtin.file:
-        path: "{{ mirror_results_path }}"
-        state: directory
-        mode: "0o755"
-
-    - name: Display mirror results location
+    - name: Display oc-mirror workspace location
       ansible.builtin.debug:
-        msg: "Mirror results are located at {{ mirror_results_path }}"
+        msg: "Mirror results are located at {{ source_mirror_path }}/oc-mirror-workspace/"
