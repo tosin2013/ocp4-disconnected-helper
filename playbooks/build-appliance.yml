@@ -1,0 +1,460 @@
+---
+# Build OpenShift Appliance Disk Image
+# ADR Reference: ADR 0005 - OpenShift Appliance Builder Integration
+#
+# This playbook builds a self-contained OpenShift appliance disk image
+# for fully disconnected cluster installations using the Agent-based installer.
+#
+# IMPORTANT: For disconnected environments, run the mirroring playbooks FIRST:
+#   1. setup-mirror-registry.yml (or setup-harbor-registry.yml)
+#   2. download-to-tar.yml
+#   3. push-tar-to-registry.yml
+#   4. build-appliance.yml (this playbook, with use_local_registry=true)
+#
+# Usage:
+#   # Connected build (pulls from Red Hat registries)
+#   ansible-playbook -i inventory build-appliance.yml
+#
+#   # Disconnected build (uses local registry with mirrored content)
+#   ansible-playbook -i inventory build-appliance.yml \
+#       -e "use_local_registry=true" \
+#       -e "local_registry_uri=registry.example.com:8443"
+#
+#   # Build with custom OCP version
+#   ansible-playbook -i inventory build-appliance.yml -e "ocp_release_version=4.20.0"
+#
+#   # Build with operators included
+#   ansible-playbook -i inventory build-appliance.yml -e @extra_vars/build-appliance.yml
+#
+#   # Clean and rebuild
+#   ansible-playbook -i inventory build-appliance.yml -e "appliance_action=clean"
+#
+# Variables (see extra_vars/build-appliance-example.yml):
+#   ocp_release_version: OpenShift version (e.g., 4.20.0)
+#   ocp_release_channel: Release channel (stable, fast, eus, candidate)
+#   appliance_disk_size_gb: Disk image size in GB (minimum 150)
+#   pull_secret_path: Path to Red Hat pull secret
+#   use_local_registry: Set to true for disconnected builds
+#   local_registry_uri: URI of local registry with mirrored content
+
+- name: Build OpenShift Appliance Disk Image
+  hosts: localhost
+  gather_facts: true
+  become: true
+  
+  vars:
+    # OpenShift Release Configuration
+    ocp_release_version: "4.20.0"
+    ocp_release_channel: "stable"
+    ocp_cpu_architecture: "x86_64"  # x86_64, aarch64, ppc64le
+    
+    # Appliance Configuration
+    appliance_disk_size_gb: 200  # Minimum 150GB recommended
+    appliance_assets_path: "/opt/appliance-assets"
+    appliance_output_path: "/opt/appliance-output"
+    appliance_image: "quay.io/edge-infrastructure/openshift-appliance"
+    
+    # Pull Secret
+    pull_secret_path: "/root/pull-secret.json"
+    
+    # SSH Key for appliance access
+    ssh_key_path: "{{ ansible_env.HOME }}/.ssh/id_rsa.pub"
+    
+    # Optional: User core password (for console access)
+    # user_core_password: ""
+    
+    # Registry Configuration (for disconnected builds)
+    # If using local registry from mirror-registry/harbor/jfrog
+    use_local_registry: false
+    local_registry_uri: ""  # e.g., "registry.example.com:8443"
+    local_registry_ca_path: ""  # Path to registry CA certificate
+    
+    # Operators to include in appliance
+    # Format matches oc-mirror imageSetConfig
+    operators: []
+    # Example:
+    # operators:
+    #   - catalog: "registry.redhat.io/redhat/redhat-operator-index:v4.20"
+    #     packages:
+    #       - name: "local-storage-operator"
+    #         channels:
+    #           - name: "stable"
+    #       - name: "odf-operator"
+    #         channels:
+    #           - name: "stable-4.20"
+    
+    # Additional images to include
+    additional_images: []
+    # Example:
+    # additional_images:
+    #   - name: "quay.io/example/myapp:latest"
+    
+    # Blocked images (exclude from appliance)
+    blocked_images: []
+    
+    # Appliance options
+    enable_default_sources: false  # Disable for disconnected
+    stop_local_registry: false     # Keep registry running post-install
+    enable_fips: false             # Enable FIPS mode
+    
+    # Action: build, clean, generate-config
+    appliance_action: "build"
+    
+    # Container runtime
+    container_runtime: "podman"
+    
+  tasks:
+    # =========================================================================
+    # Prerequisites
+    # =========================================================================
+    - name: Check prerequisites
+      block:
+        - name: Verify container runtime is installed
+          ansible.builtin.command:
+            cmd: "{{ container_runtime }} --version"
+          register: runtime_version
+          changed_when: false
+
+        - name: Display container runtime version
+          ansible.builtin.debug:
+            msg: "{{ container_runtime }} version: {{ runtime_version.stdout }}"
+
+        - name: Check if pull secret exists
+          ansible.builtin.stat:
+            path: "{{ pull_secret_path }}"
+          register: pull_secret_stat
+
+        - name: Fail if pull secret not found
+          ansible.builtin.fail:
+            msg: "Pull secret not found at {{ pull_secret_path }}. Download from https://console.redhat.com/openshift/install/pull-secret"
+          when: not pull_secret_stat.stat.exists
+
+        - name: Check SSH key exists
+          ansible.builtin.stat:
+            path: "{{ ssh_key_path }}"
+          register: ssh_key_stat
+
+        - name: Generate SSH key if not exists
+          ansible.builtin.command:
+            cmd: ssh-keygen -t rsa -b 4096 -f {{ ssh_key_path | regex_replace('\.pub$', '') }} -N ""
+            creates: "{{ ssh_key_path }}"
+          when: not ssh_key_stat.stat.exists
+
+        - name: Check available disk space
+          ansible.builtin.shell: |
+            df -BG {{ appliance_assets_path | dirname }} 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G' || echo "0"
+          register: available_space
+          changed_when: false
+
+        - name: Warn if disk space may be insufficient
+          ansible.builtin.debug:
+            msg: "WARNING: Only {{ available_space.stdout }}GB available. Appliance build requires ~{{ appliance_disk_size_gb }}GB free space."
+          when: available_space.stdout | int < appliance_disk_size_gb | int
+
+    # =========================================================================
+    # Verify Local Registry (for disconnected builds)
+    # =========================================================================
+    - name: Verify local registry has mirrored content
+      when: use_local_registry
+      block:
+        - name: Check if local registry is reachable
+          ansible.builtin.uri:
+            url: "https://{{ local_registry_uri }}/v2/"
+            validate_certs: "{{ local_registry_ca_path | length > 0 }}"
+            status_code: [200, 401]  # 401 is OK (auth required)
+          register: registry_check
+          failed_when: false
+
+        - name: Fail if local registry is not reachable
+          ansible.builtin.fail:
+            msg: |
+              Local registry at {{ local_registry_uri }} is not reachable.
+              
+              For disconnected builds, you must first:
+              1. Run setup-mirror-registry.yml (or setup-harbor-registry.yml)
+              2. Run download-to-tar.yml to mirror OCP images
+              3. Run push-tar-to-registry.yml to push to local registry
+              
+              Then run this playbook with:
+                -e "use_local_registry=true"
+                -e "local_registry_uri={{ local_registry_uri }}"
+          when: registry_check.status is not defined or registry_check.status not in [200, 401]
+
+        - name: Display local registry info
+          ansible.builtin.debug:
+            msg:
+              - "Using local registry: {{ local_registry_uri }}"
+              - "Ensure OCP {{ ocp_release_version }} images are mirrored to this registry"
+
+    # =========================================================================
+    # Directory Setup
+    # =========================================================================
+    - name: Create appliance directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ appliance_assets_path }}"
+        - "{{ appliance_assets_path }}/openshift"
+        - "{{ appliance_assets_path }}/openshift/crs"
+        - "{{ appliance_output_path }}"
+
+    # =========================================================================
+    # Clean Action
+    # =========================================================================
+    - name: Clean appliance assets
+      when: appliance_action == "clean"
+      block:
+        - name: Run appliance clean command
+          ansible.builtin.command:
+            cmd: >
+              {{ container_runtime }} run --rm -it
+              -v {{ appliance_assets_path }}:/assets:Z
+              {{ appliance_image }} clean
+          register: clean_result
+
+        - name: Display clean result
+          ansible.builtin.debug:
+            msg: "{{ clean_result.stdout_lines }}"
+
+        - name: End play after clean
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Read Pull Secret
+    # =========================================================================
+    - name: Read pull secret
+      ansible.builtin.slurp:
+        src: "{{ pull_secret_path }}"
+      register: pull_secret_content
+
+    - name: Read SSH public key
+      ansible.builtin.slurp:
+        src: "{{ ssh_key_path }}"
+      register: ssh_key_content
+
+    # =========================================================================
+    # Generate Appliance Config
+    # =========================================================================
+    - name: Generate appliance-config.yaml
+      ansible.builtin.copy:
+        dest: "{{ appliance_assets_path }}/appliance-config.yaml"
+        mode: "0644"
+        content: |
+          #
+          # OpenShift Appliance Configuration
+          # Generated by build-appliance.yml
+          # OCP Version: {{ ocp_release_version }}
+          # Generated: {{ ansible_date_time.iso8601 }}
+          #
+          apiVersion: v1beta1
+          kind: ApplianceConfig
+          
+          # OpenShift Release Configuration
+          ocpRelease:
+            version: "{{ ocp_release_version }}"
+            channel: {{ ocp_release_channel }}
+            cpuArchitecture: {{ ocp_cpu_architecture }}
+          
+          # Disk size for the appliance image
+          # Must match or be smaller than target server disk
+          diskSizeGB: {{ appliance_disk_size_gb }}
+          
+          # Red Hat Pull Secret (required for mirroring OCP release payload)
+          pullSecret: '{{ pull_secret_content.content | b64decode | trim }}'
+          
+          # SSH public key for accessing appliance during bootstrap
+          sshKey: "{{ ssh_key_content.content | b64decode | trim }}"
+          
+          {% if user_core_password is defined and user_core_password %}
+          # Password for 'core' user console access
+          userCorePass: "{{ user_core_password }}"
+          {% endif %}
+          
+          {% if use_local_registry and local_registry_uri %}
+          # Local image registry (for disconnected builds)
+          imageRegistry:
+            uri: "{{ local_registry_uri }}"
+            port: 5005
+          {% endif %}
+          
+          # Disable default CatalogSources for disconnected environments
+          enableDefaultSources: {{ enable_default_sources | lower }}
+          
+          # Keep local registry running post-installation
+          stopLocalRegistry: {{ stop_local_registry | lower }}
+          
+          {% if enable_fips %}
+          # Enable FIPS mode
+          enableFips: true
+          {% endif %}
+          
+          {% if additional_images | length > 0 %}
+          # Additional images to include in appliance
+          additionalImages:
+          {% for image in additional_images %}
+            - name: "{{ image.name }}"
+          {% endfor %}
+          {% endif %}
+          
+          {% if blocked_images | length > 0 %}
+          # Images to exclude from appliance
+          blockedImages:
+          {% for image in blocked_images %}
+            - name: "{{ image.name }}"
+          {% endfor %}
+          {% endif %}
+          
+          {% if operators | length > 0 %}
+          # Operators to include in appliance
+          operators:
+          {% for operator in operators %}
+            - catalog: "{{ operator.catalog }}"
+              packages:
+          {% for package in operator.packages %}
+                - name: "{{ package.name }}"
+                  channels:
+          {% for channel in package.channels %}
+                    - name: "{{ channel.name }}"
+          {% endfor %}
+          {% endfor %}
+          {% endfor %}
+          {% endif %}
+
+    - name: Display generated config
+      ansible.builtin.command:
+        cmd: cat {{ appliance_assets_path }}/appliance-config.yaml
+      register: config_content
+      changed_when: false
+
+    - name: Show appliance config (without secrets)
+      ansible.builtin.debug:
+        msg: "Appliance config generated at {{ appliance_assets_path }}/appliance-config.yaml"
+
+    # =========================================================================
+    # Generate Config Only Action
+    # =========================================================================
+    - name: End play if only generating config
+      when: appliance_action == "generate-config"
+      block:
+        - name: Display config location
+          ansible.builtin.debug:
+            msg:
+              - "Appliance config generated successfully!"
+              - "Location: {{ appliance_assets_path }}/appliance-config.yaml"
+              - ""
+              - "To build the appliance, run:"
+              - "  ansible-playbook build-appliance.yml -e 'appliance_action=build'"
+
+        - name: End play
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Copy CA Certificate (if using local registry)
+    # =========================================================================
+    - name: Copy local registry CA certificate
+      ansible.builtin.copy:
+        src: "{{ local_registry_ca_path }}"
+        dest: "{{ appliance_assets_path }}/registry-ca.crt"
+        mode: "0644"
+      when: use_local_registry and local_registry_ca_path | length > 0
+
+    # =========================================================================
+    # Build Appliance
+    # =========================================================================
+    - name: Build appliance disk image
+      when: appliance_action == "build"
+      block:
+        - name: Display build start message
+          ansible.builtin.debug:
+            msg:
+              - "=============================================="
+              - "Starting OpenShift Appliance Build"
+              - "=============================================="
+              - ""
+              - "OCP Version:    {{ ocp_release_version }}"
+              - "Channel:        {{ ocp_release_channel }}"
+              - "Architecture:   {{ ocp_cpu_architecture }}"
+              - "Disk Size:      {{ appliance_disk_size_gb }}GB"
+              - "Assets Path:    {{ appliance_assets_path }}"
+              - ""
+              - "This process may take 30-60 minutes..."
+              - "=============================================="
+
+        - name: Pull appliance builder image
+          ansible.builtin.command:
+            cmd: "{{ container_runtime }} pull {{ appliance_image }}"
+          register: pull_result
+          changed_when: "'Pulling' in pull_result.stdout or 'Downloaded' in pull_result.stdout"
+
+        - name: Build appliance disk image
+          ansible.builtin.command:
+            cmd: >
+              {{ container_runtime }} run --rm -it
+              --privileged
+              --net=host
+              -v {{ appliance_assets_path }}:/assets:Z
+              {{ appliance_image }} build
+          register: build_result
+          async: 7200  # 2 hour timeout
+          poll: 60     # Check every minute
+
+        - name: Display build output
+          ansible.builtin.debug:
+            msg: "{{ build_result.stdout_lines }}"
+
+        - name: Check if appliance was created
+          ansible.builtin.stat:
+            path: "{{ appliance_assets_path }}/appliance.raw"
+          register: appliance_raw
+
+        - name: Fail if appliance not created
+          ansible.builtin.fail:
+            msg: "Appliance build failed - appliance.raw not found"
+          when: not appliance_raw.stat.exists
+
+        - name: Get appliance file size
+          ansible.builtin.stat:
+            path: "{{ appliance_assets_path }}/appliance.raw"
+          register: appliance_stat
+
+        - name: Copy appliance to output directory
+          ansible.builtin.copy:
+            src: "{{ appliance_assets_path }}/appliance.raw"
+            dest: "{{ appliance_output_path }}/appliance-{{ ocp_release_version }}.raw"
+            remote_src: true
+            mode: "0644"
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display build summary
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "OpenShift Appliance Build Complete"
+          - "=============================================="
+          - ""
+          - "Appliance Image: {{ appliance_output_path }}/appliance-{{ ocp_release_version }}.raw"
+          - "Size:            {{ (appliance_stat.stat.size / 1073741824) | round(2) }}GB"
+          - "OCP Version:     {{ ocp_release_version }}"
+          - ""
+          - "Next Steps:"
+          - ""
+          - "1. Clone appliance to target disk:"
+          - "   dd if=appliance-{{ ocp_release_version }}.raw of=/dev/sdX bs=4M status=progress"
+          - ""
+          - "2. Or convert to qcow2 for VMs:"
+          - "   qemu-img convert -f raw -O qcow2 appliance-{{ ocp_release_version }}.raw appliance-{{ ocp_release_version }}.qcow2"
+          - ""
+          - "3. Generate cluster config ISO:"
+          - "   openshift-install agent create config-image --dir <config-dir>"
+          - ""
+          - "4. Boot from appliance disk and attach config ISO"
+          - ""
+          - "Documentation:"
+          - "   https://github.com/openshift/appliance/blob/master/docs/user-guide.md"
+          - ""
+          - "=============================================="
+      when: appliance_action == "build"

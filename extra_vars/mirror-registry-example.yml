@@ -1,0 +1,31 @@
+---
+# Mirror Registry Configuration Example
+# ADR Reference: ADR 0017 - Quay Mirror Registry
+#
+# Copy this file and customize for your environment:
+#   cp mirror-registry-example.yml mirror-registry.yml
+#   ansible-playbook -i inventory playbooks/setup-mirror-registry.yml -e @extra_vars/mirror-registry.yml
+
+# Registry hostname and port
+mirror_registry_hostname: "registry.example.com"
+mirror_registry_port: 8443
+
+# Admin credentials
+mirror_registry_user: "admin"
+mirror_registry_password: "SecurePassword123!"  # Change this!
+
+# Installation paths
+mirror_registry_install_dir: "/opt/mirror-registry"
+mirror_registry_data_dir: "/opt/mirror-registry/quay-storage"
+
+# Certificate options
+# Option 1: Use mirror-registry's auto-generated certificates (simplest)
+use_custom_certs: false
+
+# Option 2: Use custom certificates from setup-certificates.yml
+# use_custom_certs: true
+# custom_cert_path: "/etc/pki/registry/registry.crt"
+# custom_key_path: "/etc/pki/registry/registry.key"
+
+# Action: install, uninstall
+mirror_registry_action: "install"

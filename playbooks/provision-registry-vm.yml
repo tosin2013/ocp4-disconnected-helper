@@ -1,0 +1,320 @@
+---
+# Provision Registry VM using kcli
+# ADR Reference: ADR 0018 - Registry Deployment on Dedicated VM
+#
+# This playbook creates a dedicated VM for hosting the container registry
+# (mirror-registry, Harbor, or JFrog) using kcli via qubinode_navigator.
+#
+# Prerequisites:
+#   - kcli installed and configured
+#   - libvirt/KVM available
+#   - Network configured (default or custom)
+#
+# Usage:
+#   # Create registry VM with defaults
+#   ansible-playbook -i inventory provision-registry-vm.yml
+#
+#   # Create with custom specs
+#   ansible-playbook -i inventory provision-registry-vm.yml \
+#       -e "registry_vm_memory=16384" \
+#       -e "registry_vm_disk_size=1000"
+#
+#   # Delete registry VM
+#   ansible-playbook -i inventory provision-registry-vm.yml \
+#       -e "registry_vm_action=delete"
+
+- name: Provision Registry VM
+  hosts: localhost
+  gather_facts: true
+  become: false
+  
+  vars:
+    # VM Configuration
+    registry_vm_name: "registry"
+    registry_vm_image: "centos10stream"
+    registry_vm_memory: 8192          # 8GB RAM
+    registry_vm_cpus: 4
+    registry_vm_disk_size: 500        # 500GB for images
+    registry_vm_network: "default"
+    
+    # VM hostname and domain
+    registry_vm_hostname: "registry"
+    registry_vm_domain: "disconnected.local"
+    registry_vm_fqdn: "{{ registry_vm_hostname }}.{{ registry_vm_domain }}"
+    
+    # SSH key for access
+    registry_vm_ssh_key: "{{ lookup('file', '~/.ssh/id_rsa.pub', errors='ignore') | default('') }}"
+    
+    # Action: create, delete, info
+    registry_vm_action: "create"
+    
+    # Wait for VM to be ready
+    registry_vm_wait_timeout: 300
+    
+    # kcli parameters file location
+    kcli_parameters_dir: "/tmp/kcli-params"
+    
+  tasks:
+    # =========================================================================
+    # Prerequisites
+    # =========================================================================
+    - name: Check kcli is installed
+      ansible.builtin.command:
+        cmd: kcli version
+      register: kcli_version
+      changed_when: false
+      failed_when: kcli_version.rc != 0
+
+    - name: Display kcli version
+      ansible.builtin.debug:
+        msg: "kcli version: {{ kcli_version.stdout }}"
+
+    # =========================================================================
+    # Delete VM (if requested)
+    # =========================================================================
+    - name: Delete registry VM
+      when: registry_vm_action == "delete"
+      block:
+        - name: Check if VM exists
+          ansible.builtin.command:
+            cmd: "kcli info vm {{ registry_vm_name }}"
+          register: vm_info
+          failed_when: false
+          changed_when: false
+
+        - name: Delete VM
+          ansible.builtin.command:
+            cmd: "kcli delete vm {{ registry_vm_name }} -y"
+          when: vm_info.rc == 0
+          register: delete_result
+
+        - name: Display delete result
+          ansible.builtin.debug:
+            msg: "VM {{ registry_vm_name }} deleted"
+          when: vm_info.rc == 0
+
+        - name: VM does not exist
+          ansible.builtin.debug:
+            msg: "VM {{ registry_vm_name }} does not exist"
+          when: vm_info.rc != 0
+
+        - name: End play after delete
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Get VM Info (if requested)
+    # =========================================================================
+    - name: Get VM info
+      when: registry_vm_action == "info"
+      block:
+        - name: Get VM information
+          ansible.builtin.command:
+            cmd: "kcli info vm {{ registry_vm_name }}"
+          register: vm_info
+          failed_when: false
+          changed_when: false
+
+        - name: Display VM info
+          ansible.builtin.debug:
+            msg: "{{ vm_info.stdout_lines }}"
+          when: vm_info.rc == 0
+
+        - name: VM does not exist
+          ansible.builtin.debug:
+            msg: "VM {{ registry_vm_name }} does not exist"
+          when: vm_info.rc != 0
+
+        - name: End play after info
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Check if VM Already Exists
+    # =========================================================================
+    - name: Check if VM already exists
+      ansible.builtin.command:
+        cmd: "kcli info vm {{ registry_vm_name }}"
+      register: existing_vm
+      failed_when: false
+      changed_when: false
+
+    - name: VM already exists
+      when: existing_vm.rc == 0
+      block:
+        - name: Get VM IP
+          ansible.builtin.shell: |
+            kcli info vm {{ registry_vm_name }} | grep -E "^ip:" | awk '{print $2}'
+          register: existing_ip
+          changed_when: false
+
+        - name: Display existing VM info
+          ansible.builtin.debug:
+            msg:
+              - "VM {{ registry_vm_name }} already exists"
+              - "IP: {{ existing_ip.stdout | default('pending') }}"
+              - ""
+              - "To recreate, first delete:"
+              - "  ansible-playbook provision-registry-vm.yml -e 'registry_vm_action=delete'"
+
+        - name: End play if VM exists
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Create Parameters Directory
+    # =========================================================================
+    - name: Create kcli parameters directory
+      ansible.builtin.file:
+        path: "{{ kcli_parameters_dir }}"
+        state: directory
+        mode: "0755"
+
+    # =========================================================================
+    # Generate Cloud-Init Configuration
+    # =========================================================================
+    - name: Create cloud-init user-data
+      ansible.builtin.copy:
+        dest: "{{ kcli_parameters_dir }}/{{ registry_vm_name }}-userdata.yml"
+        mode: "0644"
+        content: |
+          #cloud-config
+          hostname: {{ registry_vm_hostname }}
+          fqdn: {{ registry_vm_fqdn }}
+          manage_etc_hosts: true
+          
+          users:
+            - name: root
+              lock_passwd: false
+              ssh_authorized_keys:
+                - {{ registry_vm_ssh_key }}
+            - name: registry
+              groups: wheel
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              ssh_authorized_keys:
+                - {{ registry_vm_ssh_key }}
+          
+          packages:
+            - podman
+            - openssl
+            - curl
+            - wget
+            - tar
+            - jq
+          
+          runcmd:
+            - systemctl enable --now podman.socket
+            - echo "Registry VM ready" > /var/log/registry-vm-ready
+          
+          final_message: "Registry VM {{ registry_vm_fqdn }} is ready after $UPTIME seconds"
+
+    # =========================================================================
+    # Create VM with kcli
+    # =========================================================================
+    - name: Create registry VM
+      ansible.builtin.command:
+        cmd: >
+          kcli create vm {{ registry_vm_name }}
+          -i {{ registry_vm_image }}
+          -P memory={{ registry_vm_memory }}
+          -P numcpus={{ registry_vm_cpus }}
+          -P disks=[{{ registry_vm_disk_size }}]
+          -P nets=[{{ registry_vm_network }}]
+          -P userdata={{ kcli_parameters_dir }}/{{ registry_vm_name }}-userdata.yml
+      register: create_result
+
+    - name: Display create result
+      ansible.builtin.debug:
+        msg: "{{ create_result.stdout_lines }}"
+
+    # =========================================================================
+    # Wait for VM to be Ready
+    # =========================================================================
+    - name: Wait for VM to get IP address
+      ansible.builtin.shell: |
+        kcli info vm {{ registry_vm_name }} | grep -E "^ip:" | awk '{print $2}'
+      register: vm_ip
+      until: vm_ip.stdout | length > 0 and vm_ip.stdout != "None"
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Display VM IP
+      ansible.builtin.debug:
+        msg: "Registry VM IP: {{ vm_ip.stdout }}"
+
+    - name: Wait for SSH to be available
+      ansible.builtin.wait_for:
+        host: "{{ vm_ip.stdout }}"
+        port: 22
+        timeout: "{{ registry_vm_wait_timeout }}"
+        state: started
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.command:
+        cmd: "ssh -o StrictHostKeyChecking=no root@{{ vm_ip.stdout }} 'cloud-init status --wait'"
+      register: cloud_init_status
+      retries: 10
+      delay: 30
+      until: cloud_init_status.rc == 0
+      changed_when: false
+
+    # =========================================================================
+    # Update Inventory
+    # =========================================================================
+    - name: Add registry VM to inventory file
+      ansible.builtin.blockinfile:
+        path: "{{ playbook_dir }}/inventory"
+        marker: "# {mark} REGISTRY VM - MANAGED BY ANSIBLE"
+        block: |
+          
+          [registry]
+          {{ registry_vm_fqdn }} ansible_host={{ vm_ip.stdout }} ansible_user=root
+          
+          [registry:vars]
+          registry_hostname={{ registry_vm_fqdn }}
+          registry_ip={{ vm_ip.stdout }}
+        create: true
+        mode: "0644"
+
+    # =========================================================================
+    # Add to /etc/hosts
+    # =========================================================================
+    - name: Add registry VM to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ vm_ip.stdout }} {{ registry_vm_fqdn }} {{ registry_vm_hostname }}"
+        regexp: ".*{{ registry_vm_fqdn }}.*"
+        state: present
+      become: true
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "Registry VM Created Successfully"
+          - "=============================================="
+          - ""
+          - "VM Name:     {{ registry_vm_name }}"
+          - "Hostname:    {{ registry_vm_fqdn }}"
+          - "IP Address:  {{ vm_ip.stdout }}"
+          - "Memory:      {{ registry_vm_memory }}MB"
+          - "CPUs:        {{ registry_vm_cpus }}"
+          - "Disk:        {{ registry_vm_disk_size }}GB"
+          - ""
+          - "SSH Access:"
+          - "  ssh root@{{ vm_ip.stdout }}"
+          - "  ssh root@{{ registry_vm_fqdn }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Generate certificates for {{ registry_vm_fqdn }}:"
+          - "     ansible-playbook setup-certificates.yml \\"
+          - "         -e 'registry_hostname={{ registry_vm_fqdn }}' \\"
+          - "         -e 'registry_ip={{ vm_ip.stdout }}'"
+          - ""
+          - "  2. Deploy registry to VM:"
+          - "     ansible-playbook -i inventory setup-mirror-registry.yml \\"
+          - "         --limit registry"
+          - ""
+          - "=============================================="

@@ -1,0 +1,337 @@
+---
+# Setup Quay Mirror Registry for Disconnected OpenShift
+# ADR Reference: ADR 0017 - Quay Mirror Registry
+#
+# This playbook installs and configures the Red Hat Quay mirror-registry,
+# a lightweight, single-node registry optimized for disconnected OpenShift deployments.
+#
+# Usage:
+#   # Deploy to localhost (development/testing)
+#   ansible-playbook -i inventory setup-mirror-registry.yml
+#
+#   # Deploy to dedicated registry VM (production - see ADR 0018)
+#   ansible-playbook -i inventory setup-mirror-registry.yml --limit registry
+#   # Or:
+#   ansible-playbook -i inventory setup-mirror-registry.yml -e "target_host=registry"
+#
+#   # With custom certificates from setup-certificates.yml
+#   ansible-playbook -i inventory setup-mirror-registry.yml -e "use_custom_certs=true"
+#
+#   # Uninstall
+#   ansible-playbook -i inventory setup-mirror-registry.yml -e "mirror_registry_action=uninstall"
+#
+# Variables (see extra_vars/mirror-registry-example.yml):
+#   mirror_registry_hostname: Registry hostname (default: ansible_fqdn)
+#   mirror_registry_port: Registry port (default: 8443)
+#   mirror_registry_user: Admin username (default: init)
+#   mirror_registry_password: Admin password (required or auto-generated)
+#   use_custom_certs: Use certificates from setup-certificates.yml (default: false)
+
+- name: Setup Quay Mirror Registry
+  hosts: "{{ target_host | default('localhost') }}"
+  gather_facts: true
+  become: true
+  
+  vars:
+    # Mirror registry version and download
+    mirror_registry_version: "1.3.9"
+    mirror_registry_download_url: "https://developers.redhat.com/content-gateway/file/pub/openshift-v4/clients/mirror-registry/1.3.9/mirror-registry.tar.gz"
+    mirror_registry_install_dir: "/opt/mirror-registry"
+    mirror_registry_data_dir: "/opt/mirror-registry/quay-storage"
+    
+    # Registry configuration
+    mirror_registry_hostname: "{{ ansible_fqdn }}"
+    mirror_registry_port: 8443
+    mirror_registry_user: "init"
+    # mirror_registry_password: Set this or it will be auto-generated
+    
+    # Certificate options
+    use_custom_certs: false
+    custom_cert_path: "/etc/pki/registry/registry.crt"
+    custom_key_path: "/etc/pki/registry/registry.key"
+    
+    # Action: install, uninstall, upgrade
+    mirror_registry_action: "install"
+    
+    # Resource limits
+    mirror_registry_root_size: "50Gi"  # Minimum recommended for OCP mirror
+    
+  tasks:
+    # =========================================================================
+    # Prerequisites Check
+    # =========================================================================
+    - name: Check prerequisites
+      block:
+        - name: Verify podman is installed
+          ansible.builtin.command:
+            cmd: podman --version
+          register: podman_version
+          changed_when: false
+
+        - name: Display podman version
+          ansible.builtin.debug:
+            msg: "Podman version: {{ podman_version.stdout }}"
+
+        - name: Check available disk space
+          ansible.builtin.shell: |
+            df -BG {{ mirror_registry_install_dir | dirname }} | tail -1 | awk '{print $4}' | tr -d 'G'
+          register: available_space
+          changed_when: false
+
+        - name: Warn if disk space is low
+          ansible.builtin.debug:
+            msg: "WARNING: Only {{ available_space.stdout }}GB available. Recommend 100GB+ for OCP mirror."
+          when: available_space.stdout | int < 100
+
+    # =========================================================================
+    # Uninstall (if requested)
+    # =========================================================================
+    - name: Uninstall mirror-registry
+      when: mirror_registry_action == "uninstall"
+      block:
+        - name: Check if mirror-registry is installed
+          ansible.builtin.stat:
+            path: "{{ mirror_registry_install_dir }}/mirror-registry"
+          register: mirror_registry_binary
+
+        - name: Run mirror-registry uninstall
+          ansible.builtin.command:
+            cmd: "{{ mirror_registry_install_dir }}/mirror-registry uninstall --autoApprove"
+          when: mirror_registry_binary.stat.exists
+          register: uninstall_result
+          ignore_errors: true
+
+        - name: Display uninstall result
+          ansible.builtin.debug:
+            msg: "{{ uninstall_result.stdout_lines | default(['Uninstall complete']) }}"
+          when: mirror_registry_binary.stat.exists
+
+        - name: End play after uninstall
+          ansible.builtin.meta: end_play
+          when: mirror_registry_action == "uninstall"
+
+    # =========================================================================
+    # Download and Extract
+    # =========================================================================
+    - name: Create installation directory
+      ansible.builtin.file:
+        path: "{{ mirror_registry_install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Check if mirror-registry is already downloaded
+      ansible.builtin.stat:
+        path: "{{ mirror_registry_install_dir }}/mirror-registry"
+      register: mirror_registry_exists
+
+    - name: Download mirror-registry
+      when: not mirror_registry_exists.stat.exists
+      block:
+        - name: Download mirror-registry tarball
+          ansible.builtin.get_url:
+            url: "{{ mirror_registry_download_url }}"
+            dest: "{{ mirror_registry_install_dir }}/mirror-registry.tar.gz"
+            mode: "0644"
+          register: download_result
+
+        - name: Extract mirror-registry
+          ansible.builtin.unarchive:
+            src: "{{ mirror_registry_install_dir }}/mirror-registry.tar.gz"
+            dest: "{{ mirror_registry_install_dir }}"
+            remote_src: true
+
+        - name: Make mirror-registry executable
+          ansible.builtin.file:
+            path: "{{ mirror_registry_install_dir }}/mirror-registry"
+            mode: "0755"
+
+        - name: Clean up tarball
+          ansible.builtin.file:
+            path: "{{ mirror_registry_install_dir }}/mirror-registry.tar.gz"
+            state: absent
+
+    # =========================================================================
+    # Generate Password if Not Provided
+    # =========================================================================
+    - name: Generate random password if not provided
+      ansible.builtin.set_fact:
+        mirror_registry_password: "{{ lookup('password', '/dev/null length=16 chars=ascii_letters,digits') }}"
+      when: mirror_registry_password is not defined
+
+    - name: Save credentials to file
+      ansible.builtin.copy:
+        content: |
+          # Mirror Registry Credentials
+          # Generated: {{ ansible_date_time.iso8601 }}
+          
+          REGISTRY_URL=https://{{ mirror_registry_hostname }}:{{ mirror_registry_port }}
+          REGISTRY_USER={{ mirror_registry_user }}
+          REGISTRY_PASSWORD={{ mirror_registry_password }}
+          
+          # Login command:
+          # podman login -u {{ mirror_registry_user }} -p {{ mirror_registry_password }} {{ mirror_registry_hostname }}:{{ mirror_registry_port }}
+        dest: "{{ mirror_registry_install_dir }}/credentials.txt"
+        mode: "0600"
+
+    # =========================================================================
+    # Check if Already Installed
+    # =========================================================================
+    - name: Check if Quay is already running
+      ansible.builtin.shell: |
+        podman ps --format "{{ '{{' }}.Names{{ '}}' }}" | grep -E "^quay-" || true
+      register: quay_running
+      changed_when: false
+
+    - name: Skip installation if already running
+      ansible.builtin.debug:
+        msg: "Mirror registry is already running. Use -e 'mirror_registry_action=uninstall' to remove first."
+      when: quay_running.stdout | length > 0
+
+    # =========================================================================
+    # Install Mirror Registry
+    # =========================================================================
+    - name: Install mirror-registry
+      when: quay_running.stdout | length == 0
+      block:
+        - name: Build installation command (auto-generated certs)
+          ansible.builtin.set_fact:
+            install_cmd: >-
+              {{ mirror_registry_install_dir }}/mirror-registry install
+              --quayHostname {{ mirror_registry_hostname }}
+              --quayRoot {{ mirror_registry_data_dir }}
+              --initUser {{ mirror_registry_user }}
+              --initPassword {{ mirror_registry_password }}
+          when: not use_custom_certs
+
+        - name: Build installation command (custom certs)
+          ansible.builtin.set_fact:
+            install_cmd: >-
+              {{ mirror_registry_install_dir }}/mirror-registry install
+              --quayHostname {{ mirror_registry_hostname }}
+              --quayRoot {{ mirror_registry_data_dir }}
+              --initUser {{ mirror_registry_user }}
+              --initPassword {{ mirror_registry_password }}
+              --sslCert {{ custom_cert_path }}
+              --sslKey {{ custom_key_path }}
+          when: use_custom_certs
+
+        - name: Display installation command
+          ansible.builtin.debug:
+            msg: "Running: {{ install_cmd | regex_replace(mirror_registry_password, '********') }}"
+
+        - name: Run mirror-registry install
+          ansible.builtin.command:
+            cmd: "{{ install_cmd }}"
+            chdir: "{{ mirror_registry_install_dir }}"
+          register: install_result
+          environment:
+            PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+
+        - name: Display installation output
+          ansible.builtin.debug:
+            msg: "{{ install_result.stdout_lines }}"
+
+    # =========================================================================
+    # Post-Installation Configuration
+    # =========================================================================
+    - name: Wait for registry to be ready
+      ansible.builtin.uri:
+        url: "https://{{ mirror_registry_hostname }}:{{ mirror_registry_port }}/health/instance"
+        validate_certs: false
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Get CA certificate from mirror-registry
+      ansible.builtin.shell: |
+        openssl s_client -connect {{ mirror_registry_hostname }}:{{ mirror_registry_port }} \
+          -servername {{ mirror_registry_hostname }} 2>/dev/null | \
+          openssl x509 -outform PEM
+      register: registry_ca
+      changed_when: false
+      when: not use_custom_certs
+
+    - name: Save registry CA certificate
+      ansible.builtin.copy:
+        content: "{{ registry_ca.stdout }}"
+        dest: "{{ mirror_registry_install_dir }}/quay-rootCA.crt"
+        mode: "0644"
+      when: not use_custom_certs and registry_ca.stdout | length > 0
+
+    - name: Copy CA to system trust store
+      ansible.builtin.copy:
+        src: "{{ mirror_registry_install_dir }}/quay-rootCA.crt"
+        dest: /etc/pki/ca-trust/source/anchors/quay-rootCA.crt
+        remote_src: true
+        mode: "0644"
+      when: not use_custom_certs and ansible_os_family == "RedHat"
+      notify: Update CA trust
+
+    - name: Login to registry
+      ansible.builtin.command:
+        cmd: >
+          podman login
+          -u {{ mirror_registry_user }}
+          -p {{ mirror_registry_password }}
+          {{ mirror_registry_hostname }}:{{ mirror_registry_port }}
+      register: login_result
+      changed_when: false
+
+    # =========================================================================
+    # Create Pull Secret Entry
+    # =========================================================================
+    - name: Generate base64 auth string
+      ansible.builtin.set_fact:
+        registry_auth: "{{ (mirror_registry_user + ':' + mirror_registry_password) | b64encode }}"
+
+    - name: Create pull secret snippet
+      ansible.builtin.copy:
+        content: |
+          {
+            "auths": {
+              "{{ mirror_registry_hostname }}:{{ mirror_registry_port }}": {
+                "auth": "{{ registry_auth }}",
+                "email": ""
+              }
+            }
+          }
+        dest: "{{ mirror_registry_install_dir }}/pull-secret-snippet.json"
+        mode: "0600"
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "Mirror Registry Installation Complete"
+          - "=============================================="
+          - ""
+          - "Registry URL:  https://{{ mirror_registry_hostname }}:{{ mirror_registry_port }}"
+          - "Username:      {{ mirror_registry_user }}"
+          - "Password:      {{ mirror_registry_password }}"
+          - ""
+          - "Credentials saved to: {{ mirror_registry_install_dir }}/credentials.txt"
+          - "Pull secret snippet:  {{ mirror_registry_install_dir }}/pull-secret-snippet.json"
+          - ""
+          - "Web UI:        https://{{ mirror_registry_hostname }}:{{ mirror_registry_port }}"
+          - ""
+          - "To login:"
+          - "  podman login -u {{ mirror_registry_user }} {{ mirror_registry_hostname }}:{{ mirror_registry_port }}"
+          - ""
+          - "To use with oc-mirror:"
+          - "  1. Merge pull-secret-snippet.json with your Red Hat pull secret"
+          - "  2. Run: oc mirror --config imageSetConfig.yml docker://{{ mirror_registry_hostname }}:{{ mirror_registry_port }}"
+          - ""
+          - "To uninstall:"
+          - "  ansible-playbook setup-mirror-registry.yml -e 'mirror_registry_action=uninstall'"
+          - ""
+          - "=============================================="
+
+  handlers:
+    - name: Update CA trust
+      ansible.builtin.command:
+        cmd: update-ca-trust extract

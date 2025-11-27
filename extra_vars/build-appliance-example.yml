@@ -1,0 +1,67 @@
+---
+# Build Appliance Configuration Example
+# ADR Reference: ADR 0005 - OpenShift Appliance Builder Integration
+#
+# Copy this file and customize for your environment:
+#   cp build-appliance-example.yml build-appliance.yml
+#   ansible-playbook -i inventory playbooks/build-appliance.yml -e @extra_vars/build-appliance.yml
+
+# OpenShift Release Configuration
+ocp_release_version: "4.20.0"
+ocp_release_channel: "stable"        # stable, fast, eus, candidate
+ocp_cpu_architecture: "x86_64"       # x86_64, aarch64, ppc64le
+
+# Appliance Disk Configuration
+# Must be at least 150GB, should match target server disk size
+appliance_disk_size_gb: 200
+
+# Paths
+appliance_assets_path: "/opt/appliance-assets"
+appliance_output_path: "/opt/appliance-output"
+pull_secret_path: "/root/pull-secret.json"
+ssh_key_path: "~/.ssh/id_rsa.pub"
+
+# Optional: Password for 'core' user (console access)
+# user_core_password: "changeme"
+
+# Local Registry Configuration (for fully disconnected builds)
+# Set use_local_registry: true if using mirror-registry/harbor/jfrog
+use_local_registry: false
+# local_registry_uri: "registry.example.com:8443"
+# local_registry_ca_path: "/etc/pki/registry/ca.crt"
+
+# Appliance Options
+enable_default_sources: false    # Disable for disconnected environments
+stop_local_registry: false       # Keep registry running post-install
+enable_fips: false               # Enable FIPS mode (requires FIPS in install-config too)
+
+# Operators to Include in Appliance
+# These will be available for installation in the disconnected cluster
+operators:
+  - catalog: "registry.redhat.io/redhat/redhat-operator-index:v4.20"
+    packages:
+      - name: "local-storage-operator"
+        channels:
+          - name: "stable"
+      # Uncomment to include ODF (OpenShift Data Foundation)
+      # - name: "odf-operator"
+      #   channels:
+      #     - name: "stable-4.20"
+      # Uncomment to include OpenShift Virtualization
+      # - name: "kubevirt-hyperconverged"
+      #   channels:
+      #     - name: "stable"
+
+# Additional Images to Include
+# Custom images needed by your workloads
+additional_images: []
+  # - name: "quay.io/example/myapp:v1.0"
+  # - name: "docker.io/library/nginx:latest"
+
+# Images to Exclude from Appliance
+# Use to reduce appliance size by excluding unnecessary images
+blocked_images: []
+  # - name: ".*windows.*"  # Regex to exclude Windows images
+
+# Action: build, clean, generate-config
+appliance_action: "build"
