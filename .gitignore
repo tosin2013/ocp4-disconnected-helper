@@ -1,3 +1,34 @@
 rh-pull-secret
 .vscode/**
 .vscode/
+
+# Planning documents (local only)
+PRD.md
+docs/IMPLEMENTATION-PLAN.md
+
+# MCP context (auto-generated)
+.mcp-server-context.md
+
+# Sensitive files - NEVER commit
+.vault_password
+*.vault_password
+pull-secret.json
+*pull-secret*
+*.pem
+*.key
+*.crt
+!*.crt.example
+
+# Logs
+.oc-mirror.log
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.bakoc-mirror-workspace/
+playbooks/oc-mirror-workspace/
