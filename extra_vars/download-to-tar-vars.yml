@@ -26,16 +26,17 @@ target_rh_pull_secret_path: /root/.docker/config.json
 target_mirror_path: /opt/images # no trailing slash
 
 openshift_releases:
-# Upgrade scenario: 4.19 -> 4.20
+# Upgrade path: 4.19.19 -> 4.20.5 (specific versions only!)
+# Setting minVersion = maxVersion downloads ONLY that version (saves disk space)
 # Reference: https://access.redhat.com/labs/ocpupgradegraph/update_path/
   - name: stable-4.19
-    minVersion: 4.19.0
-    maxVersion: 4.19.99
+    minVersion: 4.19.19
+    maxVersion: 4.19.19
     type: ocp
 
   - name: stable-4.20
-    minVersion: 4.20.0
-    maxVersion: 4.20.99
+    minVersion: 4.20.5
+    maxVersion: 4.20.5
     shortestPath: true
     type: ocp
 
