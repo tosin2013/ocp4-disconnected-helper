@@ -7,9 +7,15 @@ by calling Ansible playbooks - NOT inline oc-mirror commands.
 
 Workflow:
 1. Pre-flight validation
-2. Download images to TAR (via download-to-tar.yml playbook)
-3. Push TAR to registry (via push-tar-to-registry.yml playbook)
-4. Generate sync report
+2. Resolve versions (query OpenShift API for latest patch versions)
+3. Download images to TAR (via download-to-tar.yml playbook)
+4. Push TAR to registry (via push-tar-to-registry.yml playbook)
+5. Generate sync report
+
+SMART VERSION RESOLUTION:
+- Uses versions_check.sh logic to query OpenShift upgrade graph API
+- Sets minVersion = maxVersion to download ONLY specific versions (not ranges)
+- Prevents downloading entire version ranges (saves 100s of GB)
 
 Target: OpenShift 4.17-4.20
 Designed to run on qubinode_navigator's Airflow instance.
@@ -49,11 +55,23 @@ dag = DAG(
     max_active_runs=1,
     tags=['ocp4-disconnected-helper', 'openshift', 'registry', 'sync'],
     params={
-        'ocp_version': Param(
+        'source_version': Param(
             default='4.19',
             type='string',
             enum=['4.17', '4.18', '4.19', '4.20'],
-            description='OpenShift version to sync',
+            description='Source OCP version (current cluster version)',
+        ),
+        'target_version': Param(
+            default='4.20',
+            type='string',
+            enum=['4.17', '4.18', '4.19', '4.20'],
+            description='Target OCP version (upgrade destination)',
+        ),
+        'upgrade_type': Param(
+            default='major',
+            type='string',
+            enum=['major', 'patch'],
+            description='Upgrade type: major (4.19->4.20) or patch (4.20.4->4.20.5)',
         ),
         'target_registry': Param(
             default='quay',
@@ -70,6 +88,11 @@ dag = DAG(
             default=False,
             type='boolean',
             description='Full mirror (true) or incremental (false)',
+        ),
+        'auto_resolve_versions': Param(
+            default=True,
+            type='boolean',
+            description='Auto-resolve latest patch versions from OpenShift API',
         ),
     },
     doc_md=__doc__,
@@ -88,7 +111,10 @@ echo "===================================================================="
 echo "[INFO] OCP Registry Sync - Pre-flight Checks"
 echo "===================================================================="
 echo ""
-echo "OCP Version: {{ params.ocp_version }}"
+echo "Source Version: {{ params.source_version }}"
+echo "Target Version: {{ params.target_version }}"
+echo "Upgrade Type: {{ params.upgrade_type }}"
+echo "Auto Resolve: {{ params.auto_resolve_versions }}"
 echo "Target Registry: {{ params.target_registry }}"
 echo "Skip Download: {{ params.skip_download }}"
 echo "Clean Mirror: {{ params.clean_mirror }}"
@@ -170,7 +196,41 @@ REMOTE_SCRIPT
 )
 
 # =============================================================================
-# Task 2: Download Images via Ansible Playbook (ADR 0012 compliant)
+# Task 2: Resolve Versions (Query OpenShift API for latest patch versions)
+# Uses scripts/resolve-ocp-versions.sh to avoid downloading entire version ranges
+# =============================================================================
+resolve_versions = BashOperator(
+    task_id='resolve_versions',
+    bash_command="""
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@localhost << 'REMOTE_SCRIPT'
+set -euo pipefail
+
+SOURCE_VERSION="{{ params.source_version }}"
+TARGET_VERSION="{{ params.target_version }}"
+UPGRADE_TYPE="{{ params.upgrade_type }}"
+AUTO_RESOLVE="{{ params.auto_resolve_versions }}"
+
+if [ "$AUTO_RESOLVE" != "True" ] && [ "$AUTO_RESOLVE" != "true" ]; then
+    echo "===================================================================="
+    echo "[INFO] Auto-resolve disabled, using static versions from extra_vars"
+    echo "===================================================================="
+    yq eval '.openshift_releases' /root/ocp4-disconnected-helper/extra_vars/download-to-tar-vars.yml
+    exit 0
+fi
+
+# Call the version resolution script
+/root/ocp4-disconnected-helper/scripts/resolve-ocp-versions.sh \
+    "$SOURCE_VERSION" \
+    "$TARGET_VERSION" \
+    "$UPGRADE_TYPE" \
+    "/root/ocp4-disconnected-helper/extra_vars/download-to-tar-vars.yml"
+REMOTE_SCRIPT
+    """,
+    dag=dag,
+)
+
+# =============================================================================
+# Task 3: Download Images via Ansible Playbook (ADR 0012 compliant)
 # =============================================================================
 download_images = BashOperator(
     task_id='download_images',
@@ -180,7 +240,8 @@ set -euo pipefail
 
 SKIP_DOWNLOAD="{{ params.skip_download }}"
 CLEAN_MIRROR="{{ params.clean_mirror }}"
-OCP_VERSION="{{ params.ocp_version }}"
+SOURCE_VERSION="{{ params.source_version }}"
+TARGET_VERSION="{{ params.target_version }}"
 
 if [ "$SKIP_DOWNLOAD" = "True" ] || [ "$SKIP_DOWNLOAD" = "true" ]; then
     echo "===================================================================="
@@ -200,7 +261,7 @@ if [ "$SKIP_DOWNLOAD" = "True" ] || [ "$SKIP_DOWNLOAD" = "true" ]; then
 fi
 
 echo "===================================================================="
-echo "[INFO] Downloading OCP $OCP_VERSION Images via Ansible Playbook"
+echo "[INFO] Downloading OCP ${SOURCE_VERSION}→${TARGET_VERSION} Images via Ansible Playbook"
 echo "===================================================================="
 echo ""
 echo "Per ADR 0012: Using download-to-tar.yml playbook"
@@ -297,8 +358,10 @@ echo "[INFO] Registry Sync Report"
 echo "===================================================================="
 echo ""
 echo "Sync Completed: $(date -Iseconds)"
-echo "OCP Version:    {{ params.ocp_version }}"
-echo "Target:         {{ params.target_registry }}"
+echo "Source Version: {{ params.source_version }}"
+echo "Target Version: {{ params.target_version }}"
+echo "Upgrade Type:   {{ params.upgrade_type }}"
+echo "Registry:       {{ params.target_registry }}"
 echo "Skip Download:  {{ params.skip_download }}"
 echo "Clean Mirror:   {{ params.clean_mirror }}"
 echo ""
@@ -373,7 +436,7 @@ echo "After fixing, retrigger this DAG"
 # =============================================================================
 # Task Dependencies
 # =============================================================================
-preflight_checks >> download_images >> push_to_registry >> sync_report
+preflight_checks >> resolve_versions >> download_images >> push_to_registry >> sync_report
 
 # Cleanup runs on any failure
-[preflight_checks, download_images, push_to_registry] >> cleanup_on_failure
+[preflight_checks, resolve_versions, download_images, push_to_registry] >> cleanup_on_failure
