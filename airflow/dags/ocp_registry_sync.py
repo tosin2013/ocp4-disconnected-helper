@@ -221,6 +221,9 @@ fi
 echo "[INFO] Running: ansible-playbook -i inventory download-to-tar.yml $EXTRA_VARS"
 echo ""
 
+# Unset vault password file env var if no vault is used
+unset ANSIBLE_VAULT_PASSWORD_FILE 2>/dev/null || true
+
 ansible-playbook -i inventory download-to-tar.yml $EXTRA_VARS
 
 echo ""
@@ -266,6 +269,9 @@ fi
 
 echo "[INFO] Running: ansible-playbook -i inventory push-tar-to-registry.yml $EXTRA_VARS"
 echo ""
+
+# Unset vault password file env var if no vault is used
+unset ANSIBLE_VAULT_PASSWORD_FILE 2>/dev/null || true
 
 ansible-playbook -i inventory push-tar-to-registry.yml $EXTRA_VARS
 
