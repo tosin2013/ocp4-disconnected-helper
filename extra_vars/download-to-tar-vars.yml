@@ -4,53 +4,42 @@
 
 # local_rh_pull_secret_path: /home/kemo/rh-pull-secret
 rh_pull_secret: "{{ lookup('file', '/root/rh-pull-secret') }}"
-
 # Variables for the oc-mirror command
 # https://github.com/openshift/oc-mirror/blob/main/docs/usage.md
 skip_cleanup: false
 # --continue-on-error: Proceeds with the mirroring process despite encountering 
 #certain errors, such as invalid image digests or tags. Using this flag will return an exit code of 1, but the oc mirror operations will continue.
 continue_on_error: true
-
 # The --max-per-registry parameter controls the number of concurrent connections to a registry during the mirroring process. 
 max_per_registry: 6 # 6 is the default
 # --skip-missing: Continues the mirroring process even if some images are missing.
 skip_missing: true
 mirror_retry: 5 # 3 is the default
-
 # target_rh_pull_secret_path is the user path where the authentication file will be stored on the remote host
 target_rh_pull_secret_path: /root/.docker/config.json
-
 # =====================================
 # Mirror Configuration
 target_mirror_path: /opt/images # no trailing slash
-
 openshift_releases:
-# Upgrade path: 4.19.19 -> 4.20.5 (specific versions only!)
-# Setting minVersion = maxVersion downloads ONLY that version (saves disk space)
-# Reference: https://access.redhat.com/labs/ocpupgradegraph/update_path/
   - name: stable-4.19
     minVersion: 4.19.19
     maxVersion: 4.19.19
     type: ocp
-
   - name: stable-4.20
     minVersion: 4.20.5
     maxVersion: 4.20.5
     shortestPath: true
     type: ocp
-
 certified_catalog_operator_packages:
   # PortWorx Certified Operator
   - name: portworx-certified
-
 redhat_catalog_operator_packages:
   # OpenShift Update Service
   - name: cincinnati-operator
   # OpenShift Cluster Logging
   - name: cluster-logging
-  # OpenShift ElasticSearch Operator
-  - name: elasticsearch-operator
+  # Note: elasticsearch-operator deprecated in 4.15+, use loki-operator
+  - name: loki-operator
   # Kubernetes NMState Operator
   - name: kubernetes-nmstate-operator
   # OpenShift Advanced Cluster Management
@@ -82,25 +71,21 @@ redhat_catalog_operator_packages:
   - name: odf-operator
   - name: odr-cluster-operator
   - name: odr-hub-operator
-
 operators:
   # 4.19 operator catalogs
   - catalog: registry.redhat.io/redhat/certified-operator-index:v4.19
     packages: "{{ certified_catalog_operator_packages }}"
   - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.19
     packages: "{{ redhat_catalog_operator_packages }}"
-
   # 4.20 operator catalogs
   - catalog: registry.redhat.io/redhat/certified-operator-index:v4.20
     packages: "{{ certified_catalog_operator_packages }}"
   - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
     packages: "{{ redhat_catalog_operator_packages }}"
-
 additional_images:
   - registry.redhat.io/ubi8/ubi:latest
   - quay.io/kenmoini/py-server:latest
   - quay.io/kenmoini/simple-chat:latest
-
 # =====================================
 # probably don't need to change the following
 
@@ -110,7 +95,6 @@ architectures:
   # - arm64
   # - s390x
   # - ppc64le
-
 # archive_size defines the maximum size of the TAR files to be created
 # archive_size: 4
 
@@ -120,13 +104,10 @@ architectures:
 # The oc command-line interface (CLI) can use the UpdateService custom resource manifest to create OSUS.
 # For more information, see About the OpenShift Update Service.
 enable_graph: true
-
 # clean_mirror_path defines whether to clean the mirror path before mirroring
 clean_mirror_path: false
-
 # Optionally set up Cockpit on the remote host - handy when needing to set up a storage volume
 setup_cockpit: true
-
 # base_packages defines the packages that will be installed on the remote host - mostly just handy
 base_packages:
   - nano
@@ -138,3 +119,5 @@ base_packages:
   - bind-utils
   - httpd-tools
   - procps-ng
+certified_operator_index_version: 4.20
+redhat_operator_index_version: 4.20
