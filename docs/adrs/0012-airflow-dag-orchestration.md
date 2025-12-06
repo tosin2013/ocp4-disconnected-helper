@@ -1,7 +1,8 @@
 # ADR 0012: Airflow DAG Orchestration Strategy
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2025-11-25  
+**Revised:** 2025-12-06  
 **Deciders:** Platform Team  
 **PRD Reference:** Section 3.2 - Orchestration with kcli-pipelines
 
@@ -23,9 +24,27 @@ Currently, workflows are executed manually or via simple shell scripts (`cicd.sh
 
 Adopt **Apache Airflow** for workflow orchestration using a **script-based DAG approach**:
 
-1. **DAGs call Ansible playbooks** via BashOperator (not custom operators)
+1. **DAGs MUST call Ansible playbooks** via BashOperator (not custom operators or inline commands)
 2. **Leverage qubinode_navigator's Airflow infrastructure** for deployment
 3. **MCP server integration** for AI-powered workflow management
+
+### Critical Requirement: Use Playbooks
+
+**DAGs must NOT contain inline oc-mirror, podman, or other complex commands.**
+
+Instead, DAGs should call the Ansible playbooks in `playbooks/`:
+
+| Task | Correct Approach | Wrong Approach |
+|------|------------------|----------------|
+| Download images | Call `download-to-tar.yml` | Inline `oc-mirror` command |
+| Push to registry | Call `push-tar-to-registry.yml` | Inline `oc-mirror --from` |
+| Setup registry | Call `setup-*-registry.yml` | Inline podman/docker commands |
+
+This ensures:
+- Consistent behavior between DAG and manual execution
+- Proper error handling via Ansible
+- Configuration via `extra_vars/` files
+- Tested and validated automation
 
 ### Proposed DAGs
 

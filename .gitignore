@@ -19,6 +19,21 @@ pull-secret.json
 *.crt
 !*.crt.example
 
+# Cursor IDE files
+.cursor/
+
+# Local sensitive extra_vars (create from examples)
+extra_vars/*-local.yml
+extra_vars/*-secret*.yml
+
+# These files contain real credentials - use *-example.yml versions
+extra_vars/push-tar-to-registry-vars.yml
+extra_vars/setup-harbor-registry-vars.yml
+extra_vars/setup-jfrog-registry-vars.yml
+
+# Never push these files with real passwords
+.donotpush.md
+
 # Logs
 .oc-mirror.log
 *.log

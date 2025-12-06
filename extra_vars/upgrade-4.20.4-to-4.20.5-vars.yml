@@ -1,0 +1,74 @@
+# =====================================
+# OCP Patch Upgrade: 4.20.4 -> 4.20.5
+# Use Case: Minor z-stream patch upgrade
+# =====================================
+#
+# This configuration mirrors content for a patch upgrade within 4.20
+# Reference: https://access.redhat.com/labs/ocpupgradegraph/update_path/
+#
+# Usage:
+#   ansible-playbook -i playbooks/inventory playbooks/download-to-tar.yml \
+#       -e @extra_vars/upgrade-4.20.4-to-4.20.5-vars.yml
+
+# =====================================
+# RH Registry Pull Secret
+# Use lookup to avoid storing secrets in git
+rh_pull_secret: "{{ lookup('file', '/root/rh-pull-secret') }}"
+
+# =====================================
+# Mirror Configuration
+target_mirror_path: /opt/images
+target_rh_pull_secret_path: /root/.docker/config.json
+
+# =====================================
+# oc-mirror v2 options
+skip_cleanup: false
+continue_on_error: true
+max_per_registry: 6
+skip_missing: true
+mirror_retry: 5
+
+# =====================================
+# OpenShift Releases for 4.20.4 -> 4.20.5 Patch
+# Patch upgrades are smaller and faster than major upgrades
+openshift_releases:
+  # Patch upgrade within stable-4.20
+  - name: stable-4.20
+    minVersion: 4.20.4
+    maxVersion: 4.20.5
+    shortestPath: true
+    type: ocp
+
+# =====================================
+# Operators (4.20 catalog only for patch)
+redhat_catalog_operator_packages:
+  # Core operators - only include what's deployed
+  - name: cincinnati-operator        # OpenShift Update Service
+  - name: cluster-logging
+  - name: local-storage-operator
+  - name: lvms-operator
+  - name: openshift-gitops-operator
+
+operators:
+  # 4.20 operator catalog only
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+    packages: "{{ redhat_catalog_operator_packages }}"
+
+# =====================================
+# Architecture
+architectures:
+  - amd64
+
+# =====================================
+# Graph data for Update Service
+enable_graph: true
+
+# Incremental mirror (don't clean - reuse existing content)
+clean_mirror_path: false
+
+# Base packages
+setup_cockpit: false
+base_packages:
+  - curl
+  - jq
+

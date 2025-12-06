@@ -1,0 +1,65 @@
+---
+# =====================================
+# Harbor Registry Setup - Example Configuration
+# Copy this to setup-harbor-registry-vars.yml and customize
+# =====================================
+#
+# Usage:
+#   cp extra_vars/setup-harbor-registry-example.yml extra_vars/setup-harbor-registry-vars.yml
+#   # Edit setup-harbor-registry-vars.yml with your values
+#   ansible-playbook -i playbooks/inventory playbooks/setup-harbor-registry.yml \
+#       -e @extra_vars/setup-harbor-registry-vars.yml
+
+# =====================================
+# Harbor Configuration
+harbor_version: v2.7.3
+harbor_hostname: harbor.example.com
+
+# Harbor admin password - NEVER commit real passwords!
+harbor_admin_password: CHANGE_ME_HARBOR_PASSWORD  # <-- Change this!
+
+# Data volume path (should be large, separate volume)
+harbor_data_volume_path: /data
+
+# =====================================
+# Optional proxy configuration
+# proxy:
+#   http_proxy: http://proxy.example.com:3128
+#   https_proxy: http://proxy.example.com:3128
+#   no_proxy: localhost,.example.com,10.0.0.0/8
+
+# =====================================
+# TLS Certificates
+# Replace with your actual certificates
+# Use Step-CA or your organization's PKI
+
+ssl_certificate: |
+  -----BEGIN CERTIFICATE-----
+  YOUR_SERVER_CERTIFICATE_HERE
+  -----END CERTIFICATE-----
+  -----BEGIN CERTIFICATE-----
+  YOUR_CA_CHAIN_HERE (if applicable)
+  -----END CERTIFICATE-----
+
+ssl_certificate_key: |
+  -----BEGIN PRIVATE KEY-----
+  YOUR_PRIVATE_KEY_HERE
+  -----END PRIVATE KEY-----
+
+# =====================================
+# Packages (usually don't need to change)
+packages:
+  - yum-utils
+  - openssl
+  - firewalld
+  - cockpit
+  - cockpit-storaged
+  - nano
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+

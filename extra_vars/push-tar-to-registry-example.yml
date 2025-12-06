@@ -1,0 +1,51 @@
+---
+# =====================================
+# Push TAR to Registry - Example Configuration
+# Copy this to push-tar-to-registry-vars.yml and customize
+# =====================================
+#
+# Usage:
+#   cp extra_vars/push-tar-to-registry-example.yml extra_vars/push-tar-to-registry-vars.yml
+#   # Edit push-tar-to-registry-vars.yml with your values
+#   ansible-playbook -i playbooks/inventory playbooks/push-tar-to-registry.yml \
+#       -e @extra_vars/push-tar-to-registry-vars.yml
+
+# =====================================
+# Remote Registry Configuration
+# Add your registry credentials here (NEVER commit real passwords!)
+registries:
+  - username: admin
+    password: CHANGE_ME_REGISTRY_PASSWORD  # <-- Change this!
+    server: mirror-registry.example.com
+    port: 8443
+    path: ocp4
+    registry_type: quay  # or: harbor, jfrog
+
+# target_registry_auth_path is where the auth file will be stored
+target_registry_auth_path: /root/.docker
+target_registry_auth_path_user: root
+target_registry_auth_path_group: root
+
+# =====================================
+# Mirror TAR file name (from download-to-tar.yml output)
+mirror_tar_file: mirror_seq1_000000.tar
+
+# =====================================
+# Mirror Source Configuration
+source_mirror_path: /opt/images
+source_path_report_location: /opt/images/oc-mirror-workspace/
+
+# =====================================
+# Optional proxy configuration
+# proxy:
+#   http_proxy: http://proxy.example.com:3128
+#   https_proxy: http://proxy.example.com:3128
+#   no_proxy: localhost,.example.com,10.0.0.0/8
+
+# =====================================
+# Base packages (usually don't need to change)
+setup_cockpit: false
+base_packages:
+  - curl
+  - jq
+

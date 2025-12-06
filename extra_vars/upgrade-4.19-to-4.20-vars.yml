@@ -1,0 +1,87 @@
+# =====================================
+# OCP Upgrade: 4.19 -> 4.20 (EUS to EUS upgrade)
+# Use Case: Major version upgrade scenario
+# =====================================
+# 
+# This configuration mirrors content needed to upgrade from OCP 4.19 to 4.20
+# Reference: https://access.redhat.com/labs/ocpupgradegraph/update_path/
+#
+# Usage:
+#   ansible-playbook -i playbooks/inventory playbooks/download-to-tar.yml \
+#       -e @extra_vars/upgrade-4.19-to-4.20-vars.yml
+
+# =====================================
+# RH Registry Pull Secret
+# Use lookup to avoid storing secrets in git
+rh_pull_secret: "{{ lookup('file', '/root/rh-pull-secret') }}"
+
+# =====================================
+# Mirror Configuration
+target_mirror_path: /opt/images
+target_rh_pull_secret_path: /root/.docker/config.json
+
+# =====================================
+# oc-mirror v2 options
+skip_cleanup: false
+continue_on_error: true
+max_per_registry: 6
+skip_missing: true
+mirror_retry: 5
+
+# =====================================
+# OpenShift Releases for 4.19 -> 4.20 Upgrade
+# This mirrors the upgrade path content
+openshift_releases:
+  # Source version (current cluster version)
+  - name: stable-4.19
+    minVersion: 4.19.0
+    maxVersion: 4.19.99
+    type: ocp
+
+  # Target version (upgrade destination)
+  - name: stable-4.20
+    minVersion: 4.20.0
+    maxVersion: 4.20.99
+    shortestPath: true
+    type: ocp
+
+# =====================================
+# Operators (must match both 4.19 and 4.20 catalogs)
+redhat_catalog_operator_packages:
+  # Core operators for upgrade
+  - name: cincinnati-operator        # OpenShift Update Service
+  - name: cluster-logging
+  - name: elasticsearch-operator
+  - name: kubernetes-nmstate-operator
+  - name: local-storage-operator
+  - name: lvms-operator
+  - name: metallb-operator
+  - name: openshift-gitops-operator
+
+operators:
+  # 4.19 operator catalogs
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.19
+    packages: "{{ redhat_catalog_operator_packages }}"
+
+  # 4.20 operator catalogs
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+    packages: "{{ redhat_catalog_operator_packages }}"
+
+# =====================================
+# Architecture
+architectures:
+  - amd64
+
+# =====================================
+# Graph data for Update Service
+enable_graph: true
+
+# Clean mirror for fresh upgrade content
+clean_mirror_path: false
+
+# Base packages
+setup_cockpit: false
+base_packages:
+  - curl
+  - jq
+
