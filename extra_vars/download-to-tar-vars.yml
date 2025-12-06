@@ -26,16 +26,18 @@ target_rh_pull_secret_path: /root/.docker/config.json
 target_mirror_path: /opt/images # no trailing slash
 
 openshift_releases:
-# A single x.y.z release -> https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.15/latest/
-  - name: stable-4.15
-    minVersion: 4.15.23
-    maxVersion: 4.15.23
+# Upgrade scenario: 4.19 -> 4.20
+# Reference: https://access.redhat.com/labs/ocpupgradegraph/update_path/
+  - name: stable-4.19
+    minVersion: 4.19.0
+    maxVersion: 4.19.99
+    type: ocp
 
-  # An upgrade release - check paths: https://access.redhat.com/labs/ocpupgradegraph/update_path/
-  - name: stable-4.16
-    minVersion: 4.16.3
-    maxVersion: 4.16.3
+  - name: stable-4.20
+    minVersion: 4.20.0
+    maxVersion: 4.20.99
     shortestPath: true
+    type: ocp
 
 certified_catalog_operator_packages:
   # PortWorx Certified Operator
@@ -81,15 +83,16 @@ redhat_catalog_operator_packages:
   - name: odr-hub-operator
 
 operators:
-  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.15
+  # 4.19 operator catalogs
+  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.19
     packages: "{{ certified_catalog_operator_packages }}"
-  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.16
-    packages: "{{ certified_catalog_operator_packages }}"
-
-  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.15
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.19
     packages: "{{ redhat_catalog_operator_packages }}"
 
-  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.16
+  # 4.20 operator catalogs
+  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.20
+    packages: "{{ certified_catalog_operator_packages }}"
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
     packages: "{{ redhat_catalog_operator_packages }}"
 
 additional_images:
