@@ -62,6 +62,16 @@
           - openssl
           - ca-certificates
         state: present
+        disable_gpg_check: true
+      ignore_errors: true
+      register: pkg_install
+
+    - name: Check if openssl is available
+      ansible.builtin.command:
+        cmd: which openssl
+      register: openssl_check
+      changed_when: false
+      failed_when: openssl_check.rc != 0
 
     # =========================================================================
     # CA Directory Structure
