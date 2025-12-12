@@ -579,6 +579,26 @@ if ! command -v nmstatectl &> /dev/null; then
     }
 fi
 
+# Read CA cert and set as environment variable for the playbook
+CA_CERT_PATH="/etc/pki/disconnected-ca/ca.crt"
+if [ -f "$CA_CERT_PATH" ]; then
+    echo "[INFO] Reading CA certificate from $CA_CERT_PATH"
+    export ADDITIONAL_TRUST_BUNDLE=$(cat "$CA_CERT_PATH")
+    
+    # Update cluster.yml to include the cert content
+    # The playbook template expects 'additional_trust_bundle' variable
+    cat >> examples/jfrog-disconnected/cluster.yml << CERTEOF
+
+# Dynamically added CA certificate content
+additional_trust_bundle: |
+$(cat "$CA_CERT_PATH" | sed 's/^/  /')
+CERTEOF
+    echo "[OK] CA certificate added to cluster.yml"
+else
+    echo "[WARN] CA certificate not found at $CA_CERT_PATH"
+    echo "[INFO] Proceeding without additionalTrustBundle"
+fi
+
 # Run the create-iso.sh script with jfrog-disconnected config
 echo "[INFO] Running: ./hack/create-iso.sh jfrog-disconnected"
 ./hack/create-iso.sh jfrog-disconnected
