@@ -484,7 +484,8 @@ echo "[INFO] To mirror images, run: airflow dags trigger ocp_registry_sync"
 )
 
 # =============================================================================
-# Task 7: Create Agent Manifests
+# Task 7: Create Agent Manifests and Build ISO
+# Uses hack/create-iso.sh which handles both manifest generation and ISO creation
 # =============================================================================
 create_agent_manifests = BashOperator(
     task_id='create_agent_manifests',
@@ -496,72 +497,49 @@ set -euo pipefail
 unset ANSIBLE_VAULT_PASSWORD_FILE 2>/dev/null || true
 
 CLUSTER_NAME="{{ params.cluster_name }}"
-BASE_DOMAIN="{{ params.base_domain }}"
 JFROG_HOSTNAME="{{ params.jfrog_hostname }}"
 JFROG_PORT="{{ params.jfrog_port }}"
-OCP_VERSION="{{ params.ocp_version }}"
 
 echo "===================================================================="
-echo "[INFO] Creating Agent-Based Installer Manifests"
+echo "[INFO] Preparing JFrog Disconnected Cluster Configuration"
 echo "===================================================================="
 
-cd /root/openshift-agent-install/playbooks
-
-# Create cluster configuration
-cat > /tmp/cluster-vars.yml << EOF
-cluster_name: $CLUSTER_NAME
-base_domain: $BASE_DOMAIN
-openshift_version: "$OCP_VERSION"
-
-# Registry configuration for disconnected install
-imageContentSources:
-  - mirrors:
-    - $JFROG_HOSTNAME:$JFROG_PORT/mirror/quay.io
-    source: quay.io
-  - mirrors:
-    - $JFROG_HOSTNAME:$JFROG_PORT/mirror/registry.redhat.io
-    source: registry.redhat.io
-  - mirrors:
-    - $JFROG_HOSTNAME:$JFROG_PORT/mirror/registry.access.redhat.com
-    source: registry.access.redhat.com
-
-# Pull secret path
-pull_secret_path: /root/pull-secret.json
-
-# Additional trust bundle
-additionalTrustBundle: |
-$(cat /etc/pki/disconnected-ca/ca.crt 2>/dev/null | sed 's/^/  /' || echo "  # CA cert not found")
-EOF
+cd /root/openshift-agent-install
 
 # Install required Ansible collection if missing
 ansible-galaxy collection install community.crypto 2>/dev/null || true
 
-echo "[INFO] Running create-manifests.yml..."
-ansible-playbook -e "@/tmp/cluster-vars.yml" create-manifests.yml || {
-    echo "[WARN] create-manifests.yml failed - trying alternative approach"
-    
-    # Create manifests directory
-    MANIFEST_DIR="/root/openshift-agent-install/generated_manifests/$CLUSTER_NAME"
-    mkdir -p "$MANIFEST_DIR"
-    
-    # Copy example configs as starting point
-    if [ -d "/root/openshift-agent-install/examples/jfrog-disconnected" ]; then
-        cp /root/openshift-agent-install/examples/jfrog-disconnected/*.yml "$MANIFEST_DIR/" 2>/dev/null || true
-        echo "[INFO] Copied example configs to $MANIFEST_DIR"
-    fi
-    
-    echo "[INFO] Manual manifest creation may be required"
-}
+# Ensure jfrog-disconnected example exists and update it with current values
+EXAMPLE_DIR="examples/jfrog-disconnected"
+mkdir -p "$EXAMPLE_DIR"
 
-echo "[OK] Agent manifests task completed"
+# Read CA cert for trust bundle
+CA_CERT_PATH="/etc/pki/disconnected-ca/ca.crt"
+
+# Update cluster.yml with JFrog registry settings
+if [ -f "$EXAMPLE_DIR/cluster.yml" ]; then
+    echo "[INFO] Updating cluster.yml with JFrog registry: $JFROG_HOSTNAME:$JFROG_PORT"
+    # Update the JFrog hostname in imageContentSources
+    sed -i "s|jfrog.example.com:8443|$JFROG_HOSTNAME:$JFROG_PORT|g" "$EXAMPLE_DIR/cluster.yml"
+    
+    # Update additionalTrustBundlePath if CA cert exists
+    if [ -f "$CA_CERT_PATH" ]; then
+        sed -i "s|additionalTrustBundlePath:.*|additionalTrustBundlePath: $CA_CERT_PATH|g" "$EXAMPLE_DIR/cluster.yml"
+    fi
+fi
+
+echo "[INFO] Cluster configuration prepared in $EXAMPLE_DIR"
+cat "$EXAMPLE_DIR/cluster.yml"
+
+echo "[OK] Agent manifests preparation completed"
 REMOTE_SCRIPT
     """,
-    execution_timeout=timedelta(minutes=15),
+    execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
 
 # =============================================================================
-# Task 8: Build Agent ISO
+# Task 8: Build Agent ISO using hack/create-iso.sh
 # =============================================================================
 build_agent_iso = BashOperator(
     task_id='build_agent_iso',
@@ -575,61 +553,40 @@ unset ANSIBLE_VAULT_PASSWORD_FILE 2>/dev/null || true
 CLUSTER_NAME="{{ params.cluster_name }}"
 
 echo "===================================================================="
-echo "[INFO] Building Agent-Based Installer ISO"
+echo "[INFO] Building Agent-Based Installer ISO using hack/create-iso.sh"
 echo "===================================================================="
 
-OCP_VERSION="4.20.4"
+cd /root/openshift-agent-install
 
-# Check multiple possible manifest locations
-MANIFEST_DIR=""
-for dir in "/root/openshift-agent-install/playbooks/generated_manifests/$CLUSTER_NAME" \
-           "/root/openshift-agent-install/generated_manifests/$CLUSTER_NAME" \
-           "/root/openshift-agent-install/examples/jfrog-disconnected"; do
-    if [ -d "$dir" ]; then
-        MANIFEST_DIR="$dir"
-        break
-    fi
-done
+# Set generated asset path
+export GENERATED_ASSET_PATH="${HOME}/generated_assets"
+export SITE_CONFIG_DIR="examples"
 
-if [ -z "$MANIFEST_DIR" ]; then
-    echo "[WARN] No manifest directory found, creating from example"
-    MANIFEST_DIR="/root/openshift-agent-install/generated_manifests/$CLUSTER_NAME"
-    mkdir -p "$MANIFEST_DIR"
-    
-    # Copy example configs
-    if [ -d "/root/openshift-agent-install/examples/jfrog-disconnected" ]; then
-        cp /root/openshift-agent-install/examples/jfrog-disconnected/*.yml "$MANIFEST_DIR/" 2>/dev/null || true
-    fi
-fi
+# Install required Ansible collection if missing
+ansible-galaxy collection install community.crypto 2>/dev/null || true
 
-echo "[INFO] Using manifest directory: $MANIFEST_DIR"
+# Run the create-iso.sh script with jfrog-disconnected config
+echo "[INFO] Running: ./hack/create-iso.sh jfrog-disconnected"
+./hack/create-iso.sh jfrog-disconnected
 
-# Download RHCOS ISO if not cached
-RHCOS_CACHE="$HOME/.cache/agent/image_cache"
-if [ ! -f "$RHCOS_CACHE/coreos-x86_64.iso" ]; then
-    echo "[INFO] Downloading RHCOS ISO using helper script..."
-    if [ -f "/root/openshift-agent-install/get-rhcos-iso.sh" ]; then
-        cd /root/openshift-agent-install
-        ./get-rhcos-iso.sh "${OCP_VERSION}" x86_64 || echo "[WARN] RHCOS download may have failed"
-        
-        # Move ISO to cache location
-        mkdir -p "$RHCOS_CACHE"
-        mv rhcos-*.iso "$RHCOS_CACHE/coreos-x86_64.iso" 2>/dev/null || true
-        cd -
-    fi
-fi
-
-cd "$MANIFEST_DIR"
-
-echo "[INFO] Creating agent ISO..."
-openshift-install agent create image --dir .
-
-if [ -f "agent.x86_64.iso" ]; then
-    echo "[OK] Agent ISO created: $MANIFEST_DIR/agent.x86_64.iso"
-    ls -lh agent.x86_64.iso
+# Verify ISO was created
+ISO_PATH="${GENERATED_ASSET_PATH}/${CLUSTER_NAME}/agent.x86_64.iso"
+if [ -f "$ISO_PATH" ]; then
+    echo "[OK] Agent ISO created successfully"
+    ls -lh "$ISO_PATH"
+    echo ""
+    echo "ISO Location: $ISO_PATH"
 else
-    echo "[ERROR] ISO creation failed"
-    exit 1
+    # Check alternate location
+    ALT_ISO=$(find "$GENERATED_ASSET_PATH" -name "agent.x86_64.iso" 2>/dev/null | head -1)
+    if [ -n "$ALT_ISO" ]; then
+        echo "[OK] Agent ISO created at: $ALT_ISO"
+        ls -lh "$ALT_ISO"
+    else
+        echo "[ERROR] ISO creation failed - no agent.x86_64.iso found"
+        ls -la "$GENERATED_ASSET_PATH/" 2>/dev/null || echo "Generated assets directory not found"
+        exit 1
+    fi
 fi
 REMOTE_SCRIPT
     """,
