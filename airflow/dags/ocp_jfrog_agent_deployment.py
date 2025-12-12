@@ -102,6 +102,11 @@ dag = DAG(
             type='boolean',
             description='Skip image mirroring (images already mirrored)',
         ),
+        'deploy_on_kvm': Param(
+            default=False,
+            type='boolean',
+            description='Deploy VMs on KVM using hack/deploy-on-kvm.sh',
+        ),
     },
     doc_md=__doc__,
 )
@@ -565,6 +570,15 @@ export SITE_CONFIG_DIR="examples"
 # Install required Ansible collection if missing
 ansible-galaxy collection install community.crypto 2>/dev/null || true
 
+# Install nmstate package required for network config validation
+if ! command -v nmstatectl &> /dev/null; then
+    echo "[INFO] Installing nmstate package..."
+    dnf install -y nmstate || yum install -y nmstate || {
+        echo "[WARN] Could not install nmstate - trying pip"
+        pip3 install nmstate || true
+    }
+fi
+
 # Run the create-iso.sh script with jfrog-disconnected config
 echo "[INFO] Running: ./hack/create-iso.sh jfrog-disconnected"
 ./hack/create-iso.sh jfrog-disconnected
@@ -595,7 +609,53 @@ REMOTE_SCRIPT
 )
 
 # =============================================================================
-# Task 9: Deployment Report
+# Task 9: Deploy VMs on KVM (Optional)
+# Uses hack/deploy-on-kvm.sh to create VMs and boot from agent ISO
+# =============================================================================
+deploy_on_kvm = BashOperator(
+    task_id='deploy_on_kvm',
+    bash_command="""
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@localhost << 'REMOTE_SCRIPT'
+set -euo pipefail
+
+CLUSTER_NAME="{{ params.cluster_name }}"
+DEPLOY_ON_KVM="{{ params.deploy_on_kvm }}"
+
+echo "===================================================================="
+echo "[INFO] Deploy VMs on KVM"
+echo "===================================================================="
+
+if [ "$DEPLOY_ON_KVM" != "True" ] && [ "$DEPLOY_ON_KVM" != "true" ]; then
+    echo "[INFO] KVM deployment skipped (deploy_on_kvm=false)"
+    echo "[INFO] To deploy on KVM, set deploy_on_kvm=true in DAG config"
+    exit 0
+fi
+
+cd /root/openshift-agent-install
+
+# Set environment variables
+export CLUSTER_NAME="$CLUSTER_NAME"
+export GENERATED_ASSET_PATH="${HOME}/generated_assets"
+
+# Check if ISO exists
+if [ ! -f "${GENERATED_ASSET_PATH}/${CLUSTER_NAME}/agent.x86_64.iso" ]; then
+    echo "[ERROR] Agent ISO not found at ${GENERATED_ASSET_PATH}/${CLUSTER_NAME}/agent.x86_64.iso"
+    exit 1
+fi
+
+echo "[INFO] Running: ./hack/deploy-on-kvm.sh examples/jfrog-disconnected/nodes.yml"
+./hack/deploy-on-kvm.sh examples/jfrog-disconnected/nodes.yml
+
+echo "[OK] KVM VMs deployed and booting from agent ISO"
+echo "[INFO] Monitor VM status with: virsh list --all"
+REMOTE_SCRIPT
+    """,
+    execution_timeout=timedelta(minutes=15),
+    dag=dag,
+)
+
+# =============================================================================
+# Task 10: Deployment Report
 # =============================================================================
 deployment_report = BashOperator(
     task_id='deployment_report',
@@ -606,6 +666,7 @@ CLUSTER_NAME="{{ params.cluster_name }}"
 BASE_DOMAIN="{{ params.base_domain }}"
 JFROG_HOSTNAME="{{ params.jfrog_hostname }}"
 JFROG_PORT="{{ params.jfrog_port }}"
+DEPLOY_ON_KVM="{{ params.deploy_on_kvm }}"
 
 echo ""
 echo "===================================================================="
@@ -625,16 +686,29 @@ echo "  - Domain: $CLUSTER_NAME.$BASE_DOMAIN"
 echo "  - Version: {{ params.ocp_version }}"
 echo ""
 echo "Generated Files:"
-echo "  - Manifests: /root/openshift-agent-install/playbooks/generated_manifests/$CLUSTER_NAME/"
-echo "  - ISO: /root/openshift-agent-install/playbooks/generated_manifests/$CLUSTER_NAME/agent.x86_64.iso"
+echo "  - Manifests: ~/generated_assets/$CLUSTER_NAME/"
+echo "  - ISO: ~/generated_assets/$CLUSTER_NAME/agent.x86_64.iso"
 echo "  - ICSP: /opt/ocp4-disconnected-helper/templates/icsp/"
 echo ""
+if [ "$DEPLOY_ON_KVM" = "True" ] || [ "$DEPLOY_ON_KVM" = "true" ]; then
+echo "KVM Deployment:"
+echo "  - VMs created and booting from agent ISO"
+echo "  - Check status: virsh list --all"
+echo ""
+fi
 echo "===================================================================="
 echo "Next Steps:"
+if [ "$DEPLOY_ON_KVM" != "True" ] && [ "$DEPLOY_ON_KVM" != "true" ]; then
 echo "  1. Boot target nodes with the agent ISO"
-echo "  2. Monitor bootstrap: openshift-install agent wait-for bootstrap-complete --dir /root/openshift-agent-install/playbooks/generated_manifests/$CLUSTER_NAME"
-echo "  3. Monitor install: openshift-install agent wait-for install-complete --dir /root/openshift-agent-install/playbooks/generated_manifests/$CLUSTER_NAME"
+else
+echo "  1. VMs are booting - monitor progress"
+fi
+echo "  2. Monitor bootstrap: openshift-install agent wait-for bootstrap-complete --dir ~/generated_assets/$CLUSTER_NAME"
+echo "  3. Monitor install: openshift-install agent wait-for install-complete --dir ~/generated_assets/$CLUSTER_NAME"
 echo "  4. Apply ICSP post-install: /opt/ocp4-disconnected-helper/templates/icsp/apply-icsp-jfrog.sh"
+echo ""
+echo "To destroy KVM VMs:"
+echo "  cd /root/openshift-agent-install && ./hack/destroy-on-kvm.sh examples/jfrog-disconnected/nodes.yml"
 echo "===================================================================="
 echo "[OK] JFrog Agent Deployment workflow completed!"
     """,
@@ -678,9 +752,9 @@ echo "After fixing, retrigger this DAG"
 # =============================================================================
 setup_dns >> preflight_checks >> provision_jfrog_vm >> setup_certificates >> deploy_jfrog
 deploy_jfrog >> configure_passthrough >> trigger_mirror_sync
-trigger_mirror_sync >> create_agent_manifests >> build_agent_iso >> deployment_report
+trigger_mirror_sync >> create_agent_manifests >> build_agent_iso >> deploy_on_kvm >> deployment_report
 
 # Cleanup runs on any failure
 [setup_dns, preflight_checks, provision_jfrog_vm, setup_certificates, deploy_jfrog, 
  configure_passthrough, trigger_mirror_sync, create_agent_manifests, 
- build_agent_iso] >> cleanup_on_failure
+ build_agent_iso, deploy_on_kvm] >> cleanup_on_failure
