@@ -1,0 +1,177 @@
+---
+# Setup FreeIPA DNS Records for OpenShift Cluster
+# ADR References: ADR 0020 (Passthrough Mode), ADR 0004 (JFrog)
+#
+# Prerequisites:
+# - FreeIPA server accessible
+# - Admin credentials available
+# - ansible-freeipa collection installed
+
+- name: Setup FreeIPA DNS Records for OpenShift Cluster
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # FreeIPA Server Configuration
+    ipa_host: "{{ ipa_host | default('idm.example.com') }}"
+    ipa_domain: "{{ ipa_domain | default('example.com') }}"
+    ipa_admin_user: "{{ ipa_admin_user | default('admin') }}"
+    ipa_admin_password: "{{ ipa_admin_password | default(lookup('env', 'IPA_ADMIN_PASSWORD')) }}"
+
+    # Cluster Configuration
+    cluster_name: "{{ cluster_name | default('ocp-jfrog') }}"
+    
+    # VIPs
+    api_vip: "{{ api_vip | default('192.168.122.100') }}"
+    apps_vip: "{{ apps_vip | default('192.168.122.101') }}"
+    
+    # JFrog Registry
+    jfrog_hostname: "{{ jfrog_hostname | default('jfrog') }}"
+    jfrog_ip: "{{ jfrog_ip | default('192.168.122.200') }}"
+
+    # Node IPs (for 3-node cluster)
+    node_ips:
+      - name: "{{ cluster_name }}-master-0"
+        ip: "{{ master_0_ip | default('192.168.122.110') }}"
+      - name: "{{ cluster_name }}-master-1"
+        ip: "{{ master_1_ip | default('192.168.122.111') }}"
+      - name: "{{ cluster_name }}-master-2"
+        ip: "{{ master_2_ip | default('192.168.122.112') }}"
+
+  tasks:
+    - name: Display DNS configuration
+      debug:
+        msg: |
+          FreeIPA DNS Configuration:
+          ==========================
+          IPA Host: {{ ipa_host }}
+          Domain: {{ ipa_domain }}
+          Cluster: {{ cluster_name }}
+          
+          Records to create:
+          - api.{{ cluster_name }}.{{ ipa_domain }} -> {{ api_vip }}
+          - api-int.{{ cluster_name }}.{{ ipa_domain }} -> {{ api_vip }}
+          - *.apps.{{ cluster_name }}.{{ ipa_domain }} -> {{ apps_vip }}
+          - {{ jfrog_hostname }}.{{ ipa_domain }} -> {{ jfrog_ip }}
+          {% for node in node_ips %}
+          - {{ node.name }}.{{ ipa_domain }} -> {{ node.ip }}
+          {% endfor %}
+
+    - name: Add API VIP DNS record
+      community.general.ipa_dnsrecord:
+        ipa_host: "{{ ipa_host }}"
+        ipa_user: "{{ ipa_admin_user }}"
+        ipa_pass: "{{ ipa_admin_password }}"
+        zone_name: "{{ ipa_domain }}"
+        record_name: "api.{{ cluster_name }}"
+        record_type: "A"
+        record_value: "{{ api_vip }}"
+        state: present
+        validate_certs: false
+      register: api_record
+
+    - name: Add API-INT DNS record
+      community.general.ipa_dnsrecord:
+        ipa_host: "{{ ipa_host }}"
+        ipa_user: "{{ ipa_admin_user }}"
+        ipa_pass: "{{ ipa_admin_password }}"
+        zone_name: "{{ ipa_domain }}"
+        record_name: "api-int.{{ cluster_name }}"
+        record_type: "A"
+        record_value: "{{ api_vip }}"
+        state: present
+        validate_certs: false
+      register: api_int_record
+
+    - name: Add wildcard apps DNS record
+      community.general.ipa_dnsrecord:
+        ipa_host: "{{ ipa_host }}"
+        ipa_user: "{{ ipa_admin_user }}"
+        ipa_pass: "{{ ipa_admin_password }}"
+        zone_name: "{{ ipa_domain }}"
+        record_name: "*.apps.{{ cluster_name }}"
+        record_type: "A"
+        record_value: "{{ apps_vip }}"
+        state: present
+        validate_certs: false
+      register: apps_record
+
+    - name: Add JFrog registry DNS record
+      community.general.ipa_dnsrecord:
+        ipa_host: "{{ ipa_host }}"
+        ipa_user: "{{ ipa_admin_user }}"
+        ipa_pass: "{{ ipa_admin_password }}"
+        zone_name: "{{ ipa_domain }}"
+        record_name: "{{ jfrog_hostname }}"
+        record_type: "A"
+        record_value: "{{ jfrog_ip }}"
+        state: present
+        validate_certs: false
+      register: jfrog_record
+
+    - name: Add node DNS records
+      community.general.ipa_dnsrecord:
+        ipa_host: "{{ ipa_host }}"
+        ipa_user: "{{ ipa_admin_user }}"
+        ipa_pass: "{{ ipa_admin_password }}"
+        zone_name: "{{ ipa_domain }}"
+        record_name: "{{ item.name }}"
+        record_type: "A"
+        record_value: "{{ item.ip }}"
+        state: present
+        validate_certs: false
+      loop: "{{ node_ips }}"
+      register: node_records
+
+    - name: Verify DNS records
+      block:
+        - name: Test API DNS resolution
+          command: "dig @{{ ipa_host }} api.{{ cluster_name }}.{{ ipa_domain }} +short"
+          register: api_test
+          changed_when: false
+
+        - name: Test Apps wildcard DNS resolution
+          command: "dig @{{ ipa_host }} test.apps.{{ cluster_name }}.{{ ipa_domain }} +short"
+          register: apps_test
+          changed_when: false
+
+        - name: Test JFrog DNS resolution
+          command: "dig @{{ ipa_host }} {{ jfrog_hostname }}.{{ ipa_domain }} +short"
+          register: jfrog_test
+          changed_when: false
+
+        - name: Display verification results
+          debug:
+            msg: |
+              DNS Verification Results:
+              =========================
+              api.{{ cluster_name }}.{{ ipa_domain }} -> {{ api_test.stdout }}
+              *.apps.{{ cluster_name }}.{{ ipa_domain }} -> {{ apps_test.stdout }}
+              {{ jfrog_hostname }}.{{ ipa_domain }} -> {{ jfrog_test.stdout }}
+              
+              Status: {{ 'SUCCESS' if api_test.stdout == api_vip and apps_test.stdout == apps_vip and jfrog_test.stdout == jfrog_ip else 'VERIFY MANUALLY' }}
+
+    - name: Save DNS configuration to file
+      copy:
+        content: |
+          # FreeIPA DNS Records for {{ cluster_name }}
+          # Generated: {{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -Iseconds')) }}
+          
+          IPA_HOST={{ ipa_host }}
+          IPA_DOMAIN={{ ipa_domain }}
+          CLUSTER_NAME={{ cluster_name }}
+          
+          # Cluster Records
+          api.{{ cluster_name }}.{{ ipa_domain }}={{ api_vip }}
+          api-int.{{ cluster_name }}.{{ ipa_domain }}={{ api_vip }}
+          *.apps.{{ cluster_name }}.{{ ipa_domain }}={{ apps_vip }}
+          
+          # JFrog Registry
+          {{ jfrog_hostname }}.{{ ipa_domain }}={{ jfrog_ip }}
+          
+          # Node Records
+          {% for node in node_ips %}
+          {{ node.name }}.{{ ipa_domain }}={{ node.ip }}
+          {% endfor %}
+        dest: "/tmp/dns-records-{{ cluster_name }}.txt"
+        mode: '0644'

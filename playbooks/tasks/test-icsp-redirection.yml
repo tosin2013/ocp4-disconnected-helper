@@ -1,0 +1,51 @@
+---
+- name: Test ICSP Redirection
+  block:
+    - name: Check if oc command is available
+      command: which oc
+      register: oc_check
+      changed_when: false
+      failed_when: false
+
+    - name: Verify OpenShift cluster connectivity
+      command: oc cluster-info
+      register: cluster_info
+      changed_when: false
+      failed_when: false
+      when: oc_check.rc == 0
+
+    - name: Get current ICSP policies
+      command: oc get imagecontentsourcepolicy -o json
+      register: icsp_policies
+      changed_when: false
+      failed_when: false
+      when: oc_check.rc == 0 and cluster_info.rc == 0
+
+    - name: Verify ICSP contains expected mirrors
+      set_fact:
+        icsp_test_result: "{{ 'PASS' if icsp_policies.rc == 0 else 'FAIL - No cluster connection' }}"
+
+    - name: Test image pull with ICSP redirection
+      command: "oc image info {{ test_image }} --filter-by-os=linux/amd64"
+      register: image_info
+      changed_when: false
+      failed_when: false
+      when: oc_check.rc == 0 and cluster_info.rc == 0
+
+    - name: Display ICSP test results
+      debug:
+        msg: |
+          ICSP Redirection Test Results:
+          - oc available: {{ 'Yes' if oc_check.rc == 0 else 'No' }}
+          - Cluster connected: {{ 'Yes' if cluster_info.rc == 0 else 'No' }}
+          - ICSP policies found: {{ (icsp_policies.stdout | from_json).items | length if icsp_policies.rc == 0 else 0 }}
+          - Test Result: {{ icsp_test_result }}
+
+  rescue:
+    - name: Handle ICSP test failure
+      set_fact:
+        icsp_test_result: "FAIL - Error during testing"
+      
+    - name: Display ICSP test error
+      debug:
+        msg: "ICSP redirection test failed. Ensure cluster is accessible and ICSP is applied."

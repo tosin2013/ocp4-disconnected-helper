@@ -1,0 +1,31 @@
+---
+- name: Create JFrog Artifactory Mirror Repository for {{ upstream_registry }}
+  block:
+    - name: Create JFrog Docker repository for upstream registry
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/artifactory/api/repositories/mirror-{{ upstream_registry | replace('.', '-') }}"
+        method: PUT
+        body_format: json
+        body:
+          key: "mirror-{{ upstream_registry | replace('.', '-') }}"
+          rclass: "local"
+          packageType: "docker"
+          dockerApiVersion: "V2"
+          description: "Mirror repository for {{ upstream_registry }}"
+        headers:
+          Authorization: "Bearer {{ jfrog_admin_token }}"
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: [200, 201, 400]  # 400 = already exists
+      register: repo_result
+      when: jfrog_admin_token is defined
+
+    - name: Display JFrog repository creation result
+      debug:
+        msg: "Repository mirror-{{ upstream_registry | replace('.', '-') }}: {{ 'Created' if repo_result.status in [200, 201] else 'Already exists or error' }}"
+      when: jfrog_admin_token is defined
+
+  rescue:
+    - name: Handle JFrog repository creation failure
+      debug:
+        msg: "Failed to create JFrog repository for {{ upstream_registry }}"

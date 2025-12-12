@@ -25,9 +25,15 @@ openshift_releases:
     minVersion: 4.19.19
     maxVersion: 4.19.19
     type: ocp
+  # 4.20.4 for initial install via JFrog mirror
   - name: stable-4.20
-    minVersion: 4.20.5
-    maxVersion: 4.20.5
+    minVersion: 4.20.4
+    maxVersion: 4.20.4
+    type: ocp
+  # 4.20.6 for upgrade path from 4.20.4
+  - name: stable-4.20
+    minVersion: 4.20.6
+    maxVersion: 4.20.6
     shortestPath: true
     type: ocp
 certified_catalog_operator_packages:

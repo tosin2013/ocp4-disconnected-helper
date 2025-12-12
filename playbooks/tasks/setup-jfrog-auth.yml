@@ -1,0 +1,101 @@
+---
+- name: Setup JFrog Artifactory Authentication
+  block:
+    - name: Verify JFrog API accessibility
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/artifactory/api/system/ping"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: jfrog_health
+      retries: 3
+      delay: 5
+
+    - name: Fail if JFrog API is not accessible
+      fail:
+        msg: "JFrog API at https://{{ registry_hostname }}:{{ registry_port }} is not accessible"
+      when: jfrog_health.status != 200
+
+    - name: Create JFrog access token for registry mirroring
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/access/api/v1/tokens"
+        method: POST
+        body_format: json
+        body:
+          username: "ocp-mirror-{{ inventory_hostname }}"
+          scope: "applied-permissions/groups:readers,applied-permissions/groups:deployers"
+          expires_in: 0  # Never expires
+          refreshable: true
+          description: "Token for OpenShift registry mirroring"
+        headers:
+          Authorization: "Bearer {{ jfrog_admin_token }}"
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: [200, 201]
+      register: token_creation
+      when: jfrog_admin_token is defined
+
+    - name: Extract JFrog access token
+      set_fact:
+        jfrog_mirror_token: "{{ token_creation.json.access_token }}"
+        jfrog_mirror_user: "ocp-mirror-{{ inventory_hostname }}"
+      when: token_creation.status in [200, 201]
+
+    - name: Store JFrog authentication credentials
+      set_fact:
+        registry_credentials:
+          method: "jfrog_token"
+          username: "{{ jfrog_mirror_user }}"
+          password: "{{ jfrog_mirror_token }}"
+          registry_url: "https://{{ registry_hostname }}:{{ registry_port }}"
+          auth_type: "access_token"
+
+    - name: Create JFrog authentication configuration file
+      copy:
+        content: |
+          {
+            "registry_type": "jfrog",
+            "registry_url": "https://{{ registry_hostname }}:{{ registry_port }}",
+            "auth_method": "access_token",
+            "username": "{{ jfrog_mirror_user }}",
+            "token": "{{ jfrog_mirror_token }}",
+            "created_at": "{{ ansible_date_time.iso8601 }}"
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/jfrog-auth-config.json"
+        mode: '0600'
+      become: true
+
+    - name: Create Docker config.json for JFrog authentication
+      copy:
+        content: |
+          {
+            "auths": {
+              "https://{{ registry_hostname }}:{{ registry_port }}": {
+                "auth": "{{ (jfrog_mirror_user + ':' + jfrog_mirror_token) | b64encode }}"
+              }
+            }
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/jfrog-docker-config.json"
+        mode: '0600'
+      become: true
+
+    - name: Display JFrog authentication setup status
+      debug:
+        msg: |
+          JFrog Authentication Setup Completed:
+          - User: {{ jfrog_mirror_user }}
+          - Registry: https://{{ registry_hostname }}:{{ registry_port }}
+          - Auth Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/jfrog-auth-config.json
+
+  rescue:
+    - name: Handle JFrog authentication setup failure
+      debug:
+        msg: |
+          JFrog authentication setup failed. Check:
+          - JFrog API accessibility
+          - Admin token validity and permissions
+          - Network connectivity
+
+    - name: Fail playbook on JFrog authentication error
+      fail:
+        msg: "JFrog authentication setup failed for registry: {{ registry_hostname }}:{{ registry_port }}"

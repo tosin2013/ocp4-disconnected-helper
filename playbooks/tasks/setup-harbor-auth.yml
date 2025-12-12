@@ -1,0 +1,162 @@
+---
+- name: Setup Harbor Registry Authentication
+  block:
+    - name: Verify Harbor API accessibility
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/system/health"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: harbor_health
+      retries: 3
+      delay: 5
+
+    - name: Fail if Harbor API is not accessible
+      fail:
+        msg: "Harbor API at https://{{ registry_hostname }}:{{ registry_port }} is not accessible"
+      when: harbor_health.status != 200
+
+    - name: Create Harbor robot account for registry mirroring
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/robots"
+        method: POST
+        body_format: json
+        body:
+          name: "ocp-mirror-{{ inventory_hostname }}"
+          description: "Robot account for OpenShift registry mirroring"
+          duration: -1  # Never expires
+          level: "system"
+          permissions:
+            - kind: "project"
+              namespace: "*"
+              access:
+                - action: "pull"
+                  resource: "repository"
+                - action: "push"
+                  resource: "repository"
+                - action: "create"
+                  resource: "repository"
+                - action: "delete"
+                  resource: "repository"
+        headers:
+          Authorization: "Basic {{ harbor_auth_string }}"
+        validate_certs: false
+        status_code: [201, 409]  # 201=created, 409=already exists
+      register: robot_creation
+      vars:
+        harbor_auth_string: "{{ harbor_admin_user }}:{{ harbor_admin_password }} | b64encode"
+
+    - name: Get existing robot account if creation failed with 409
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/robots/ocp-mirror-{{ inventory_hostname }}"
+        method: GET
+        headers:
+          Authorization: "Basic {{ harbor_auth_string }}"
+        validate_certs: false
+      register: existing_robot
+      when: robot_creation.status == 409
+      vars:
+        harbor_auth_string: "{{ harbor_admin_user }}:{{ harbor_admin_password }} | b64encode"
+
+    - name: Extract robot secret token
+      set_fact:
+        harbor_robot_token: "{{ robot_creation.json.secret if robot_creation.status == 201 else existing_robot.json.secret }}"
+        harbor_robot_name: "ocp-mirror-{{ inventory_hostname }}"
+
+    - name: Create Harbor mirror project
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/projects"
+        method: POST
+        body_format: json
+        body:
+          project_name: "mirror"
+          metadata:
+            public: "false"
+            enable_content_trust: "false"
+            enable_vulnerability_scanning: "false"
+            prevent_vul: "false"
+            severity: "medium"
+            auto_scan: "false"
+        headers:
+          Authorization: "Basic {{ harbor_auth_string }}"
+        validate_certs: false
+        status_code: [201, 409]  # 201=created, 409=already exists
+      register: project_creation
+      vars:
+        harbor_auth_string: "{{ harbor_admin_user }}:{{ harbor_admin_password }} | b64encode"
+
+    - name: Store Harbor authentication credentials
+      set_fact:
+        registry_credentials:
+          method: "harbor_robot"
+          username: "robot${{ harbor_robot_name }}"
+          password: "{{ harbor_robot_token }}"
+          registry_url: "https://{{ registry_hostname }}:{{ registry_port }}"
+          project: "mirror"
+          auth_type: "robot_account"
+
+    - name: Create Harbor authentication configuration file
+      copy:
+        content: |
+          {
+            "registry_type": "harbor",
+            "registry_url": "https://{{ registry_hostname }}:{{ registry_port }}",
+            "auth_method": "robot_account",
+            "username": "robot${{ harbor_robot_name }}",
+            "password": "{{ harbor_robot_token }}",
+            "project": "mirror",
+            "created_at": "{{ ansible_date_time.iso8601 }}",
+            "robot_name": "{{ harbor_robot_name }}"
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/harbor-auth-config.json"
+        mode: '0600'
+      become: true
+
+    - name: Create Docker config.json for Harbor authentication
+      copy:
+        content: |
+          {
+            "auths": {
+              "https://{{ registry_hostname }}:{{ registry_port }}": {
+                "auth": "{{ ('robot$' + harbor_robot_name + ':' + harbor_robot_token) | b64encode }}"
+              }
+            }
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/harbor-docker-config.json"
+        mode: '0600'
+      become: true
+
+    - name: Display Harbor authentication setup status
+      debug:
+        msg: |
+          Harbor Authentication Setup Completed:
+          - Robot Account: {{ harbor_robot_name }}
+          - Project: mirror
+          - Registry: https://{{ registry_hostname }}:{{ registry_port }}
+          - Auth Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/harbor-auth-config.json
+          - Docker Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/harbor-docker-config.json
+
+  rescue:
+    - name: Handle Harbor authentication setup failure
+      debug:
+        msg: |
+          Harbor authentication setup failed. Check:
+          - Harbor API accessibility: https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/system/health
+          - Admin credentials: Verify harbor_admin_user and harbor_admin_password
+          - Harbor version compatibility: API v2.0 required
+          - Network connectivity and firewall rules
+          - Harbor service status
+
+    - name: Display Harbor troubleshooting steps
+      debug:
+        msg: |
+          Harbor Troubleshooting Steps:
+          1. Test Harbor API: curl -k -u "{{ harbor_admin_user }}:{{ harbor_admin_password }}" https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/system/health
+          2. Check Harbor logs: docker logs harbor-core
+          3. Verify Harbor configuration: /etc/harbor/harbor.yml
+          4. Check robot account permissions in Harbor UI
+          5. Review project creation permissions
+
+    - name: Fail playbook on Harbor authentication error
+      fail:
+        msg: "Harbor authentication setup failed for registry: {{ registry_hostname }}:{{ registry_port }}"

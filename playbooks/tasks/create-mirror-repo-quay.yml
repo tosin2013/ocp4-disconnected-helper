@@ -1,0 +1,27 @@
+---
+- name: Create Quay Mirror Repository for {{ upstream_registry }}
+  block:
+    - name: Create Quay organization for upstream registry
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/organization"
+        method: POST
+        body_format: json
+        body:
+          name: "mirror-{{ upstream_registry | replace('.', '-') }}"
+          email: "admin@{{ registry_hostname }}"
+        headers:
+          Authorization: "Bearer {{ quay_oauth_token }}"
+        validate_certs: false
+        status_code: [201, 409]
+      register: org_result
+      when: quay_oauth_token is defined
+
+    - name: Display Quay organization creation result
+      debug:
+        msg: "Organization mirror-{{ upstream_registry | replace('.', '-') }}: {{ 'Created' if org_result.status == 201 else 'Already exists' }}"
+      when: quay_oauth_token is defined
+
+  rescue:
+    - name: Handle Quay repository creation failure
+      debug:
+        msg: "Failed to create Quay organization for {{ upstream_registry }}"

@@ -74,10 +74,15 @@ dag = DAG(
             description='Upgrade type: major (4.19->4.20) or patch (4.20.4->4.20.5)',
         ),
         'target_registry': Param(
-            default='quay',
+            default='mirror-registry',
             type='string',
-            enum=['quay', 'harbor', 'jfrog'],
-            description='Target registry type',
+            enum=['mirror-registry', 'quay', 'harbor', 'jfrog'],
+            description='Target registry type (ADR 0004/0017/0020)',
+        ),
+        'enable_passthrough': Param(
+            default=True,
+            type='boolean',
+            description='Enable registry passthrough mode (ADR 0020)',
         ),
         'skip_download': Param(
             default=False,
@@ -116,6 +121,7 @@ echo "Target Version: {{ params.target_version }}"
 echo "Upgrade Type: {{ params.upgrade_type }}"
 echo "Auto Resolve: {{ params.auto_resolve_versions }}"
 echo "Target Registry: {{ params.target_registry }}"
+echo "Passthrough Mode: {{ params.enable_passthrough }}"
 echo "Skip Download: {{ params.skip_download }}"
 echo "Clean Mirror: {{ params.clean_mirror }}"
 echo "Timestamp: $(date -Iseconds)"
@@ -138,7 +144,7 @@ done
 echo ""
 echo "[INFO] Checking Ansible playbooks..."
 PLAYBOOKS_PATH="/root/ocp4-disconnected-helper/playbooks"
-for playbook in download-to-tar.yml push-tar-to-registry.yml; do
+for playbook in download-to-tar.yml push-tar-to-registry.yml setup-registry-passthrough.yml validate-passthrough-mode.yml; do
     if [ -f "$PLAYBOOKS_PATH/$playbook" ]; then
         echo "  [OK] $playbook exists"
     else
@@ -384,9 +390,11 @@ fi
 echo ""
 echo "===================================================================="
 echo "Next Steps:"
-echo "  1. Apply ICSP/IDMS manifests to cluster"
-echo "  2. Verify images: skopeo list-tags docker://<registry>/<repo>"
-echo "  3. Deploy cluster: airflow dags trigger ocp_agent_deployment"
+echo "  1. Run passthrough setup: ansible-playbook setup-registry-passthrough.yml"
+echo "  2. Apply ICSP/IDMS manifests to cluster"
+echo "  3. Validate passthrough: ansible-playbook validate-passthrough-mode.yml"
+echo "  4. Verify images: skopeo list-tags docker://<registry>/<repo>"
+echo "  5. Deploy cluster: airflow dags trigger ocp_agent_deployment"
 echo "===================================================================="
 echo "[OK] OCP Registry Sync completed successfully!"
     """,

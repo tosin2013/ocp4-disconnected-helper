@@ -4,11 +4,26 @@
 ## The user must have password-less sudo access
 ## The user must have password-less ssh access to the remote hosts
 ## You need a user to push to your remote registry
+#
+# ADR References:
+## ADR 0003: oc-mirror v2 for Image Mirroring
+## ADR 0004: Dual Registry Support (Harbor and JFrog)
+## ADR 0017: Quay Mirror Registry
+## ADR 0020: Registry Passthrough Mode for Container Image Distribution
 
 - name: Push a local set of oc-mirror packed TAR files to a remote registry
   hosts: localhost
   gather_facts: true
   become: true
+
+  vars:
+    # Registry passthrough mode configuration (ADR 0020)
+    enable_passthrough: "{{ enable_passthrough | default(true) }}"
+    registry_type: "{{ registry_type | default('mirror-registry') }}"
+    
+    # Naming convention for passthrough mode
+    # Pattern: registry.local/mirror/<upstream-registry>/<path>
+    passthrough_naming_pattern: "mirror/{{ upstream_registry | default('') }}"
 
   tasks:
 

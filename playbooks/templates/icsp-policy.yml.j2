@@ -1,0 +1,28 @@
+---
+apiVersion: config.openshift.io/v1
+kind: ImageContentSourcePolicy
+metadata:
+  name: {{ icsp_name | default('registry-passthrough-' + registry_type) }}
+  annotations:
+    generated-by: ocp4-disconnected-helper
+    registry-type: {{ registry_type }}
+    generated-at: {{ ansible_date_time.iso8601 }}
+spec:
+  repositoryDigestMirrors:
+{% for mirror in registry_mirrors %}
+  - mirrors:
+    - {{ registry_local }}/mirror/{{ mirror.source }}
+    source: {{ mirror.source }}
+{% if mirror.source_digests is defined %}
+    sourceDigests:
+{% for digest in mirror.source_digests %}
+    - {{ digest }}
+{% endfor %}
+{% endif %}
+{% if mirror.mirror_digests is defined %}
+    mirrorDigests:
+{% for digest in mirror.mirror_digests %}
+    - {{ digest }}
+{% endfor %}
+{% endif %}
+{% endfor %}

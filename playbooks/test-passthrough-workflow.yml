@@ -1,0 +1,147 @@
+---
+# Test Suite for Registry Passthrough Mode (ADR 0020)
+# Validates end-to-end passthrough functionality
+
+- name: Test Registry Passthrough Workflow
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    registry_type: "{{ registry_type | default('mirror-registry') }}"
+    registry_local_uri: "{{ registry_local_uri | default('registry.disconnected.local') }}"
+    registry_local_port: "{{ registry_local_port | default('8443') }}"
+    test_results: []
+
+  tasks:
+    - name: "TEST 1: Verify playbook files exist"
+      stat:
+        path: "{{ item }}"
+      loop:
+        - "/root/ocp4-disconnected-helper/playbooks/setup-registry-passthrough.yml"
+        - "/root/ocp4-disconnected-helper/playbooks/validate-passthrough-mode.yml"
+      register: playbook_check
+
+    - name: Record playbook test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Playbook Files', 'passed': playbook_check.results | map(attribute='stat.exists') | list | min}] }}"
+
+    - name: "TEST 2: Verify task files exist"
+      stat:
+        path: "/root/ocp4-disconnected-helper/playbooks/tasks/{{ item }}"
+      loop:
+        - "setup-harbor-auth.yml"
+        - "setup-quay-auth.yml"
+        - "setup-mirror-registry-auth.yml"
+        - "setup-jfrog-auth.yml"
+        - "setup-repository-structure.yml"
+        - "generate-icsp-template.yml"
+      register: task_check
+
+    - name: Record task files test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Task Files', 'passed': task_check.results | map(attribute='stat.exists') | list | min}] }}"
+
+    - name: "TEST 3: Verify template files exist"
+      stat:
+        path: "/root/ocp4-disconnected-helper/playbooks/templates/{{ item }}"
+      loop:
+        - "icsp-policy.yml.j2"
+        - "apply-icsp.sh.j2"
+      register: template_check
+
+    - name: Record template files test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Template Files', 'passed': template_check.results | map(attribute='stat.exists') | list | min}] }}"
+
+    - name: "TEST 4: Verify extra_vars example exists"
+      stat:
+        path: "/root/ocp4-disconnected-helper/extra_vars/passthrough-example.yml"
+      register: extra_vars_check
+
+    - name: Record extra_vars test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Extra Vars Example', 'passed': extra_vars_check.stat.exists}] }}"
+
+    - name: "TEST 5: Validate YAML syntax of main playbook"
+      command: "python3 -c \"import yaml; yaml.safe_load(open('/root/ocp4-disconnected-helper/playbooks/setup-registry-passthrough.yml'))\""
+      register: yaml_check
+      changed_when: false
+      failed_when: false
+
+    - name: Record YAML syntax test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'YAML Syntax', 'passed': yaml_check.rc == 0}] }}"
+
+    - name: "TEST 6: Check registry connectivity (if available)"
+      uri:
+        url: "https://{{ registry_local_uri }}:{{ registry_local_port }}/health"
+        method: GET
+        validate_certs: false
+        timeout: 5
+      register: registry_check
+      failed_when: false
+
+    - name: Record registry connectivity test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Registry Connectivity', 'passed': registry_check.status | default(0) == 200}] }}"
+
+    - name: "TEST 7: Verify Airflow DAG updated"
+      shell: grep -c "enable_passthrough" /root/ocp4-disconnected-helper/airflow/dags/ocp_registry_sync.py
+      register: dag_check
+      changed_when: false
+      failed_when: false
+
+    - name: Record DAG update test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Airflow DAG Updated', 'passed': dag_check.rc == 0 and dag_check.stdout | int > 0}] }}"
+
+    - name: "TEST 8: Verify ADR 0020 exists"
+      stat:
+        path: "/root/ocp4-disconnected-helper/docs/adrs/0020-registry-passthrough-mode.md"
+      register: adr_check
+
+    - name: Record ADR test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'ADR 0020 Exists', 'passed': adr_check.stat.exists}] }}"
+
+    - name: Calculate test summary
+      set_fact:
+        tests_passed: "{{ test_results | selectattr('passed', 'equalto', true) | list | length }}"
+        tests_failed: "{{ test_results | selectattr('passed', 'equalto', false) | list | length }}"
+        total_tests: "{{ test_results | length }}"
+
+    - name: Display test results
+      debug:
+        msg: |
+          ============================================
+          Registry Passthrough Mode Test Results
+          ============================================
+          
+          {% for result in test_results %}
+          {{ '✓' if result.passed else '✗' }} {{ result.test }}: {{ 'PASSED' if result.passed else 'FAILED' }}
+          {% endfor %}
+          
+          ============================================
+          Summary: {{ tests_passed }}/{{ total_tests }} tests passed
+          ============================================
+
+    - name: Save test results to file
+      copy:
+        content: |
+          Registry Passthrough Mode Test Results
+          Generated: {{ ansible_date_time.iso8601 }}
+          
+          Tests:
+          {% for result in test_results %}
+          - {{ result.test }}: {{ 'PASSED' if result.passed else 'FAILED' }}
+          {% endfor %}
+          
+          Summary: {{ tests_passed }}/{{ total_tests }} tests passed
+          Status: {{ 'ALL TESTS PASSED' if tests_failed | int == 0 else 'SOME TESTS FAILED' }}
+        dest: "/tmp/passthrough-test-results-{{ ansible_date_time.date }}.txt"
+        mode: '0644'
+
+    - name: Fail if any tests failed
+      fail:
+        msg: "{{ tests_failed }} test(s) failed. Review results above."
+      when: tests_failed | int > 0 and strict_mode | default(false)

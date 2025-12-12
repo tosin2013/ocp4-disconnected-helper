@@ -1,0 +1,25 @@
+---
+- name: Create Mirror Registry Repository for {{ upstream_registry }}
+  block:
+    - name: Display mirror registry repository info
+      debug:
+        msg: |
+          Mirror Registry Repository Setup:
+          - Upstream: {{ upstream_registry }}
+          - Local Path: {{ registry_hostname }}:{{ registry_port }}/mirror/{{ upstream_registry }}
+          Note: mirror-registry creates repositories automatically on first push
+
+    - name: Verify mirror registry is accessible
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/v2/"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: registry_check
+      retries: 3
+      delay: 5
+
+  rescue:
+    - name: Handle mirror registry check failure
+      debug:
+        msg: "Mirror registry at {{ registry_hostname }}:{{ registry_port }} is not accessible"

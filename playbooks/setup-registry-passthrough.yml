@@ -1,0 +1,215 @@
+---
+# Prerequisites:
+## Modify the inventory file to reflect your environment
+## The user must have password-less sudo access
+## The user must have password-less ssh access to the remote hosts
+## Registry must be installed and accessible (Harbor, Quay, or mirror-registry)
+
+- name: Setup Registry Passthrough Mode for Container Image Distribution
+  hosts: registry
+  become: true
+
+  vars:
+    # Registry configuration
+    registry_type: "{{ registry_type | default('mirror-registry') }}"
+    registry_local_uri: "{{ registry_local_uri | default('registry.disconnected.local') }}"
+    registry_local_port: "{{ registry_local_port | default('8443') }}"
+    
+    # Naming convention
+    naming_pattern: "{{ registry_local_uri }}:{{ registry_local_port }}/mirror/{{ upstream_registry }}/{{ image_path }}"
+    
+    # ICSP configuration
+    icsp_template_dir: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}"
+    icsp_namespace: "{{ icsp_namespace | default('openshift-config') }}"
+    
+    # Registry mirror configuration (based on Red Hat OpenShift requirements)
+    registry_mirror_config:
+      # Core Red Hat Registries (Highest Priority)
+      - source: "registry.access.redhat.com"
+        description: "Red Hat Access Registry - pod, registry, router, s2i, jboss images"
+      - source: "registry.redhat.io"
+        description: "Red Hat Container Registry"
+      - source: "registry.connect.redhat.com"
+        description: "Red Hat Connect Registry - third-party images"
+      
+      # Core Container Registries (High Priority)
+      - source: "quay.io"
+        description: "Quay Container Registry"
+      - source: "cdn.quay.io"
+        description: "Quay CDN (alternative to *.quay.io)"
+      - source: "docker.io"
+        description: "Docker Hub Container Registry"
+      
+      # OpenShift Release Storage (High Priority)
+      - source: "storage.googleapis.com/openshift-release"
+        description: "OpenShift Release Storage"
+      
+      # Additional Registries (Medium Priority - optional based on usage)
+      - source: "sso.redhat.com"
+        description: "Red Hat Single Sign-On"
+      - source: "github.com"
+        description: "GitHub Container Registry (if used)"
+      - source: "gitlab.com"
+        description: "GitLab Container Registry (if used)"
+    
+    # Authentication settings (will be populated by auth tasks)
+    registry_credentials: {}
+
+  pre_tasks:
+    - name: Verify registry accessibility
+      uri:
+        url: "https://{{ registry_local_uri }}:{{ registry_local_port }}/health"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: registry_health
+      retries: 3
+      delay: 5
+      failed_when: false
+
+    - name: Fail if registry is not accessible
+      fail:
+        msg: "Registry at https://{{ registry_local_uri }}:{{ registry_local_port }} is not accessible"
+      when: registry_health.status != 200
+
+    - name: Display registry information
+      debug:
+        msg: |
+          Registry Configuration:
+          - Type: {{ registry_type }}
+          - URI: {{ registry_local_uri }}:{{ registry_local_port }}
+          - Naming Pattern: {{ naming_pattern }}
+          - ICSP Template Dir: {{ icsp_template_dir }}
+
+  tasks:
+    - name: Setup registry authentication
+      include_tasks: "tasks/setup-{{ registry_type }}-auth.yml"
+      vars:
+        registry_hostname: "{{ registry_local_uri }}"
+        registry_port: "{{ registry_local_port }}"
+      when: registry_type in ['harbor', 'quay', 'mirror-registry', 'jfrog']
+
+    - name: Setup repository structure
+      include_tasks: "tasks/setup-repository-structure.yml"
+      vars:
+        registry_hostname: "{{ registry_local_uri }}"
+        registry_port: "{{ registry_local_port }}"
+        mirror_config: "{{ registry_mirror_config }}"
+
+    - name: Generate ICSP template
+      include_tasks: "tasks/generate-icsp-template.yml"
+      vars:
+        registry_type: "{{ registry_type }}"
+        registry_local_uri: "{{ registry_local_uri }}"
+        registry_local_port: "{{ registry_local_port }}"
+        registry_mirror_config: "{{ registry_mirror_config }}"
+        icsp_template_dir: "{{ icsp_template_dir }}"
+
+    - name: Create registry passthrough configuration summary
+      copy:
+        content: |
+          Registry Passthrough Mode Configuration Summary
+          ==================================================
+          
+          Registry Information:
+          - Type: {{ registry_type }}
+          - Endpoint: https://{{ registry_local_uri }}:{{ registry_local_port }}
+          - Naming Convention: {{ naming_pattern }}
+          
+          Mirror Configuration:
+          {% for mirror in registry_mirror_config %}
+          - {{ mirror.source }}: {{ mirror.description | default('No description') }}
+          {% endfor %}
+          
+          ICSP Configuration:
+          - Template Directory: {{ icsp_template_dir }}
+          - Namespace: {{ icsp_namespace }}
+          
+          Authentication:
+          {% if registry_credentials is defined and registry_credentials %}
+          - Configured: Yes
+          - Method: {{ registry_credentials.get('method', 'Unknown') }}
+          {% else %}
+          - Configured: No
+          {% endif %}
+          
+          Generated Files:
+          - ICSP Template: {{ icsp_template_dir }}/icsp-{{ registry_type }}-*.yml
+          - ICSP Application Script: {{ icsp_template_dir }}/apply-icsp-{{ registry_type }}.sh
+          - Metadata: {{ icsp_template_dir }}/icsp-{{ registry_type }}-metadata.json
+          
+          Next Steps:
+          1. Apply ICSP to OpenShift cluster: {{ icsp_template_dir }}/apply-icsp-{{ registry_type }}.sh
+          2. Monitor Machine Config Operator updates
+          3. Test image pull redirection
+          4. Run validation playbook: playbooks/validate-passthrough-mode.yml
+          
+          Generated at: {{ ansible_date_time.iso8601 }}
+        dest: "{{ icsp_template_dir }}/registry-passthrough-summary-{{ registry_type }}.txt"
+        mode: '0644'
+      become: true
+
+    - name: Display configuration summary location
+      debug:
+        msg: |
+          Registry passthrough setup completed!
+          Configuration summary saved to: {{ icsp_template_dir }}/registry-passthrough-summary-{{ registry_type }}.txt
+          
+          To apply ICSP to your OpenShift cluster:
+          1. {{ icsp_template_dir }}/apply-icsp-{{ registry_type }}.sh
+          2. Monitor with: oc get mcp
+          3. Test with: oc image pull quay.io/centos/centos:stream8
+
+  post_tasks:
+    - name: Verify generated ICSP template
+      stat:
+        path: "{{ icsp_template_dir }}/icsp-{{ registry_type }}-{{ inventory_hostname }}.yml"
+      register: icsp_template
+
+    - name: Verify ICSP application script
+      stat:
+        path: "{{ icsp_template_dir }}/apply-icsp-{{ registry_type }}.sh"
+      register: icsp_script
+
+    - name: Verify configuration summary
+      stat:
+        path: "{{ icsp_template_dir }}/registry-passthrough-summary-{{ registry_type }}.txt"
+      register: config_summary
+
+    - name: Display verification results
+      debug:
+        msg: |
+          File Verification Results:
+          - ICSP Template: {{ 'EXISTS' if icsp_template.stat.exists else 'MISSING' }}
+          - ICSP Script: {{ 'EXISTS' if icsp_script.stat.exists else 'MISSING' }}
+          - Config Summary: {{ 'EXISTS' if config_summary.stat.exists else 'MISSING' }}
+
+    - name: Fail if critical files are missing
+      fail:
+        msg: "Critical files are missing. Check task execution above."
+      when: not icsp_template.stat.exists or not icsp_script.stat.exists
+
+  rescue:
+    - name: Handle registry passthrough setup failure
+      debug:
+        msg: |
+          Registry passthrough setup failed. Check:
+          - Registry accessibility and connectivity
+          - Registry authentication credentials
+          - Required permissions for repository creation
+          - Template directory permissions
+          - ICSP configuration parameters
+
+    - name: Display troubleshooting information
+      debug:
+        msg: |
+          Troubleshooting Steps:
+          1. Verify registry is running: curl -k https://{{ registry_local_uri }}:{{ registry_local_port }}/health
+          2. Check authentication: Review registry-specific auth setup
+          3. Verify permissions: Ensure user can create repositories/projects
+          4. Check disk space: df -h {{ icsp_template_dir }}
+          5. Review logs: Check individual task outputs above
+
+    - name: Fail playbook on setup error
+      fail:
+        msg: "Registry passthrough setup failed for registry type: {{ registry_type }}"

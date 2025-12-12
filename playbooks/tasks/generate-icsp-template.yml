@@ -1,0 +1,83 @@
+---
+- name: Generate ICSP Template for Registry Passthrough Mode
+  block:
+    - name: Ensure ICSP templates directory exists
+      file:
+        path: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}"
+        state: directory
+        mode: '0755'
+      become: true
+
+    - name: Generate ICSP template from registry configuration
+      template:
+        src: templates/icsp-policy.yml.j2
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/icsp-{{ registry_type }}-{{ inventory_hostname }}.yml"
+        mode: '0644'
+        backup: yes
+      vars:
+        registry_mirrors: "{{ registry_mirror_config }}"
+        registry_local: "{{ registry_local_uri }}:{{ registry_local_port }}"
+        icsp_name: "registry-passthrough-{{ registry_type }}"
+      become: true
+      register: icsp_template_result
+
+    - name: Validate generated ICSP YAML syntax
+      command: "{{ ansible_python.executable }} -c \"import yaml; yaml.safe_load(open('{{ icsp_template_result.dest }}'))\""
+      register: icsp_validation
+      changed_when: false
+      failed_when: icsp_validation.rc != 0
+
+    - name: Display ICSP template generation status
+      debug:
+        msg: |
+          ICSP template generated successfully:
+          - File: {{ icsp_template_result.dest }}
+          - Registry Type: {{ registry_type }}
+          - Registry URI: {{ registry_local_uri }}:{{ registry_local_port }}
+          - Mirrors Configured: {{ registry_mirror_config | length }}
+
+    - name: Create ICSP application script
+      template:
+        src: templates/apply-icsp.sh.j2
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/apply-icsp-{{ registry_type }}.sh"
+        mode: '0755'
+      vars:
+        icsp_file: "{{ icsp_template_result.dest }}"
+      become: true
+
+    - name: Verify ICSP template contains required mirrors
+      shell: |
+        grep -c "mirrors:" "{{ icsp_template_result.dest }}" && \
+        grep -c "source:" "{{ icsp_template_result.dest }}"
+      register: mirror_count
+      failed_when: mirror_count.stdout_lines[0] != "1" or mirror_count.stdout_lines[1] | int < 1
+      changed_when: false
+
+    - name: Store ICSP template metadata
+      copy:
+        content: |
+          {
+            "icsp_template": "{{ icsp_template_result.dest }}",
+            "registry_type": "{{ registry_type }}",
+            "registry_uri": "{{ registry_local_uri }}:{{ registry_local_port }}",
+            "mirrors_count": {{ registry_mirror_config | length }},
+            "generated_at": "{{ ansible_date_time.iso8601 }}",
+            "validated": true
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/icsp-{{ registry_type }}-metadata.json"
+        mode: '0644'
+      become: true
+
+  rescue:
+    - name: Handle ICSP template generation failure
+      debug:
+        msg: |
+          ICSP template generation failed. Check:
+          - Registry configuration parameters
+          - Template file permissions
+          - YAML syntax validation
+          - Registry mirror configuration format
+
+    - name: Fail playbook on ICSP template generation error
+      fail:
+        msg: "ICSP template generation failed for registry type: {{ registry_type }}"

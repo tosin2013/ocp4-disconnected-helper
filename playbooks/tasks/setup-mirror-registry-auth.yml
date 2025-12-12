@@ -1,0 +1,155 @@
+---
+- name: Setup Mirror Registry Authentication
+  block:
+    - name: Verify mirror registry accessibility
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/health"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: mirror_health
+      retries: 3
+      delay: 5
+
+    - name: Fail if mirror registry is not accessible
+      fail:
+        msg: "Mirror registry at https://{{ registry_hostname }}:{{ registry_port }} is not accessible"
+      when: mirror_health.status != 200
+
+    - name: Check if mirror registry uses authentication
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/v2/_catalog"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: catalog_check
+      failed_when: false
+
+    - name: Determine authentication requirement
+      set_fact:
+        auth_required: "{{ catalog_check.status == 401 }}"
+
+    - name: Display authentication status
+      debug:
+        msg: |
+          Mirror Registry Authentication Status:
+          - Registry: https://{{ registry_hostname }}:{{ registry_port }}
+          - Authentication Required: {{ 'Yes' if auth_required else 'No' }}
+          - Health Check: {{ 'PASS' if mirror_health.status == 200 else 'FAIL' }}
+
+    - name: Create mirror registry user account (if required)
+      user:
+        name: "mirror-user"
+        shell: /bin/bash
+        home: "/home/mirror-user"
+        state: present
+        create_home: yes
+      when: auth_required and mirror_registry_user is defined
+      become: true
+
+    - name: Generate authentication token for mirror registry
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/v2/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          service: "{{ registry_hostname }}"
+          scope: "repository:*:*"
+          client_id: "ocp-mirror"
+        headers:
+          Authorization: "Basic {{ mirror_registry_auth | b64encode }}"
+        validate_certs: false
+      register: auth_token
+      when: auth_required and mirror_registry_auth is defined
+      vars:
+        mirror_registry_auth: "{{ mirror_registry_user }}:{{ mirror_registry_password }}"
+
+    - name: Store mirror registry authentication credentials
+      set_fact:
+        registry_credentials:
+          method: "mirror_registry"
+          username: "{{ mirror_registry_user | default('') }}"
+          password: "{{ mirror_registry_password | default('') }}"
+          token: "{{ auth_token.json.token if auth_token.status == 200 and auth_token.json.token is defined else '' }}"
+          registry_url: "https://{{ registry_hostname }}:{{ registry_port }}"
+          auth_required: "{{ auth_required }}"
+          auth_type: "{{ 'token' if auth_required else 'none' }}"
+
+    - name: Create mirror registry authentication configuration file
+      copy:
+        content: |
+          {
+            "registry_type": "mirror-registry",
+            "registry_url": "https://{{ registry_hostname }}:{{ registry_port }}",
+            "auth_method": "{{ 'token' if auth_required else 'none' }}",
+            "username": "{{ mirror_registry_user | default('') }}",
+            "password": "{{ mirror_registry_password | default('') }}",
+            "token": "{{ auth_token.json.token if auth_token.status == 200 and auth_token.json.token is defined else '' }}",
+            "auth_required": {{ auth_required }},
+            "created_at": "{{ ansible_date_time.iso8601 }}"
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/mirror-registry-auth-config.json"
+        mode: '0600'
+      become: true
+
+    - name: Create Docker config.json for mirror registry authentication
+      copy:
+        content: |
+          {
+            "auths": {
+              "https://{{ registry_hostname }}:{{ registry_port }}": {
+                "auth": "{{ ((mirror_registry_user | default('') + ':' + mirror_registry_password | default('')) | b64encode) if auth_required else '' }}"
+              }
+            }
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/mirror-registry-docker-config.json"
+        mode: '0600'
+      become: true
+
+    - name: Test mirror registry authentication (if configured)
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/v2/_catalog"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ registry_credentials.token }}"
+        validate_certs: false
+        timeout: 10
+      register: auth_test
+      when: auth_required and registry_credentials.token != ""
+      failed_when: auth_test.status != 200
+
+    - name: Display mirror registry authentication setup status
+      debug:
+        msg: |
+          Mirror Registry Authentication Setup Completed:
+          - Registry: https://{{ registry_hostname }}:{{ registry_port }}
+          - Authentication Required: {{ 'Yes' if auth_required else 'No' }}
+          - Auth Method: {{ registry_credentials.auth_type }}
+          - Auth Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/mirror-registry-auth-config.json
+          - Docker Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/mirror-registry-docker-config.json
+          - Authentication Test: {{ 'PASS' if (not auth_required or auth_test.status == 200) else 'FAIL' }}
+
+  rescue:
+    - name: Handle mirror registry authentication setup failure
+      debug:
+        msg: |
+          Mirror registry authentication setup failed. Check:
+          - Registry accessibility: https://{{ registry_hostname }}:{{ registry_port }}/health
+          - Authentication credentials (if required)
+          - Mirror registry configuration and permissions
+          - Network connectivity and firewall rules
+          - TLS certificate configuration
+
+    - name: Display mirror registry troubleshooting steps
+      debug:
+        msg: |
+          Mirror Registry Troubleshooting Steps:
+          1. Test registry health: curl -k https://{{ registry_hostname }}:{{ registry_port }}/health
+          2. Test catalog access: curl -k https://{{ registry_hostname }}:{{ registry_port }}/v2/_catalog
+          3. Check mirror registry logs: journalctl -u mirror-registry
+          4. Verify certificate: openssl s_client -connect {{ registry_hostname }}:{{ registry_port }}
+          5. Review authentication configuration
+
+    - name: Fail playbook on mirror registry authentication error
+      fail:
+        msg: "Mirror registry authentication setup failed for registry: {{ registry_hostname }}:{{ registry_port }}"

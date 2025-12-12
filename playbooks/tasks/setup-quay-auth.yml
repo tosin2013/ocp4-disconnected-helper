@@ -1,0 +1,191 @@
+---
+- name: Setup Quay Registry Authentication
+  block:
+    - name: Verify Quay API accessibility
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/discovery"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: quay_discovery
+      retries: 3
+      delay: 5
+
+    - name: Fail if Quay API is not accessible
+      fail:
+        msg: "Quay API at https://{{ registry_hostname }}:{{ registry_port }} is not accessible"
+      when: quay_discovery.status != 200
+
+    - name: Create Quay application for registry mirroring
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/superuser/applications"
+        method: POST
+        body_format: json
+        body:
+          name: "ocp-mirror-{{ inventory_hostname }}"
+          description: "Application for OpenShift registry mirroring"
+          redirect_uris: []
+          application_type: "machine"
+          organization: "{{ quay_organization | default('default') }}"
+        headers:
+          Authorization: "Bearer {{ quay_oauth_token }}"
+        validate_certs: false
+        status_code: [201, 409]  # 201=created, 409=already exists
+      register: app_creation
+      when: quay_oauth_token is defined
+
+    - name: Get existing application if creation failed with 409
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/superuser/applications"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quay_oauth_token }}"
+        validate_certs: false
+      register: existing_apps
+      when: app_creation.status == 409 and quay_oauth_token is defined
+
+    - name: Find existing application ID
+      set_fact:
+        quay_app_id: "{{ item.uuid }}"
+      loop: "{{ existing_apps.json.applications }}"
+      when: 
+        - app_creation.status == 409
+        - quay_oauth_token is defined
+        - item.name == "ocp-mirror-{{ inventory_hostname }}"
+
+    - name: Create Quay robot token
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/robot"
+        method: POST
+        body_format: json
+        body:
+          description: "Robot for OpenShift registry mirroring"
+          short_description: "ocp-mirror-{{ inventory_hostname }}"
+          access_token: false
+        headers:
+          Authorization: "Bearer {{ quay_oauth_token }}"
+        validate_certs: false
+      register: robot_creation
+      when: quay_oauth_token is defined
+
+    - name: Get existing robot if creation failed
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/robot"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quay_oauth_token }}"
+        validate_certs: false
+      register: existing_robots
+      when: robot_creation.status not in [200, 201] and quay_oauth_token is defined
+
+    - name: Find existing robot
+      set_fact:
+        quay_robot_name: "{{ item.short_description }}"
+        quay_robot_token: "{{ item.token }}"
+      loop: "{{ existing_robots.json.robots }}"
+      when: 
+        - robot_creation.status not in [200, 201]
+        - quay_oauth_token is defined
+        - item.short_description == "ocp-mirror-{{ inventory_hostname }}"
+
+    - name: Set robot credentials from creation
+      set_fact:
+        quay_robot_name: "{{ robot_creation.json.name }}"
+        quay_robot_token: "{{ robot_creation.json.token }}"
+      when: robot_creation.status in [200, 201] and quay_oauth_token is defined
+
+    - name: Create Quay organization for mirroring (if specified)
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v1/organization"
+        method: POST
+        body_format: json
+        body:
+          name: "{{ quay_organization | default('mirror') }}"
+          email: "admin@{{ registry_hostname }}"
+        headers:
+          Authorization: "Bearer {{ quay_oauth_token }}"
+        validate_certs: false
+        status_code: [201, 409]  # 201=created, 409=already exists
+      register: org_creation
+      when: 
+        - quay_oauth_token is defined
+        - quay_organization is defined
+      vars:
+        quay_organization: "mirror"
+
+    - name: Store Quay authentication credentials
+      set_fact:
+        registry_credentials:
+          method: "quay_robot"
+          username: "{{ quay_robot_name }}"
+          password: "{{ quay_robot_token }}"
+          registry_url: "https://{{ registry_hostname }}:{{ registry_port }}"
+          organization: "{{ quay_organization | default('default') }}"
+          auth_type: "robot_token"
+
+    - name: Create Quay authentication configuration file
+      copy:
+        content: |
+          {
+            "registry_type": "quay",
+            "registry_url": "https://{{ registry_hostname }}:{{ registry_port }}",
+            "auth_method": "robot_token",
+            "username": "{{ quay_robot_name }}",
+            "password": "{{ quay_robot_token }}",
+            "organization": "{{ quay_organization | default('default') }}",
+            "created_at": "{{ ansible_date_time.iso8601 }}"
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/quay-auth-config.json"
+        mode: '0600'
+      become: true
+      when: quay_oauth_token is defined
+
+    - name: Create Docker config.json for Quay authentication
+      copy:
+        content: |
+          {
+            "auths": {
+              "https://{{ registry_hostname }}:{{ registry_port }}": {
+                "auth": "{{ (quay_robot_name + ':' + quay_robot_token) | b64encode }}"
+              }
+            }
+          }
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/quay-docker-config.json"
+        mode: '0600'
+      become: true
+      when: quay_oauth_token is defined
+
+    - name: Display Quay authentication setup status
+      debug:
+        msg: |
+          Quay Authentication Setup Completed:
+          - Robot Account: {{ quay_robot_name }}
+          - Organization: {{ quay_organization | default('default') }}
+          - Registry: https://{{ registry_hostname }}:{{ registry_port }}
+          - Auth Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/quay-auth-config.json
+          - Docker Config: {{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/quay-docker-config.json
+
+  rescue:
+    - name: Handle Quay authentication setup failure
+      debug:
+        msg: |
+          Quay authentication setup failed. Check:
+          - Quay API accessibility: https://{{ registry_hostname }}:{{ registry_port }}/api/v1/discovery
+          - OAuth token validity and permissions
+          - Quay version compatibility: API v1 required
+          - Organization creation permissions
+          - Network connectivity and firewall rules
+
+    - name: Display Quay troubleshooting steps
+      debug:
+        msg: |
+          Quay Troubleshooting Steps:
+          1. Test Quay API: curl -k -H "Authorization: Bearer $TOKEN" https://{{ registry_hostname }}:{{ registry_port }}/api/v1/discovery
+          2. Check Quay configuration: /etc/quay/config/secret
+          3. Verify OAuth token permissions in Quay UI
+          4. Check organization creation permissions
+          5. Review Quay logs: docker logs quay-app
+
+    - name: Fail playbook on Quay authentication error
+      fail:
+        msg: "Quay authentication setup failed for registry: {{ registry_hostname }}:{{ registry_port }}"

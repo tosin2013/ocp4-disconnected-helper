@@ -1,0 +1,28 @@
+---
+# Registry Passthrough Mode Configuration Example
+# Use this file as a template for your deployment
+
+# Registry Type: mirror-registry, harbor, or quay
+registry_type: "mirror-registry"
+
+# Local Registry Configuration
+registry_local_uri: "registry.disconnected.local"
+registry_local_port: "8443"
+
+# ICSP Template Directory
+icsp_template_dir: "/opt/ocp4-disconnected-helper/templates/icsp"
+
+# Harbor-specific settings (if registry_type: harbor)
+harbor_admin_user: "admin"
+harbor_admin_password: "{{ vault_harbor_password }}"
+
+# Quay-specific settings (if registry_type: quay)
+quay_oauth_token: "{{ vault_quay_token }}"
+quay_organization: "mirror"
+
+# Mirror Registry settings (if registry_type: mirror-registry)
+mirror_registry_user: "init"
+mirror_registry_password: "{{ vault_mirror_registry_password }}"
+
+# Test image for validation
+test_image: "quay.io/centos/centos:stream8"

@@ -1,0 +1,26 @@
+---
+- name: Create Harbor Mirror Repository for {{ upstream_registry }}
+  block:
+    - name: Create Harbor project for upstream registry
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/api/v2.0/projects"
+        method: POST
+        body_format: json
+        body:
+          project_name: "mirror-{{ upstream_registry | replace('.', '-') }}"
+          metadata:
+            public: "false"
+        headers:
+          Authorization: "Basic {{ (harbor_admin_user + ':' + harbor_admin_password) | b64encode }}"
+        validate_certs: false
+        status_code: [201, 409]
+      register: project_result
+
+    - name: Display Harbor project creation result
+      debug:
+        msg: "Project mirror-{{ upstream_registry | replace('.', '-') }}: {{ 'Created' if project_result.status == 201 else 'Already exists' }}"
+
+  rescue:
+    - name: Handle Harbor repository creation failure
+      debug:
+        msg: "Failed to create Harbor project for {{ upstream_registry }}"

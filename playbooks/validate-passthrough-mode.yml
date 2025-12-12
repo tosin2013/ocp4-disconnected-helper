@@ -1,0 +1,39 @@
+---
+- name: Validate Registry Passthrough Mode Configuration
+  hosts: orchestration
+  become: true
+
+  vars:
+    registry_type: "{{ registry_type | default('mirror-registry') }}"
+    registry_local_uri: "{{ registry_local_uri | default('registry.disconnected.local') }}"
+    registry_local_port: "{{ registry_local_port | default('8443') }}"
+    icsp_template_dir: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}"
+    test_image: "{{ test_image | default('centos:stream8') }}"
+
+  tasks:
+    - name: Test ICSP redirection
+      include_tasks: "tasks/test-icsp-redirection.yml"
+
+    - name: Verify mirrored images
+      include_tasks: "tasks/verify-mirrored-images.yml"
+
+    - name: Generate validation report
+      copy:
+        content: |
+          Registry Passthrough Validation Report
+          =======================================
+          Generated: {{ ansible_date_time.iso8601 }}
+          Registry: {{ registry_local_uri }}:{{ registry_local_port }}
+          Type: {{ registry_type }}
+          
+          Validation Results:
+          - ICSP Redirection: {{ icsp_test_result | default('Not tested') }}
+          - Image Verification: {{ image_verify_result | default('Not tested') }}
+          
+          Status: {{ 'PASS' if validation_passed | default(false) else 'FAIL' }}
+        dest: "{{ icsp_template_dir }}/validation-report-{{ ansible_date_time.date }}.txt"
+        mode: '0644'
+
+    - name: Display validation summary
+      debug:
+        msg: "Validation {{ 'PASSED' if validation_passed | default(false) else 'FAILED' }}"

@@ -1,0 +1,40 @@
+---
+- name: Verify Mirrored Images in Registry
+  block:
+    - name: Get registry catalog
+      uri:
+        url: "https://{{ registry_local_uri }}:{{ registry_local_port }}/v2/_catalog"
+        method: GET
+        validate_certs: false
+        timeout: 30
+      register: catalog_result
+      retries: 3
+      delay: 5
+
+    - name: Count mirrored repositories
+      set_fact:
+        repo_count: "{{ catalog_result.json.repositories | length }}"
+      when: catalog_result.status == 200
+
+    - name: Set image verification result
+      set_fact:
+        image_verify_result: "{{ 'PASS - ' + repo_count | string + ' repositories found' if catalog_result.status == 200 else 'FAIL' }}"
+        validation_passed: "{{ catalog_result.status == 200 and repo_count | int > 0 }}"
+
+    - name: Display verification results
+      debug:
+        msg: |
+          Image Verification Results:
+          - Registry: {{ registry_local_uri }}:{{ registry_local_port }}
+          - Repositories Found: {{ repo_count | default(0) }}
+          - Result: {{ image_verify_result }}
+
+  rescue:
+    - name: Handle verification failure
+      set_fact:
+        image_verify_result: "FAIL - Registry not accessible"
+        validation_passed: false
+
+    - name: Display verification error
+      debug:
+        msg: "Image verification failed. Check registry connectivity."

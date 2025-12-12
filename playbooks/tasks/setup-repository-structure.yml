@@ -1,0 +1,106 @@
+---
+- name: Setup Registry Repository Structure for Passthrough Mode
+  block:
+    - name: Display repository structure configuration
+      debug:
+        msg: |
+          Setting up repository structure for:
+          - Registry: {{ registry_hostname }}:{{ registry_port }}
+          - Mirror Config: {{ mirror_config | length }} registries
+          - Naming Pattern: {{ naming_pattern }}
+
+    - name: Create mirror repositories for each upstream registry
+      include_tasks: "tasks/create-mirror-repo-{{ registry_type }}.yml"
+      loop: "{{ mirror_config }}"
+      loop_control:
+        loop_var: mirror_source
+      vars:
+        upstream_registry: "{{ mirror_source.source }}"
+        registry_type: "{{ hostvars[inventory_hostname].registry_type | default('mirror-registry') }}"
+
+    - name: Verify repository creation
+      uri:
+        url: "https://{{ registry_hostname }}:{{ registry_port }}/v2/_catalog"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ registry_credentials.token if registry_credentials.token != '' else '' }}"
+        validate_certs: false
+        timeout: 10
+      register: catalog_check
+      retries: 3
+      delay: 5
+      when: registry_credentials.token is defined
+
+    - name: Display repository verification results
+      debug:
+        msg: |
+          Repository Structure Setup Completed:
+          - Registry: {{ registry_hostname }}:{{ registry_port }}
+          - Expected Repositories: {{ mirror_config | length }}
+          - Catalog Check: {{ 'PASS' if catalog_check.status == 200 else 'FAIL' }}
+          {% if catalog_check.status == 200 %}
+          - Found Repositories: {{ catalog_check.json.repositories | length }}
+          {% endif %}
+
+    - name: Create repository structure documentation
+      copy:
+        content: |
+          Registry Repository Structure Documentation
+          ============================================
+          
+          Registry Information:
+          - Type: {{ hostvars[inventory_hostname].registry_type | default('mirror-registry') }}
+          - Endpoint: https://{{ registry_hostname }}:{{ registry_port }}
+          - Authentication: {{ 'Enabled' if registry_credentials.auth_required | default(false) else 'Disabled' }}
+          
+          Mirror Configuration:
+          {% for mirror in mirror_config %}
+          - {{ mirror.source }}: {{ mirror.description | default('No description') }}
+          {% endfor %}
+          
+          Repository Naming Convention:
+          - Pattern: {{ naming_pattern }}
+          - Example: {{ registry_hostname }}:{{ registry_port }}/mirror/quay.io/organization/app:tag
+          
+          Created Repositories:
+          {% if catalog_check.status == 200 %}
+          {% for repo in catalog_check.json.repositories %}
+          - {{ repo }}
+          {% endfor %}
+          {% else %}
+          - Repository verification failed
+          {% endif %}
+          
+          Usage Instructions:
+          1. Push images using: docker push {{ registry_hostname }}:{{ registry_port }}/mirror/<upstream>/<image>:<tag>
+          2. Pull images using: docker pull {{ registry_hostname }}:{{ registry_port }}/mirror/<upstream>/<image>:<tag>
+          3. Apply ICSP for transparent redirection
+          
+          Generated at: {{ ansible_date_time.iso8601 }}
+        dest: "{{ icsp_template_dir | default('/opt/ocp4-disconnected-helper/templates/icsp') }}/repository-structure-{{ hostvars[inventory_hostname].registry_type | default('mirror-registry') }}.txt"
+        mode: '0644'
+      become: true
+
+  rescue:
+    - name: Handle repository structure setup failure
+      debug:
+        msg: |
+          Repository structure setup failed. Check:
+          - Registry accessibility and authentication
+          - Permissions for repository creation
+          - Network connectivity to registry
+          - Registry service status and configuration
+
+    - name: Display repository troubleshooting steps
+      debug:
+        msg: |
+          Repository Structure Troubleshooting Steps:
+          1. Test registry access: curl -k https://{{ registry_hostname }}:{{ registry_port }}/v2/_catalog
+          2. Check authentication: Verify registry credentials
+          3. Test repository creation: Manual repository creation test
+          4. Check registry logs: Review registry service logs
+          5. Verify permissions: Ensure user can create repositories
+
+    - name: Fail playbook on repository structure error
+      fail:
+        msg: "Repository structure setup failed for registry: {{ registry_hostname }}:{{ registry_port }}"
