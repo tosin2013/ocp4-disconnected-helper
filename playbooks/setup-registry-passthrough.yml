@@ -189,7 +189,7 @@
         msg: "Critical files are missing. Check task execution above."
       when: not icsp_template.stat.exists or not icsp_script.stat.exists
 
-  rescue:
+  handlers:
     - name: Handle registry passthrough setup failure
       debug:
         msg: |
@@ -199,17 +199,10 @@
           - Required permissions for repository creation
           - Template directory permissions
           - ICSP configuration parameters
-
-    - name: Display troubleshooting information
-      debug:
-        msg: |
+          
           Troubleshooting Steps:
           1. Verify registry is running: curl -k https://{{ registry_local_uri }}:{{ registry_local_port }}/health
           2. Check authentication: Review registry-specific auth setup
           3. Verify permissions: Ensure user can create repositories/projects
           4. Check disk space: df -h {{ icsp_template_dir }}
           5. Review logs: Check individual task outputs above
-
-    - name: Fail playbook on setup error
-      fail:
-        msg: "Registry passthrough setup failed for registry type: {{ registry_type }}"
