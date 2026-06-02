@@ -14,13 +14,13 @@
 
 | Phase | Status | Progress | Timeline |
 |-------|--------|----------|----------|
-| Phase 0: Preservation | 🟢 READY | 1/3 tasks (33%) | Week 1 |
-| Phase 1: Libvirt Migration | 🔴 NOT STARTED | 0/7 tasks | Weeks 1-4 |
+| Phase 0: Preservation | 🟡 VALIDATION NEEDED | 3/4 tasks (75%) | Week 1 |
+| Phase 1: Libvirt Migration | ⏳ BLOCKED (Task 0.4) | 0/7 tasks | Weeks 1-4 |
 | Phase 2: Qubinode Removal | 🔴 NOT STARTED | 0/5 tasks | Weeks 3-8 |
 | Phase 3: AAP Adoption | 🔴 NOT STARTED | 0/10 tasks | Weeks 2-15 ⚠️ CRITICAL PATH |
 | Phase 4: Documentation | 🔴 NOT STARTED | 0/6 tasks | Weeks 16-17 |
 
-**Total**: 4/31 tasks complete (13%) - ✅ **AAP APPROVED, READY TO BEGIN**
+**Total**: 3/32 tasks complete (9%) - ⚠️ **HEADLESS VALIDATION REQUIRED**
 
 **Critical Path**: Phase 3 (AAP Adoption) - 15 weeks
 
@@ -133,6 +133,45 @@ Obtain budget approval and procure Red Hat AAP subscription ($5k-15k/year). **If
 - ~~NO-GO~~: ~~ABORT migration~~ - N/A
 
 **Critical**: ✅ AAP approval received - **GREEN LIGHT for v4.21.0 migration**
+
+---
+
+### ✅ Task 0.4: Headless Libvirt Validation (NEW - BLOCKER)
+
+**Status**: 🔴 NOT STARTED  
+**Priority**: P0 (BLOCKER for Phase 1)  
+**Owner**: Platform Team  
+**Effort**: 1 day  
+**Dependencies**: None (can start immediately)
+
+**Description**:  
+Validate that libvirt VM provisioning works in **headless environment** (no GUI, no X11). Current host has no virt-manager or graphical display.
+
+**Critical Constraint**: Server is headless - all VM operations must work via CLI only.
+
+**Reference**: [Headless VM Validation Plan](docs/HEADLESS_VM_VALIDATION.md) - detailed validation steps.
+
+**Validation Steps**:
+1. Install headless libvirt stack (`virsh`, `virt-install`, `qemu-kvm` - NO `virt-manager`)
+2. Create test VM using `virt-install --graphics none --noautoconsole`
+3. Validate `community.libvirt` Ansible collection works headless
+4. Test cloud-init ISO approach
+5. Cleanup test VMs
+
+**Success Criteria**:
+- [ ] `virsh` works without X11 display
+- [ ] `virt-install --graphics none` creates VM successfully
+- [ ] `community.libvirt.virt` module works headless
+- [ ] Cloud-init ISO approach validated
+- [ ] Test VM accessible via SSH (not GUI console)
+
+**🎯 GO/NO-GO Decision**:
+- ✅ **GO**: Headless approach works → Proceed to Phase 1
+- ❌ **NO-GO**: Headless fails → Investigate alternative (keep kcli, or adjust ADR 0023)
+
+**Execute**: Follow [HEADLESS_VM_VALIDATION.md](docs/HEADLESS_VM_VALIDATION.md)
+
+**Rollback**: If validation fails, remove ADR 0023 from v4.21.0 scope (keep kcli for VMs)
 
 ---
 
