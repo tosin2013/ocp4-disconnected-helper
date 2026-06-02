@@ -1,0 +1,109 @@
+---
+- name: Install ocp4-disconnected-helper Dependencies (with Cockpit)
+  hosts: localhost
+  become: yes
+
+  tasks:
+    - name: Ensure system is RHEL/CentOS Stream 9.4+
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution in ['RedHat', 'CentOS']
+          - ansible_distribution_major_version | int >= 9
+        fail_msg: "This playbook requires RHEL/CentOS Stream 9.4 or later"
+
+    - name: Install base packages
+      ansible.builtin.dnf:
+        name:
+          # Ansible
+          - ansible-core
+          - python3-pip
+
+          # Libvirt/KVM (headless stack)
+          - libvirt
+          - libvirt-client          # virsh CLI
+          - qemu-kvm                 # KVM hypervisor
+          - virt-install             # CLI VM installer
+          - python3-libvirt          # Python bindings
+          - genisoimage              # Cloud-init ISOs
+          - qemu-img                 # Disk management
+
+          # Cockpit (web-based management)
+          - cockpit                  # Core web console
+          - cockpit-machines         # VM management plugin
+          - cockpit-storaged         # Storage management
+
+          # Utilities
+          - wget
+          - curl
+          - git
+        state: present
+
+    - name: Enable and start libvirtd
+      ansible.builtin.systemd:
+        name: libvirtd
+        enabled: yes
+        state: started
+
+    - name: Enable and start Cockpit
+      ansible.builtin.systemd:
+        name: cockpit.socket
+        enabled: yes
+        state: started
+
+    - name: Open firewall for Cockpit (port 9090)
+      ansible.posix.firewalld:
+        port: 9090/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: ansible_facts.services['firewalld.service'] is defined
+
+    - name: Install Ansible collections
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection install community.libvirt ansible.posix
+      changed_when: false
+
+    - name: Create ocp4-disconnected-helper directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /var/lib/libvirt/images
+        - /opt/ocp4-disconnected-helper
+        - /opt/ocp4-disconnected-helper/logs
+
+    - name: Verify libvirt connection
+      community.libvirt.virt:
+        command: list_vms
+      register: libvirt_test
+
+    - name: Get server IP address
+      ansible.builtin.set_fact:
+        server_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg:
+          - "✅ ocp4-disconnected-helper dependencies installed successfully"
+          - "✅ Libvirt connection: {{ libvirt_test.list_vms | length }} VMs found"
+          - "✅ Cockpit web console: http://{{ server_ip }}:9090"
+          - ""
+          - "🌐 Access Cockpit:"
+          - "   URL: http://{{ server_ip }}:9090"
+          - "   Username: {{ ansible_user_id }}"
+          - "   Password: [your system password]"
+          - ""
+          - "📖 Navigate to: Virtual Machines → Create VM"
+          - ""
+          - "🔧 Next steps:"
+          - "   1. Install HAProxy on this host (gateway/load balancer)"
+          - "   2. Provision VMs for Quay, AAP, OpenShift"
+          - "   3. Configure HAProxy to route traffic to VMs"
+          - ""
+          - "💡 HAProxy on host will provide web access to:"
+          - "   - Quay registry (VM) → http://{{ server_ip }}:5000"
+          - "   - AAP web UI (VM) → https://{{ server_ip }}:8443"
+          - "   - OpenShift console (VMs) → https://{{ server_ip }}:443"
+          - ""
+          - "📝 Run: ansible-playbook playbooks/setup-haproxy.yml"

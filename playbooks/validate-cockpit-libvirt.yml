@@ -1,0 +1,62 @@
+---
+- name: Validate Cockpit + Libvirt Setup
+  hosts: localhost
+  become: yes
+
+  tasks:
+    - name: Check Cockpit is running
+      ansible.builtin.systemd:
+        name: cockpit.socket
+        state: started
+      register: cockpit_status
+
+    - name: Check libvirtd is running
+      ansible.builtin.systemd:
+        name: libvirtd
+        state: started
+      register: libvirt_status
+
+    - name: Test virsh CLI
+      ansible.builtin.command:
+        cmd: virsh list --all
+      register: virsh_test
+      changed_when: false
+
+    - name: Test community.libvirt collection
+      community.libvirt.virt:
+        command: list_vms
+      register: libvirt_collection_test
+
+    - name: Get server IP
+      ansible.builtin.set_fact:
+        server_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Display validation results
+      ansible.builtin.debug:
+        msg:
+          - "✅ Cockpit Status: {{ cockpit_status.status.ActiveState }}"
+          - "✅ Libvirt Status: {{ libvirt_status.status.ActiveState }}"
+          - "✅ virsh CLI: {{ virsh_test.stdout_lines | length }} VMs"
+          - "✅ community.libvirt: {{ libvirt_collection_test.list_vms | length }} VMs"
+          - ""
+          - "🌐 Cockpit URL: http://{{ server_ip }}:9090"
+          - ""
+          - "✅ VALIDATION PASSED - Ready for Phase 1"
+          - ""
+          - "📌 Task 0.4 COMPLETE: Cockpit + Libvirt Setup & Validation"
+          - ""
+          - "🚀 Next: Begin Phase 1 (Libvirt Migration)"
+          - "   - Task 1.1: Create Libvirt VM Templates (1 week)"
+          - "   - Task 1.2: Create Cloud-Init Templates (1 week, parallel)"
+          - ""
+          - "💡 Architecture Pattern:"
+          - "   KVM Host (this server):"
+          - "     - HAProxy (load balancer/gateway) ← runs on HOST"
+          - "     - Cockpit (VM management GUI)"
+          - "   VMs (managed via Cockpit):"
+          - "     - Quay registry VM"
+          - "     - AAP controller VM"
+          - "     - OpenShift nodes (bootstrap, masters, workers)"
+          - ""
+          - "   HAProxy routes external traffic → VMs"
+          - "   You access everything via HOST IP (no VM direct access needed)"

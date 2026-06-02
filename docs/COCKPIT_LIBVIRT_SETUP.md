@@ -362,24 +362,41 @@ virsh --connect qemu:///system list --all
 
 ## Updated Phase 1 Workflow
 
-With Cockpit installed:
+With Cockpit + HAProxy installed:
 
-### 1. **Create VMs via Ansible** (automated)
+### 1. **Install HAProxy on KVM host** (load balancer)
 ```bash
-ansible-playbook playbooks/provision-registry-vm.yml
+ansible-playbook playbooks/setup-haproxy.yml
 ```
 
-### 2. **Monitor in Cockpit** (visual)
+HAProxy runs **on the host**, not in a VM. It routes traffic:
+- `http://host-ip:5000` → Quay registry VM
+- `https://host-ip:8443` → AAP controller VM
+- `https://host-ip:443` → OpenShift API/console VMs
+
+### 2. **Create VMs via Ansible** (automated)
+```bash
+ansible-playbook playbooks/provision-registry-vm.yml
+ansible-playbook playbooks/provision-aap-vm.yml
+ansible-playbook playbooks/provision-ocp-nodes-vms.yml
+```
+
+### 3. **Monitor in Cockpit** (visual)
 - Open http://server-ip:9090
 - Navigate to Virtual Machines
-- See registry-vm running with resource graphs
+- See all VMs running with resource graphs
 
-### 3. **Debug if needed** (GUI console)
-- Click registry-vm → Console
+### 4. **Access services via HAProxy** (no VM direct access)
+- Quay web UI: `http://host-ip:5000`
+- AAP web UI: `https://host-ip:8443`
+- OpenShift console: `https://host-ip:443`
+
+### 5. **Debug if needed** (GUI console)
+- Click VM → Console
 - Browser-based VNC access (no SSH needed)
 - View boot logs, cloud-init output
 
-### 4. **Quick adjustments** (GUI)
+### 6. **Quick adjustments** (GUI)
 - Need more RAM? → Edit VM → Change memory → Restart
 - No playbook edit needed for one-off changes
 
