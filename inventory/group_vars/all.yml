@@ -1,0 +1,62 @@
+---
+# Global variables for all inventories
+# Deployment-specific overrides in inventory files (ibm-cloud.yml, onprem.yml)
+
+# ============================================================
+# DOMAIN CONFIGURATION (Override per deployment)
+# ============================================================
+# Domain is defined per-inventory file, not here
+# See: inventory/ibm-cloud.yml for cloud domain settings
+# See: inventory/onprem.yml for direct IP settings
+
+# ============================================================
+# AWS CONFIGURATION (for Route53 DNS)
+# ============================================================
+# AWS credentials loaded from ~/.aws/credentials
+# If not found, playbooks will fail with helpful message
+aws_region: "us-east-1"
+aws_profile: "default"  # AWS CLI profile to use
+
+# ============================================================
+# SSL/TLS CONFIGURATION
+# ============================================================
+# Let's Encrypt settings
+letsencrypt_staging: false  # Set to true for testing to avoid rate limits
+letsencrypt_key_size: 4096
+
+# Self-signed certificate settings
+cert_validity_days: 365
+cert_key_size: 2048
+
+# ============================================================
+# HAPROXY CONFIGURATION
+# ============================================================
+haproxy_max_connections: 2000
+haproxy_timeout_connect: 5000
+haproxy_timeout_client: 50000
+haproxy_timeout_server: 50000
+
+# HAProxy logging
+haproxy_log_level: "info"  # debug, info, notice, warning, err, crit, alert, emerg
+
+# ============================================================
+# LIBVIRT/KVM CONFIGURATION
+# ============================================================
+# Default VM network
+vm_network: "default"
+
+# Storage pool
+libvirt_pool_dir: "/var/lib/libvirt/images"
+
+# ============================================================
+# CONTAINER REGISTRY CONFIGURATION
+# ============================================================
+# Default registry type to provision
+# Options: quay, harbor, jfrog
+default_registry: "quay"
+
+# ============================================================
+# OPENSHIFT CONFIGURATION (for future use)
+# ============================================================
+ocp_version: "4.14"
+ocp_pull_secret_path: "{{ lookup('env', 'HOME') }}/.openshift/pull-secret.json"

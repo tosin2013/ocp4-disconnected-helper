@@ -9,6 +9,9 @@ docs/IMPLEMENTATION-PLAN.md
 # MCP context (auto-generated)
 .mcp-server-context.md
 
+# DNS configuration (contains domain name - keep private)
+DNS_CONFIGURATION.md
+
 # Sensitive files - NEVER commit
 .vault_password
 *.vault_password

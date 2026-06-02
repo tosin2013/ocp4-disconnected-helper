@@ -22,9 +22,9 @@ all:
     # ============================================================
     # DNS CONFIGURATION
     # ============================================================
-    # TODO: Replace with your actual domain
-    external_domain: "example.com"  # CHANGE THIS to your domain
-    ocp_cluster_name: "ocp"
+    # Domain managed via AWS Route53
+    external_domain: "sandbox3377.opentlc.com"
+    ocp_cluster_name: "ocp4"
 
     # Service URLs (DNS records should point to {{ external_ip }})
     quay_url: "registry.{{ ocp_cluster_name }}.{{ external_domain }}"     # registry.ocp.example.com
@@ -39,8 +39,8 @@ all:
     # SSL/TLS CONFIGURATION
     # ============================================================
     # Options: "letsencrypt", "selfsigned", "custom"
-    ssl_cert_provider: "selfsigned"  # Start with self-signed, switch to letsencrypt after DNS
-    letsencrypt_email: "admin@example.com"  # CHANGE THIS for Let's Encrypt
+    ssl_cert_provider: "letsencrypt"  # Use Let's Encrypt with Route53 DNS validation
+    letsencrypt_email: "admin@{{ external_domain }}"
 
     # ============================================================
     # BACKEND VM IPs (Internal Network on KVM Host)

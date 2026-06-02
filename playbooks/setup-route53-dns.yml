@@ -1,0 +1,247 @@
+---
+- name: Setup AWS Route53 DNS Records for ocp4-disconnected-helper
+  hosts: localhost
+  gather_facts: yes
+  vars_files:
+    - ../inventory/group_vars/all.yml
+
+  tasks:
+    # ============================================================
+    # AWS CREDENTIALS CHECK
+    # ============================================================
+    - name: Check for AWS credentials file
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+      register: aws_creds_file
+
+    - name: Fail if AWS credentials not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ AWS credentials file not found!
+
+          Expected location: {{ lookup('env', 'HOME') }}/.aws/credentials
+
+          To setup AWS credentials:
+
+          1. Install AWS CLI:
+             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+             unzip awscliv2.zip
+             sudo ./aws/install
+
+          2. Configure AWS credentials:
+             aws configure
+
+             AWS Access Key ID [None]: YOUR_ACCESS_KEY
+             AWS Secret Access Key [None]: YOUR_SECRET_KEY
+             Default region name [None]: {{ aws_region }}
+             Default output format [None]: json
+
+          3. Verify credentials:
+             aws sts get-caller-identity
+
+          4. Re-run this playbook:
+             ansible-playbook playbooks/setup-route53-dns.yml
+      when: not aws_creds_file.stat.exists
+
+    - name: Display AWS credentials found
+      ansible.builtin.debug:
+        msg:
+          - "✅ AWS credentials file found: {{ aws_creds_file.stat.path }}"
+          - "Using AWS profile: {{ aws_profile }}"
+          - "Using AWS region: {{ aws_region }}"
+
+    # ============================================================
+    # INSTALL AWS DEPENDENCIES
+    # ============================================================
+    - name: Install boto3 (Python AWS SDK)
+      ansible.builtin.pip:
+        name:
+          - boto3
+          - botocore
+        state: present
+      become: yes
+
+    # ============================================================
+    # GET ROUTE53 HOSTED ZONE ID
+    # ============================================================
+    - name: Get Route53 hosted zone for {{ external_domain }}
+      amazon.aws.route53_info:
+        query: hosted_zone
+        profile: "{{ aws_profile }}"
+        region: "{{ aws_region }}"
+      register: route53_zones
+      environment:
+        AWS_PROFILE: "{{ aws_profile }}"
+
+    - name: Find hosted zone ID for {{ external_domain }}
+      ansible.builtin.set_fact:
+        hosted_zone_id: "{{ item.Id | replace('/hostedzone/', '') }}"
+      loop: "{{ route53_zones.HostedZones }}"
+      when: item.Name == external_domain + '.' or item.Name == external_domain
+      loop_control:
+        label: "{{ item.Name }}"
+
+    - name: Fail if hosted zone not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ Route53 hosted zone not found for domain: {{ external_domain }}
+
+          Found hosted zones:
+          {% for zone in route53_zones.HostedZones %}
+          - {{ zone.Name }} (ID: {{ zone.Id }})
+          {% endfor %}
+
+          The domain {{ external_domain }} should already exist in Route53.
+          If this is an OpenTLC sandbox domain, it should be managed by Red Hat.
+
+          Please verify:
+          1. Domain is correct in inventory/ibm-cloud.yml
+          2. AWS credentials have access to Route53
+          3. Hosted zone exists in AWS Console → Route53
+      when: hosted_zone_id is not defined
+
+    - name: Display hosted zone information
+      ansible.builtin.debug:
+        msg:
+          - "✅ Found Route53 hosted zone"
+          - "Domain: {{ external_domain }}"
+          - "Zone ID: {{ hosted_zone_id }}"
+
+    # ============================================================
+    # CREATE DNS RECORDS
+    # ============================================================
+    - name: Create DNS A records for services
+      amazon.aws.route53:
+        state: present
+        zone: "{{ external_domain }}"
+        record: "{{ item }}.{{ external_domain }}"
+        type: A
+        ttl: 300
+        value: "{{ external_ip }}"
+        overwrite: yes
+        profile: "{{ aws_profile }}"
+        region: "{{ aws_region }}"
+      loop:
+        - "registry.{{ ocp_cluster_name }}"      # registry.ocp4.sandbox3377.opentlc.com
+        - "harbor.{{ ocp_cluster_name }}"        # harbor.ocp4.sandbox3377.opentlc.com
+        - "jfrog.{{ ocp_cluster_name }}"         # jfrog.ocp4.sandbox3377.opentlc.com
+        - "aap"                                  # aap.sandbox3377.opentlc.com
+        - "api.{{ ocp_cluster_name }}"           # api.ocp4.sandbox3377.opentlc.com
+        - "cockpit"                              # cockpit.sandbox3377.opentlc.com
+      environment:
+        AWS_PROFILE: "{{ aws_profile }}"
+
+    - name: Create wildcard DNS record for OpenShift apps
+      amazon.aws.route53:
+        state: present
+        zone: "{{ external_domain }}"
+        record: "*.apps.{{ ocp_cluster_name }}.{{ external_domain }}"
+        type: A
+        ttl: 300
+        value: "{{ external_ip }}"
+        overwrite: yes
+        profile: "{{ aws_profile }}"
+        region: "{{ aws_region }}"
+      environment:
+        AWS_PROFILE: "{{ aws_profile }}"
+
+    # ============================================================
+    # VERIFY DNS PROPAGATION
+    # ============================================================
+    - name: Wait for DNS propagation (registry)
+      ansible.builtin.command:
+        cmd: "dig +short {{ quay_url }} @8.8.8.8"
+      register: dns_check
+      retries: 10
+      delay: 5
+      until: dns_check.stdout == external_ip
+      changed_when: false
+
+    - name: Display DNS verification results
+      ansible.builtin.debug:
+        msg:
+          - "✅ DNS records created and propagated successfully"
+          - ""
+          - "📋 DNS Records Created:"
+          - "   {{ quay_url }} → {{ external_ip }}"
+          - "   {{ harbor_url }} → {{ external_ip }}"
+          - "   {{ jfrog_url }} → {{ external_ip }}"
+          - "   {{ aap_url }} → {{ external_ip }}"
+          - "   {{ ocp_api_url }} → {{ external_ip }}"
+          - "   {{ cockpit_url }} → {{ external_ip }}"
+          - "   *.apps.{{ ocp_cluster_name }}.{{ external_domain }} → {{ external_ip }}"
+          - ""
+          - "🔍 Verify DNS resolution:"
+          - "   dig {{ quay_url }} +short"
+          - "   Expected: {{ external_ip }}"
+          - ""
+          - "🚀 Next Steps:"
+          - "   1. Run: ansible-playbook -i inventory/ibm-cloud.yml playbooks/setup-haproxy.yml"
+          - "   2. HAProxy will automatically obtain Let's Encrypt certificates"
+          - "   3. Access services via DNS names (not IP:port)"
+
+    # ============================================================
+    # SUMMARY FILE (for documentation)
+    # ============================================================
+    - name: Create DNS summary file
+      ansible.builtin.copy:
+        content: |
+          # Route53 DNS Configuration
+
+          **Domain**: {{ external_domain }}
+          **Hosted Zone ID**: {{ hosted_zone_id }}
+          **External IP**: {{ external_ip }}
+          **Created**: {{ ansible_date_time.iso8601 }}
+
+          ## DNS Records
+
+          | Record | Type | Value | TTL |
+          |--------|------|-------|-----|
+          | {{ quay_url }} | A | {{ external_ip }} | 300 |
+          | {{ harbor_url }} | A | {{ external_ip }} | 300 |
+          | {{ jfrog_url }} | A | {{ external_ip }} | 300 |
+          | {{ aap_url }} | A | {{ external_ip }} | 300 |
+          | {{ ocp_api_url }} | A | {{ external_ip }} | 300 |
+          | {{ cockpit_url }} | A | {{ external_ip }} | 300 |
+          | *.apps.{{ ocp_cluster_name }}.{{ external_domain }} | A | {{ external_ip }} | 300 |
+
+          ## Service URLs
+
+          - **Quay Registry**: https://{{ quay_url }}
+          - **Harbor Registry**: https://{{ harbor_url }}
+          - **JFrog Artifactory**: https://{{ jfrog_url }}
+          - **AAP Controller**: https://{{ aap_url }}
+          - **OpenShift API**: https://{{ ocp_api_url }}:6443
+          - **OpenShift Console**: https://console-openshift-console.apps.{{ ocp_cluster_name }}.{{ external_domain }}
+          - **Cockpit**: https://{{ cockpit_url }}:9090
+
+          ## Verification
+
+          ```bash
+          # Test DNS resolution
+          dig {{ quay_url }} +short
+          # Expected: {{ external_ip }}
+
+          # Test all records
+          for host in {{ quay_url }} {{ aap_url }} {{ ocp_api_url }}; do
+            echo -n "$host: "
+            dig +short $host
+          done
+          ```
+
+          ## SSL Certificates
+
+          Let's Encrypt certificates will be automatically obtained by HAProxy using DNS-01 challenge.
+
+          ```bash
+          # Setup HAProxy with Let's Encrypt
+          ansible-playbook -i inventory/ibm-cloud.yml playbooks/setup-haproxy.yml
+          ```
+        dest: "{{ playbook_dir }}/../DNS_CONFIGURATION.md"
+        mode: '0644'
+
+    - name: Display DNS configuration file location
+      ansible.builtin.debug:
+        msg:
+          - "📄 DNS configuration saved to: DNS_CONFIGURATION.md"
+          - "   (Excluded from git via .gitignore to protect domain name)"
