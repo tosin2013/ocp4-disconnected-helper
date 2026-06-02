@@ -75,11 +75,11 @@
 
     - name: Find hosted zone ID for {{ external_domain }}
       ansible.builtin.set_fact:
-        hosted_zone_id: "{{ item.Id | replace('/hostedzone/', '') }}"
-      loop: "{{ route53_zones.HostedZones }}"
-      when: item.Name == external_domain + '.' or item.Name == external_domain
+        hosted_zone_id: "{{ item.id | replace('/hostedzone/', '') }}"
+      loop: "{{ route53_zones.hosted_zones }}"
+      when: item.name == external_domain + '.' or item.name == external_domain
       loop_control:
-        label: "{{ item.Name }}"
+        label: "{{ item.name }}"
 
     - name: Fail if hosted zone not found
       ansible.builtin.fail:
@@ -87,8 +87,8 @@
           ❌ Route53 hosted zone not found for domain: {{ external_domain }}
 
           Found hosted zones:
-          {% for zone in route53_zones.HostedZones %}
-          - {{ zone.Name }} (ID: {{ zone.Id }})
+          {% for zone in route53_zones.hosted_zones %}
+          - {{ zone.name }} (ID: {{ zone.id }})
           {% endfor %}
 
           The domain {{ external_domain }} should already exist in Route53.
@@ -119,8 +119,7 @@
         ttl: 300
         value: "{{ external_ip }}"
         overwrite: yes
-        profile: "{{ aws_profile }}"
-        region: "{{ aws_region }}"
+        hosted_zone_id: "{{ hosted_zone_id }}"
       loop:
         - "registry.{{ ocp_cluster_name }}"      # registry.ocp4.sandbox3377.opentlc.com
         - "harbor.{{ ocp_cluster_name }}"        # harbor.ocp4.sandbox3377.opentlc.com
@@ -140,8 +139,7 @@
         ttl: 300
         value: "{{ external_ip }}"
         overwrite: yes
-        profile: "{{ aws_profile }}"
-        region: "{{ aws_region }}"
+        hosted_zone_id: "{{ hosted_zone_id }}"
       environment:
         AWS_PROFILE: "{{ aws_profile }}"
 
