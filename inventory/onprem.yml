@@ -1,0 +1,139 @@
+---
+# On-Premise Deployment Inventory
+# Direct IP Access (No External DNS)
+# KVM Host IP: 10.241.64.9
+
+all:
+  vars:
+    # ============================================================
+    # DEPLOYMENT TYPE
+    # ============================================================
+    deployment_type: "onprem"  # On-premise mode (direct IP access)
+
+    # ============================================================
+    # NETWORKING
+    # ============================================================
+    # KVM Host IP (direct access, no Floating IP)
+    kvm_host_ip: "10.241.64.9"
+
+    # ============================================================
+    # SSL/TLS CONFIGURATION
+    # ============================================================
+    ssl_cert_provider: "selfsigned"  # Self-signed certs for on-prem
+
+    # Certificate details (for self-signed generation)
+    cert_country: "US"
+    cert_state: "State"
+    cert_locality: "City"
+    cert_organization: "Example Organization"
+    cert_common_name: "{{ kvm_host_ip }}"
+
+    # ============================================================
+    # BACKEND VM IPs (Internal Network on KVM Host)
+    # ============================================================
+    # Quay/mirror-registry VM
+    quay_vm_ip: "192.168.122.5"
+    quay_vm_port: 5000
+
+    # Harbor VM
+    harbor_vm_ip: "192.168.122.10"
+    harbor_vm_port: 443
+
+    # JFrog Artifactory VM
+    jfrog_vm_ip: "192.168.122.20"
+    jfrog_vm_port: 8082
+    jfrog_docker_port: 5001
+
+    # AAP Controller VM
+    aap_vm_ip: "192.168.122.30"
+    aap_vm_port: 443
+
+    # OpenShift Master Nodes
+    ocp_master_ips:
+      - "192.168.122.100"
+      - "192.168.122.101"
+      - "192.168.122.102"
+
+    # OpenShift Worker Nodes
+    ocp_worker_ips:
+      - "192.168.122.110"
+      - "192.168.122.111"
+
+    # ============================================================
+    # HAPROXY PORT MAPPING (On-Premise Port-Based Routing)
+    # ============================================================
+    # Service access via IP:port (no DNS required)
+    quay_external_port: 5000        # http://10.241.64.9:5000
+    harbor_external_port: 8443      # https://10.241.64.9:8443
+    jfrog_external_port: 8082       # https://10.241.64.9:8082
+    jfrog_docker_external_port: 5001  # http://10.241.64.9:5001
+    aap_external_port: 8444         # https://10.241.64.9:8444
+    ocp_api_external_port: 6443     # https://10.241.64.9:6443
+    ocp_console_external_port: 443  # https://10.241.64.9:443
+    cockpit_external_port: 9090     # https://10.241.64.9:9090
+
+    # ============================================================
+    # HAPROXY CONFIGURATION
+    # ============================================================
+    haproxy_stats_port: 9000
+    haproxy_stats_user: "admin"
+    haproxy_stats_password: "{{ vault_haproxy_stats_password | default('changeme') }}"
+
+  hosts:
+    kvm-host:
+      ansible_host: "{{ kvm_host_ip }}"
+      ansible_user: "root"
+      ansible_connection: "local"  # Running playbook ON the KVM host
+
+# ============================================================
+# ACCESS URLs (No DNS Required)
+# ============================================================
+# Access services via direct IP:port
+#
+# Quay Registry:      http://10.241.64.9:5000
+# Harbor:             https://10.241.64.9:8443
+# JFrog Artifactory:  https://10.241.64.9:8082
+# JFrog Docker:       http://10.241.64.9:5001
+# AAP Controller:     https://10.241.64.9:8444
+# OpenShift API:      https://10.241.64.9:6443
+# OpenShift Console:  https://10.241.64.9:443
+# Cockpit:            https://10.241.64.9:9090
+# HAProxy Stats:      http://10.241.64.9:9000
+#
+# ============================================================
+
+# ============================================================
+# /etc/hosts ENTRIES (Optional, for friendly names)
+# ============================================================
+# Add these to /etc/hosts on your workstation for friendly names:
+#
+# 10.241.64.9  registry.local
+# 10.241.64.9  harbor.local
+# 10.241.64.9  jfrog.local
+# 10.241.64.9  aap.local
+# 10.241.64.9  api.ocp.local
+# 10.241.64.9  console.ocp.local
+# 10.241.64.9  cockpit.local
+#
+# Then access via: https://registry.local:5000
+# ============================================================
+
+# ============================================================
+# QUICK START INSTRUCTIONS
+# ============================================================
+# 1. Setup HAProxy:
+#    ansible-playbook -i inventory/onprem.yml playbooks/setup-haproxy.yml
+#
+# 2. Provision VMs:
+#    ansible-playbook -i inventory/onprem.yml playbooks/provision-registry-vm.yml
+#    ansible-playbook -i inventory/onprem.yml playbooks/provision-aap-vm.yml
+#
+# 3. Access services (no DNS needed):
+#    Quay:     http://10.241.64.9:5000
+#    AAP:      https://10.241.64.9:8444
+#    Cockpit:  https://10.241.64.9:9090
+#    OCP API:  https://10.241.64.9:6443
+#
+# 4. Optional: Add /etc/hosts entries for friendly names
+#
+# ============================================================
