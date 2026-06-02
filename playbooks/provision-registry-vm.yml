@@ -27,9 +27,13 @@
 - name: Provision Registry VM with community.libvirt
   hosts: localhost
   gather_facts: yes
-  become: yes
+  become: no  # Don't become root at play level - we'll use it per-task
 
   vars:
+    # Get the actual user running the playbook (before any become)
+    actual_user: "{{ lookup('env', 'USER') }}"
+    actual_home: "{{ lookup('env', 'HOME') }}"
+
     # VM Configuration
     vm_name: "registry-vm"
     vm_hostname: "registry"
@@ -52,8 +56,9 @@
     vm_disk: "/var/lib/libvirt/images/{{ vm_name }}.qcow2"
     cloud_init_iso: "/var/lib/libvirt/images/{{ vm_name }}-cloud-init.iso"
 
-    # SSH key for access
-    ssh_public_key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub', errors='warn') | default('') }}"
+    # SSH key for access (use actual user's key, not root's)
+    ssh_public_key: "{{ lookup('file', actual_home + '/.ssh/id_rsa.pub', errors='warn') | default('') }}"
+    ssh_private_key: "{{ actual_home }}/.ssh/id_rsa"
 
     # Action: create, delete, info
     vm_action: "create"
@@ -105,6 +110,7 @@
     # =========================================================================
     - name: Delete registry VM
       when: vm_action == "delete"
+      become: yes  # Need root for libvirt operations
       block:
         - name: Check if VM exists
           community.libvirt.virt:
@@ -185,6 +191,7 @@
       community.libvirt.virt:
         command: list_vms
       register: existing_vms
+      become: yes
 
     - name: VM already exists
       when: vm_name in existing_vms.list_vms
@@ -211,6 +218,7 @@
       ansible.builtin.stat:
         path: "{{ base_image_path }}"
       register: base_image_stat
+      become: yes
 
     - name: Download CentOS Stream 10 base image
       ansible.builtin.get_url:
@@ -219,6 +227,7 @@
         mode: '0644'
         timeout: 3600
       when: not base_image_stat.stat.exists
+      become: yes
 
     # =========================================================================
     # Create VM Disk from Base Image
@@ -228,6 +237,7 @@
         cmd: qemu-img create -f qcow2 -F qcow2 -b {{ base_image_path }} {{ vm_disk }} {{ vm_disk_size }}G
       args:
         creates: "{{ vm_disk }}"
+      become: yes
 
     - name: Set VM disk permissions
       ansible.builtin.file:
@@ -235,6 +245,7 @@
         owner: qemu
         group: qemu
         mode: '0644'
+      become: yes
 
     # =========================================================================
     # Generate Cloud-Init Files
@@ -279,6 +290,7 @@
           {{ cloud_init_tmpdir.path }}/network-config
       args:
         creates: "{{ cloud_init_iso }}"
+      become: yes
 
     - name: Set cloud-init ISO permissions
       ansible.builtin.file:
@@ -286,6 +298,7 @@
         owner: qemu
         group: qemu
         mode: '0644'
+      become: yes
 
     - name: Clean up temporary directory
       ansible.builtin.file:
@@ -305,16 +318,19 @@
       community.libvirt.virt:
         command: define
         xml: "{{ lookup('template', '../templates/libvirt/registry-vm.xml.j2') }}"
+      become: yes
 
     - name: Start VM
       community.libvirt.virt:
         name: "{{ vm_name }}"
         state: running
+      become: yes
 
     - name: Set VM to autostart
       community.libvirt.virt:
         name: "{{ vm_name }}"
         autostart: yes
+      become: yes
 
     # =========================================================================
     # Wait for VM to be Ready
@@ -327,6 +343,7 @@
       retries: 60
       delay: 5
       changed_when: false
+      become: yes
 
     - name: Display detected VM IP
       ansible.builtin.debug:
@@ -341,7 +358,10 @@
 
     - name: Wait for cloud-init to complete
       ansible.builtin.shell: |
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        ssh -i {{ ssh_private_key }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o IdentitiesOnly=yes \
           root@{{ vm_ip_detected.stdout }} 'cloud-init status --wait'
       register: cloud_init_status
       retries: 20
@@ -349,13 +369,18 @@
       until: cloud_init_status.rc == 0
       changed_when: false
       ignore_errors: yes
+      become: no  # Run as actual user to use their SSH key
 
     - name: Verify registry VM is ready
       ansible.builtin.shell: |
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        ssh -i {{ ssh_private_key }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o IdentitiesOnly=yes \
           root@{{ vm_ip_detected.stdout }} 'cat /var/log/registry-vm-ready'
       register: registry_ready
       changed_when: false
+      become: no  # Run as actual user to use their SSH key
 
     # =========================================================================
     # Update Inventory
