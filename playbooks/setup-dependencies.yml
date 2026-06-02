@@ -24,7 +24,7 @@
           - qemu-kvm                 # KVM hypervisor
           - virt-install             # CLI VM installer
           - python3-libvirt          # Python bindings
-          - genisoimage              # Cloud-init ISOs
+          - xorriso                  # Cloud-init ISOs (replaces genisoimage)
           - qemu-img                 # Disk management
 
           # Cockpit (web-based management)
