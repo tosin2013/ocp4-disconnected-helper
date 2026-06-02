@@ -47,7 +47,7 @@ all:
     # ============================================================
     # Quay/mirror-registry VM
     quay_vm_ip: "192.168.122.5"
-    quay_vm_port: 5000
+    quay_vm_port: 8443  # Mirror-registry default port
 
     # Harbor VM
     harbor_vm_ip: "192.168.122.10"

@@ -335,23 +335,21 @@
     # =========================================================================
     # Wait for VM to be Ready
     # =========================================================================
-    - name: Wait for VM to get IP address (DHCP)
-      ansible.builtin.shell: |
-        virsh domifaddr {{ vm_name }} | grep -oP '(\d+\.){3}\d+' | head -1
-      register: vm_ip_detected
-      until: vm_ip_detected.stdout | length > 0
-      retries: 60
-      delay: 5
-      changed_when: false
-      become: yes
+    - name: Wait for VM to boot (static IP)
+      ansible.builtin.pause:
+        seconds: 30
+        prompt: "Waiting for VM to boot with static IP {{ vm_ip }}"
 
-    - name: Display detected VM IP
+    - name: Display configured static IP
       ansible.builtin.debug:
-        msg: "🌐 VM IP (DHCP): {{ vm_ip_detected.stdout }}"
+        msg:
+          - "🌐 VM Static IP: {{ vm_ip }}"
+          - "   Configured via cloud-init network-config"
+          - "   Gateway: 192.168.122.1"
 
-    - name: Wait for SSH to be available
+    - name: Wait for SSH to be available on static IP
       ansible.builtin.wait_for:
-        host: "{{ vm_ip_detected.stdout }}"
+        host: "{{ vm_ip }}"
         port: 22
         timeout: "{{ vm_wait_timeout }}"
         state: started
@@ -362,7 +360,7 @@
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
           -o IdentitiesOnly=yes \
-          root@{{ vm_ip_detected.stdout }} 'cloud-init status --wait'
+          root@{{ vm_ip }} 'cloud-init status --wait'
       register: cloud_init_status
       retries: 20
       delay: 30
@@ -371,13 +369,43 @@
       ignore_errors: yes
       become: no  # Run as actual user to use their SSH key
 
+    - name: Get actual VM IP (cloud-init network-config may not apply)
+      ansible.builtin.shell: |
+        virsh domifaddr {{ vm_name }} | grep -oP '192\.168\.122\.\d+' | head -n1
+      register: vm_actual_ip
+      changed_when: false
+      become: yes
+
+    - name: Apply static IP if cloud-init didn't configure it
+      ansible.builtin.shell: |
+        ssh -i {{ ssh_private_key }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          root@{{ vm_actual_ip.stdout }} \
+          'nmcli con delete ens3 2>/dev/null || true && \
+           nmcli con add type ethernet con-name enp1s0-static ifname enp1s0 \
+             ipv4.addresses {{ vm_ip }}/24 \
+             ipv4.gateway 192.168.122.1 \
+             ipv4.dns "192.168.122.1 8.8.8.8" \
+             ipv4.method manual && \
+           nmcli con up enp1s0-static'
+      when: vm_actual_ip.stdout != vm_ip
+      register: static_ip_applied
+      become: no
+
+    - name: Wait for static IP to be active
+      ansible.builtin.pause:
+        seconds: 5
+      when: static_ip_applied.changed
+
     - name: Verify registry VM is ready
       ansible.builtin.shell: |
         ssh -i {{ ssh_private_key }} \
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
           -o IdentitiesOnly=yes \
-          root@{{ vm_ip_detected.stdout }} 'cat /var/log/registry-vm-ready'
+          root@{{ vm_ip }} 'cat /var/log/registry-vm-ready'
       register: registry_ready
       changed_when: false
       become: no  # Run as actual user to use their SSH key
@@ -388,7 +416,7 @@
     - name: Add registry VM to runtime inventory
       ansible.builtin.add_host:
         name: "{{ vm_fqdn }}"
-        ansible_host: "{{ vm_ip_detected.stdout }}"
+        ansible_host: "{{ vm_ip }}"
         ansible_user: root
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
         groups: registry
@@ -405,27 +433,29 @@
           - ""
           - "VM Name:     {{ vm_name }}"
           - "Hostname:    {{ vm_fqdn }}"
-          - "IP Address:  {{ vm_ip_detected.stdout }}"
+          - "IP Address:  {{ vm_ip }} (static)"
           - "Memory:      {{ vm_memory }}MB ({{ vm_memory // 1024 }}GB)"
           - "CPUs:        {{ vm_cpus }}"
           - "Disk:        {{ vm_disk_size }}GB"
           - ""
           - "🔗 HAProxy Backend:"
-          - "   Expected: {{ vm_ip }} (configured in inventory)"
-          - "   Actual:   {{ vm_ip_detected.stdout }} (DHCP)"
-          - "{% if vm_ip != vm_ip_detected.stdout %}   ⚠️  IP MISMATCH - Update inventory or use static IP{% endif %}"
+          - "   Static IP: {{ vm_ip }} ✅"
+          - "   Matches inventory configuration"
+          - "   HAProxy will route to this address"
           - ""
           - "🔐 SSH Access:"
-          - "   ssh root@{{ vm_ip_detected.stdout }}"
-          - "   ssh {{ vm_user }}@{{ vm_ip_detected.stdout }}"
+          - "   ssh root@{{ vm_ip }}"
+          - "   ssh {{ vm_user }}@{{ vm_ip }}"
           - ""
           - "🚀 Next Steps:"
-          - "   1. Verify IP matches HAProxy backend ({{ vm_ip }})"
-          - "   2. Deploy registry:"
+          - "   1. Deploy mirror-registry:"
           - "      ansible-playbook -i inventory/ibm-cloud.yml setup-mirror-registry.yml"
           - ""
-          - "   3. Access via HAProxy:"
+          - "   2. Access via HAProxy:"
           - "{% if deployment_type == 'cloud' %}      https://{{ quay_url }}{% else %}      http://{{ external_ip | default(kvm_host_ip) }}:{{ quay_external_port }}{% endif %}"
+          - ""
+          - "   3. Verify HAProxy routing:"
+          - "      curl -k https://{{ quay_url }}/health/instance"
           - ""
           - "=============================================="
 
@@ -437,8 +467,9 @@
 
           VM Name: {{ vm_name }}
           Hostname: {{ vm_fqdn }}
-          IP Address: {{ vm_ip_detected.stdout }}
-          Expected IP: {{ vm_ip }}
+          IP Address: {{ vm_ip }} (static)
+          Network: 192.168.122.0/24
+          Gateway: 192.168.122.1
 
           Resources:
           - Memory: {{ vm_memory }}MB
@@ -446,8 +477,13 @@
           - Disk: {{ vm_disk_size }}GB
 
           SSH Access:
-            ssh root@{{ vm_ip_detected.stdout }}
-            ssh {{ vm_user }}@{{ vm_ip_detected.stdout }}
+            ssh root@{{ vm_ip }}
+            ssh {{ vm_user }}@{{ vm_ip }}
+
+          HAProxy Backend:
+            Backend IP: {{ vm_ip }}
+            Backend Port: {{ quay_vm_port }}
+            External URL: {% if deployment_type == 'cloud' %}https://{{ quay_url }}{% else %}http://{{ kvm_host_ip }}:{{ quay_external_port }}{% endif %}
 
           Libvirt Commands:
             virsh list --all

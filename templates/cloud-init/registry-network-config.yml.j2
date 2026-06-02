@@ -1,5 +1,16 @@
 version: 2
 ethernets:
-  eth0:
-    dhcp4: true
+  id0:
+    match:
+      name: "en*"
+    dhcp4: false
     dhcp6: false
+    addresses:
+      - {{ vm_ip }}/24
+    routes:
+      - to: default
+        via: 192.168.122.1
+    nameservers:
+      addresses:
+        - 192.168.122.1
+        - 8.8.8.8

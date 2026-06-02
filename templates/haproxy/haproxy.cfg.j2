@@ -113,7 +113,7 @@ backend quay_backend
     balance roundrobin
     option httpchk GET /health/instance
     http-check expect status 200
-    server quay {{ quay_vm_ip }}:{{ quay_vm_port }} check
+    server quay {{ quay_vm_ip }}:{{ quay_vm_port }} check ssl verify none
 
 backend harbor_backend
     mode http
@@ -176,7 +176,7 @@ backend quay_backend
     balance roundrobin
     option httpchk GET /health/instance
     http-check expect status 200
-    server quay {{ quay_vm_ip }}:{{ quay_vm_port }} check
+    server quay {{ quay_vm_ip }}:{{ quay_vm_port }} check ssl verify none
 
 #---------------------------------------------------------------------
 # Harbor Registry Frontend (Port {{ harbor_external_port }})
