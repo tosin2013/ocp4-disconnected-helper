@@ -1,0 +1,348 @@
+---
+- name: Setup HAProxy with Let's Encrypt SSL on KVM Host
+  hosts: localhost
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - ../inventory/group_vars/all.yml
+
+  tasks:
+    # ============================================================
+    # ENVIRONMENT DETECTION
+    # ============================================================
+    - name: Detect deployment type from inventory
+      ansible.builtin.set_fact:
+        is_cloud_deployment: "{{ deployment_type == 'cloud' }}"
+        is_onprem_deployment: "{{ deployment_type == 'onprem' }}"
+
+    - name: Display deployment configuration
+      ansible.builtin.debug:
+        msg:
+          - "🌍 Deployment Type: {{ deployment_type }}"
+          - "{% if is_cloud_deployment %}Cloud Mode: SNI-based routing with Let's Encrypt{% endif %}"
+          - "{% if is_onprem_deployment %}On-Premise Mode: Port-based routing with self-signed certs{% endif %}"
+          - "{% if is_cloud_deployment %}External Domain: {{ external_domain }}{% endif %}"
+          - "{% if is_cloud_deployment %}External IP: {{ external_ip }}{% endif %}"
+
+    # ============================================================
+    # INSTALL HAPROXY AND DEPENDENCIES
+    # ============================================================
+    - name: Install HAProxy and Python pip
+      ansible.builtin.dnf:
+        name:
+          - haproxy
+          - firewalld
+          - python3-pip
+        state: present
+
+    - name: Install certbot via pip (CentOS Stream 10 compatibility)
+      ansible.builtin.pip:
+        name:
+          - certbot
+          - certbot-dns-route53
+        state: present
+      become: yes
+      when: is_cloud_deployment and ssl_cert_provider == 'letsencrypt'
+
+    - name: Enable firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        enabled: yes
+        state: started
+
+    # ============================================================
+    # FIREWALL CONFIGURATION
+    # ============================================================
+    - name: Open HTTP port (Let's Encrypt ACME challenge)
+      ansible.posix.firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Open HTTPS port (all services)
+      ansible.posix.firewalld:
+        port: 443/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Open OpenShift API port
+      ansible.posix.firewalld:
+        port: 6443/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Open Cockpit port
+      ansible.posix.firewalld:
+        port: 9090/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Open HAProxy stats port
+      ansible.posix.firewalld:
+        port: "{{ haproxy_stats_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Open on-premise service ports
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - 5000   # Quay registry
+        - 8443   # Harbor
+        - 8082   # JFrog Artifactory
+        - 8444   # AAP (on-prem mode)
+        - 5001   # JFrog Docker
+      when: is_onprem_deployment
+
+    # ============================================================
+    # LET'S ENCRYPT SSL CERTIFICATES (CLOUD MODE)
+    # ============================================================
+    - name: Check if Let's Encrypt certificates exist
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ external_domain }}/fullchain.pem"
+      register: letsencrypt_cert
+      when: is_cloud_deployment and ssl_cert_provider == 'letsencrypt'
+
+    - name: Create SSL certificate directory
+      ansible.builtin.file:
+        path: /etc/haproxy/certs
+        state: directory
+        mode: '0700'
+
+    - name: Get AWS credentials from file
+      ansible.builtin.slurp:
+        src: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+      register: aws_credentials_file
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+        - not letsencrypt_cert.stat.exists
+
+    - name: Parse AWS access key
+      ansible.builtin.set_fact:
+        aws_access_key: "{{ aws_credentials_file.content | b64decode | regex_search('aws_access_key_id\\s*=\\s*(.+)', '\\1') | first }}"
+        aws_secret_key: "{{ aws_credentials_file.content | b64decode | regex_search('aws_secret_access_key\\s*=\\s*(.+)', '\\1') | first }}"
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+        - not letsencrypt_cert.stat.exists
+
+    - name: Obtain Let's Encrypt certificates via DNS-01 challenge
+      ansible.builtin.command:
+        cmd: >
+          /usr/local/bin/certbot certonly
+          --dns-route53
+          --non-interactive
+          --agree-tos
+          --email {{ letsencrypt_email }}
+          {% if letsencrypt_staging %}--staging{% endif %}
+          -d {{ external_domain }}
+          -d *.{{ external_domain }}
+          -d *.{{ ocp_cluster_name }}.{{ external_domain }}
+          -d *.apps.{{ ocp_cluster_name }}.{{ external_domain }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+        - not letsencrypt_cert.stat.exists
+      register: certbot_result
+
+    - name: Display Let's Encrypt certificate status
+      ansible.builtin.debug:
+        msg:
+          - "✅ Let's Encrypt certificates obtained successfully"
+          - "Certificate path: /etc/letsencrypt/live/{{ external_domain }}/"
+          - "Domains covered:"
+          - "  - {{ external_domain }}"
+          - "  - *.{{ external_domain }}"
+          - "  - {{ ocp_cluster_name }}.{{ external_domain }}"
+          - "  - *.{{ ocp_cluster_name }}.{{ external_domain }}"
+          - "  - *.apps.{{ ocp_cluster_name }}.{{ external_domain }}"
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    - name: Combine Let's Encrypt certificate and key for HAProxy
+      ansible.builtin.shell: |
+        cat /etc/letsencrypt/live/{{ external_domain }}/fullchain.pem \
+            /etc/letsencrypt/live/{{ external_domain }}/privkey.pem \
+            > /etc/haproxy/certs/{{ external_domain }}.pem
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    - name: Set HAProxy certificate permissions
+      ansible.builtin.file:
+        path: /etc/haproxy/certs/{{ external_domain }}.pem
+        mode: '0600'
+        owner: haproxy
+        group: haproxy
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    # ============================================================
+    # SELF-SIGNED CERTIFICATES (ON-PREMISE MODE)
+    # ============================================================
+    - name: Generate self-signed certificate for on-premise
+      ansible.builtin.command:
+        cmd: >
+          openssl req -x509 -nodes -days {{ cert_validity_days }}
+          -newkey rsa:{{ cert_key_size }}
+          -keyout /etc/haproxy/certs/selfsigned.key
+          -out /etc/haproxy/certs/selfsigned.crt
+          -subj "/C={{ cert_country }}/ST={{ cert_state }}/L={{ cert_locality }}/O={{ cert_organization }}/CN={{ kvm_host_ip }}"
+        creates: /etc/haproxy/certs/selfsigned.crt
+      when:
+        - is_onprem_deployment
+        - ssl_cert_provider == 'selfsigned'
+
+    - name: Combine self-signed certificate and key for HAProxy
+      ansible.builtin.shell: |
+        cat /etc/haproxy/certs/selfsigned.crt \
+            /etc/haproxy/certs/selfsigned.key \
+            > /etc/haproxy/certs/selfsigned.pem
+      when:
+        - is_onprem_deployment
+        - ssl_cert_provider == 'selfsigned'
+
+    - name: Set self-signed certificate permissions
+      ansible.builtin.file:
+        path: /etc/haproxy/certs/selfsigned.pem
+        mode: '0600'
+        owner: haproxy
+        group: haproxy
+      when:
+        - is_onprem_deployment
+        - ssl_cert_provider == 'selfsigned'
+
+    # ============================================================
+    # HAPROXY CONFIGURATION
+    # ============================================================
+    - name: Generate HAProxy configuration
+      ansible.builtin.template:
+        src: ../templates/haproxy/haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        mode: '0644'
+        validate: 'haproxy -c -f %s'
+      notify: Restart HAProxy
+
+    - name: Enable and start HAProxy
+      ansible.builtin.systemd:
+        name: haproxy
+        enabled: yes
+        state: started
+
+    # ============================================================
+    # CERTBOT AUTO-RENEWAL (CLOUD MODE)
+    # ============================================================
+    - name: Create certbot renewal hook directory
+      ansible.builtin.file:
+        path: /etc/letsencrypt/renewal-hooks/deploy
+        state: directory
+        mode: '0755'
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    - name: Create certbot renewal hook
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          # Certbot renewal hook - regenerate HAProxy certificate bundle
+          cat /etc/letsencrypt/live/{{ external_domain }}/fullchain.pem \
+              /etc/letsencrypt/live/{{ external_domain }}/privkey.pem \
+              > /etc/haproxy/certs/{{ external_domain }}.pem
+          chmod 600 /etc/haproxy/certs/{{ external_domain }}.pem
+          chown haproxy:haproxy /etc/haproxy/certs/{{ external_domain }}.pem
+          systemctl reload haproxy
+        dest: /etc/letsencrypt/renewal-hooks/deploy/haproxy-reload.sh
+        mode: '0755'
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    - name: Create certbot renewal script with AWS credentials
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          export AWS_ACCESS_KEY_ID="{{ aws_access_key | default('REPLACE_WITH_YOUR_KEY') }}"
+          export AWS_SECRET_ACCESS_KEY="{{ aws_secret_key | default('REPLACE_WITH_YOUR_SECRET') }}"
+          export AWS_DEFAULT_REGION="{{ aws_region }}"
+          /usr/local/bin/certbot renew --quiet --dns-route53
+        dest: /usr/local/bin/certbot-renew-dns.sh
+        mode: '0700'
+        owner: root
+        group: root
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    - name: Create certbot renewal cron job
+      ansible.builtin.cron:
+        name: "Certbot certificate renewal"
+        minute: "0"
+        hour: "3"
+        job: "/usr/local/bin/certbot-renew-dns.sh"
+        user: root
+      when:
+        - is_cloud_deployment
+        - ssl_cert_provider == 'letsencrypt'
+
+    # ============================================================
+    # VERIFICATION
+    # ============================================================
+    - name: Verify HAProxy is running
+      ansible.builtin.systemd:
+        name: haproxy
+        state: started
+      check_mode: yes
+      register: haproxy_status
+
+    - name: Display HAProxy setup summary
+      ansible.builtin.debug:
+        msg:
+          - "✅ HAProxy setup complete!"
+          - ""
+          - "📋 Configuration:"
+          - "   Deployment Type: {{ deployment_type }}"
+          - "   SSL Provider: {{ ssl_cert_provider }}"
+          - "{% if is_cloud_deployment %}   External IP: {{ external_ip }}{% endif %}"
+          - "{% if is_cloud_deployment %}   External Domain: {{ external_domain }}{% endif %}"
+          - ""
+          - "🌐 Service URLs:"
+          - "{% if is_cloud_deployment %}   Quay Registry:  https://{{ quay_url }}{% endif %}"
+          - "{% if is_cloud_deployment %}   Harbor Registry: https://{{ harbor_url }}{% endif %}"
+          - "{% if is_cloud_deployment %}   JFrog Artifactory: https://{{ jfrog_url }}{% endif %}"
+          - "{% if is_cloud_deployment %}   AAP Controller:  https://{{ aap_url }}{% endif %}"
+          - "{% if is_cloud_deployment %}   OpenShift API:   https://{{ ocp_api_url }}:6443{% endif %}"
+          - "{% if is_cloud_deployment %}   Cockpit:         https://{{ cockpit_url }}:9090{% endif %}"
+          - "{% if is_onprem_deployment %}   Quay Registry:  http://{{ kvm_host_ip }}:{{ quay_external_port }}{% endif %}"
+          - "{% if is_onprem_deployment %}   Harbor:         https://{{ kvm_host_ip }}:{{ harbor_external_port }}{% endif %}"
+          - "{% if is_onprem_deployment %}   JFrog:          https://{{ kvm_host_ip }}:{{ jfrog_external_port }}{% endif %}"
+          - "{% if is_onprem_deployment %}   AAP:            https://{{ kvm_host_ip }}:{{ aap_external_port }}{% endif %}"
+          - ""
+          - "📊 HAProxy Stats: http://{{ external_ip if is_cloud_deployment else kvm_host_ip }}:{{ haproxy_stats_port }}"
+          - "   Username: {{ haproxy_stats_user }}"
+          - ""
+          - "🚀 Next Steps:"
+          - "   1. Provision backend VMs (registry, AAP, OCP nodes)"
+          - "   2. HAProxy will automatically route traffic to them"
+          - "{% if is_cloud_deployment %}   3. SSL certificates auto-renew every 60 days{% endif %}"
+
+  handlers:
+    - name: Restart HAProxy
+      ansible.builtin.systemd:
+        name: haproxy
+        state: restarted

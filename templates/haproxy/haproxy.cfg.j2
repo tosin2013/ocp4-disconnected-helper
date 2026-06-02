@@ -1,0 +1,286 @@
+#---------------------------------------------------------------------
+# HAProxy Configuration for ocp4-disconnected-helper
+# Deployment Type: {{ deployment_type }}
+# SSL Provider: {{ ssl_cert_provider }}
+#---------------------------------------------------------------------
+
+global
+    log         127.0.0.1 local2 {{ haproxy_log_level }}
+    chroot      /var/lib/haproxy
+    pidfile     /var/run/haproxy.pid
+    maxconn     {{ haproxy_max_connections }}
+    user        haproxy
+    group       haproxy
+    daemon
+
+    # SSL/TLS configuration
+    ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
+    ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+
+defaults
+    mode                    http
+    log                     global
+    option                  httplog
+    option                  dontlognull
+    option                  http-server-close
+    option                  redispatch
+    retries                 3
+    timeout http-request    10s
+    timeout queue           1m
+    timeout connect         {{ haproxy_timeout_connect }}ms
+    timeout client          {{ haproxy_timeout_client }}ms
+    timeout server          {{ haproxy_timeout_server }}ms
+    timeout http-keep-alive 10s
+    timeout check           10s
+    maxconn                 {{ haproxy_max_connections }}
+
+#---------------------------------------------------------------------
+# Stats Interface
+#---------------------------------------------------------------------
+listen stats
+    bind *:{{ haproxy_stats_port }}
+    mode http
+    stats enable
+    stats uri /
+    stats realm HAProxy\ Statistics
+    stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_password }}
+    stats refresh 30s
+
+{% if deployment_type == 'cloud' %}
+#---------------------------------------------------------------------
+# CLOUD MODE: SNI-Based Routing (Hostname-Based)
+#---------------------------------------------------------------------
+
+#---------------------------------------------------------------------
+# HTTP Frontend (Redirect to HTTPS + Let's Encrypt ACME Challenge)
+#---------------------------------------------------------------------
+frontend http_front
+    bind *:80
+    mode http
+
+    # Let's Encrypt ACME challenge
+    acl letsencrypt_acl path_beg /.well-known/acme-challenge/
+    use_backend letsencrypt_backend if letsencrypt_acl
+
+    # Redirect all other HTTP to HTTPS
+    redirect scheme https code 301 if !letsencrypt_acl
+
+backend letsencrypt_backend
+    mode http
+    server letsencrypt 127.0.0.1:8888
+
+#---------------------------------------------------------------------
+# HTTPS Frontend (SNI-Based Routing)
+#---------------------------------------------------------------------
+frontend https_front
+    bind *:443 ssl crt /etc/haproxy/certs/{{ external_domain }}.pem
+    mode http
+
+    # Service selection based on SNI hostname
+    acl host_quay hdr(host) -i {{ quay_url }}
+    acl host_harbor hdr(host) -i {{ harbor_url }}
+    acl host_jfrog hdr(host) -i {{ jfrog_url }}
+    acl host_aap hdr(host) -i {{ aap_url }}
+    acl host_cockpit hdr(host) -i {{ cockpit_url }}
+    acl host_ocp_console hdr(host) -i console-openshift-console.apps.{{ ocp_cluster_name }}.{{ external_domain }}
+    acl host_ocp_oauth hdr(host) -i oauth-openshift.apps.{{ ocp_cluster_name }}.{{ external_domain }}
+    acl host_ocp_apps hdr_end(host) -i .apps.{{ ocp_cluster_name }}.{{ external_domain }}
+
+    # Route to appropriate backend
+    use_backend quay_backend if host_quay
+    use_backend harbor_backend if host_harbor
+    use_backend jfrog_backend if host_jfrog
+    use_backend aap_backend if host_aap
+    use_backend cockpit_backend if host_cockpit
+    use_backend ocp_ingress_backend if host_ocp_console
+    use_backend ocp_ingress_backend if host_ocp_oauth
+    use_backend ocp_ingress_backend if host_ocp_apps
+
+#---------------------------------------------------------------------
+# OpenShift API Frontend (Port 6443)
+#---------------------------------------------------------------------
+frontend ocp_api_front
+    bind *:6443
+    mode tcp
+    option tcplog
+    default_backend ocp_api_backend
+
+#---------------------------------------------------------------------
+# Service Backends
+#---------------------------------------------------------------------
+backend quay_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /health/instance
+    http-check expect status 200
+    server quay {{ quay_vm_ip }}:{{ quay_vm_port }} check
+
+backend harbor_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /api/v2.0/systeminfo
+    http-check expect status 200
+    server harbor {{ harbor_vm_ip }}:{{ harbor_vm_port }} check ssl verify none
+
+backend jfrog_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /artifactory/api/system/ping
+    http-check expect status 200
+    server jfrog {{ jfrog_vm_ip }}:{{ jfrog_vm_port }} check
+
+backend aap_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /api/v2/ping/
+    http-check expect status 200
+    server aap {{ aap_vm_ip }}:{{ aap_vm_port }} check ssl verify none
+
+backend cockpit_backend
+    mode http
+    balance roundrobin
+    server cockpit 127.0.0.1:9090 check
+
+backend ocp_ingress_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /healthz/ready
+    http-check expect status 200
+    {% for worker_ip in ocp_worker_ips %}
+    server ocp-worker-{{ loop.index0 }} {{ worker_ip }}:443 check ssl verify none
+    {% endfor %}
+
+backend ocp_api_backend
+    mode tcp
+    balance roundrobin
+    option ssl-hello-chk
+    {% for master_ip in ocp_master_ips %}
+    server ocp-master-{{ loop.index0 }} {{ master_ip }}:6443 check
+    {% endfor %}
+
+{% else %}
+#---------------------------------------------------------------------
+# ON-PREMISE MODE: Port-Based Routing (Direct IP Access)
+#---------------------------------------------------------------------
+
+#---------------------------------------------------------------------
+# Quay Registry Frontend (Port {{ quay_external_port }})
+#---------------------------------------------------------------------
+frontend quay_front
+    bind *:{{ quay_external_port }}
+    mode http
+    default_backend quay_backend
+
+backend quay_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /health/instance
+    http-check expect status 200
+    server quay {{ quay_vm_ip }}:{{ quay_vm_port }} check
+
+#---------------------------------------------------------------------
+# Harbor Registry Frontend (Port {{ harbor_external_port }})
+#---------------------------------------------------------------------
+frontend harbor_front
+    bind *:{{ harbor_external_port }} ssl crt /etc/haproxy/certs/selfsigned.pem
+    mode http
+    default_backend harbor_backend
+
+backend harbor_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /api/v2.0/systeminfo
+    http-check expect status 200
+    server harbor {{ harbor_vm_ip }}:{{ harbor_vm_port }} check ssl verify none
+
+#---------------------------------------------------------------------
+# JFrog Artifactory Frontend (Port {{ jfrog_external_port }})
+#---------------------------------------------------------------------
+frontend jfrog_front
+    bind *:{{ jfrog_external_port }} ssl crt /etc/haproxy/certs/selfsigned.pem
+    mode http
+    default_backend jfrog_backend
+
+backend jfrog_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /artifactory/api/system/ping
+    http-check expect status 200
+    server jfrog {{ jfrog_vm_ip }}:{{ jfrog_vm_port }} check
+
+#---------------------------------------------------------------------
+# JFrog Docker Registry Frontend (Port {{ jfrog_docker_external_port }})
+#---------------------------------------------------------------------
+frontend jfrog_docker_front
+    bind *:{{ jfrog_docker_external_port }}
+    mode http
+    default_backend jfrog_docker_backend
+
+backend jfrog_docker_backend
+    mode http
+    balance roundrobin
+    server jfrog {{ jfrog_vm_ip }}:{{ jfrog_docker_port }} check
+
+#---------------------------------------------------------------------
+# AAP Controller Frontend (Port {{ aap_external_port }})
+#---------------------------------------------------------------------
+frontend aap_front
+    bind *:{{ aap_external_port }} ssl crt /etc/haproxy/certs/selfsigned.pem
+    mode http
+    default_backend aap_backend
+
+backend aap_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /api/v2/ping/
+    http-check expect status 200
+    server aap {{ aap_vm_ip }}:{{ aap_vm_port }} check ssl verify none
+
+#---------------------------------------------------------------------
+# OpenShift API Frontend (Port {{ ocp_api_external_port }})
+#---------------------------------------------------------------------
+frontend ocp_api_front
+    bind *:{{ ocp_api_external_port }}
+    mode tcp
+    option tcplog
+    default_backend ocp_api_backend
+
+backend ocp_api_backend
+    mode tcp
+    balance roundrobin
+    option ssl-hello-chk
+    {% for master_ip in ocp_master_ips %}
+    server ocp-master-{{ loop.index0 }} {{ master_ip }}:6443 check
+    {% endfor %}
+
+#---------------------------------------------------------------------
+# OpenShift Console/Apps Frontend (Port {{ ocp_console_external_port }})
+#---------------------------------------------------------------------
+frontend ocp_console_front
+    bind *:{{ ocp_console_external_port }} ssl crt /etc/haproxy/certs/selfsigned.pem
+    mode http
+    default_backend ocp_ingress_backend
+
+backend ocp_ingress_backend
+    mode http
+    balance roundrobin
+    option httpchk GET /healthz/ready
+    http-check expect status 200
+    {% for worker_ip in ocp_worker_ips %}
+    server ocp-worker-{{ loop.index0 }} {{ worker_ip }}:443 check ssl verify none
+    {% endfor %}
+
+#---------------------------------------------------------------------
+# Cockpit Frontend (Port {{ cockpit_external_port }})
+#---------------------------------------------------------------------
+frontend cockpit_front
+    bind *:{{ cockpit_external_port }} ssl crt /etc/haproxy/certs/selfsigned.pem
+    mode http
+    default_backend cockpit_backend
+
+backend cockpit_backend
+    mode http
+    balance roundrobin
+    server cockpit 127.0.0.1:9090 check
+
+{% endif %}
