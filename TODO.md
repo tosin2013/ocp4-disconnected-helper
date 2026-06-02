@@ -136,40 +136,52 @@ Obtain budget approval and procure Red Hat AAP subscription ($5k-15k/year). **If
 
 ---
 
-### ✅ Task 0.4: Headless Libvirt Validation (NEW - BLOCKER)
+### ✅ Task 0.4: Cockpit + Libvirt Setup & Validation (NEW - UPDATED)
 
 **Status**: 🔴 NOT STARTED  
 **Priority**: P0 (BLOCKER for Phase 1)  
 **Owner**: Platform Team  
-**Effort**: 1 day  
+**Effort**: 1 hour (quick setup)  
 **Dependencies**: None (can start immediately)
 
 **Description**:  
-Validate that libvirt VM provisioning works in **headless environment** (no GUI, no X11). Current host has no virt-manager or graphical display.
+Install and validate **Cockpit web console** for libvirt/KVM management on headless server (no X11 needed).
 
-**Critical Constraint**: Server is headless - all VM operations must work via CLI only.
+**Solution**: Use **Cockpit** (proven approach from openshift-agent-install) - provides web-based VM management without requiring desktop GUI.
 
-**Reference**: [Headless VM Validation Plan](docs/HEADLESS_VM_VALIDATION.md) - detailed validation steps.
+**Reference**: [Cockpit + Libvirt Setup Guide](docs/COCKPIT_LIBVIRT_SETUP.md) - comprehensive setup.
+
+**Quick Setup** (15 minutes):
+```bash
+# Install Cockpit + libvirt stack
+ansible-playbook playbooks/setup-dependencies.yml
+
+# Access Cockpit web console
+# Open browser: http://<server-ip>:9090
+# Login with your system credentials
+# Navigate to: Virtual Machines tab
+```
 
 **Validation Steps**:
-1. Install headless libvirt stack (`virsh`, `virt-install`, `qemu-kvm` - NO `virt-manager`)
-2. Create test VM using `virt-install --graphics none --noautoconsole`
-3. Validate `community.libvirt` Ansible collection works headless
-4. Test cloud-init ISO approach
-5. Cleanup test VMs
+1. Install Cockpit + libvirt: `cockpit`, `cockpit-machines`, `libvirt`, `qemu-kvm`
+2. Enable Cockpit: `systemctl enable --now cockpit.socket`
+3. Open firewall: Port 9090/tcp
+4. Access web UI: http://server-ip:9090
+5. Verify "Virtual Machines" tab appears
+6. Run validation playbook
 
 **Success Criteria**:
-- [ ] `virsh` works without X11 display
-- [ ] `virt-install --graphics none` creates VM successfully
-- [ ] `community.libvirt.virt` module works headless
-- [ ] Cloud-init ISO approach validated
-- [ ] Test VM accessible via SSH (not GUI console)
+- [ ] Cockpit accessible at http://server-ip:9090
+- [ ] Virtual Machines tab shows in Cockpit
+- [ ] `virsh list --all` works
+- [ ] `community.libvirt.virt` module works
+- [ ] Can create test VM via Cockpit GUI or Ansible CLI
 
 **🎯 GO/NO-GO Decision**:
-- ✅ **GO**: Headless approach works → Proceed to Phase 1
-- ❌ **NO-GO**: Headless fails → Investigate alternative (keep kcli, or adjust ADR 0023)
+- ✅ **GO**: Cockpit + libvirt works → Proceed to Phase 1
+- ❌ **NO-GO**: Setup fails → Investigate (very unlikely, proven approach)
 
-**Execute**: Follow [HEADLESS_VM_VALIDATION.md](docs/HEADLESS_VM_VALIDATION.md)
+**Execute**: Follow [COCKPIT_LIBVIRT_SETUP.md](docs/COCKPIT_LIBVIRT_SETUP.md)
 
 **Rollback**: If validation fails, remove ADR 0023 from v4.21.0 scope (keep kcli for VMs)
 
