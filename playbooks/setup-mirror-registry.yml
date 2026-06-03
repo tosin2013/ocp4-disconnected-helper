@@ -60,6 +60,13 @@
     # =========================================================================
     # System Configuration (Qubinode Patterns)
     # =========================================================================
+    # These tasks implement proven workarounds from Qubinode deployment scripts
+    # for rootless podman container deployment. Without these configurations,
+    # mirror-registry containers may fail to start or function properly.
+    #
+    # Reference: https://github.com/Qubinode/qubinode-pipelines/blob/main/mirror-registry/configure-quay.sh
+    # Documentation: docs/MIRROR_REGISTRY_DEPLOYMENT.md
+    # =========================================================================
     - name: Configure system for rootless podman (Qubinode patterns)
       block:
         - name: Install required packages
@@ -75,6 +82,9 @@
               - sshpass
             state: present
 
+        # CRITICAL: setuid permissions required for user namespace mapping
+        # Without this, rootless containers cannot map UIDs/GIDs properly
+        # Qubinode pattern: chmod 4755 /usr/bin/new{uid,gid}map
         - name: Set permissions on newgidmap/newuidmap for rootless podman
           ansible.builtin.file:
             path: "{{ item }}"
@@ -83,6 +93,10 @@
             - /usr/bin/newgidmap
             - /usr/bin/newuidmap
 
+        # Sysctl settings for rootless container networking
+        # - ip_unprivileged_port_start=0: Allows binding to port 8443 without root
+        # - ping_group_range: Enables ICMP in rootless containers
+        # Qubinode pattern: net.ipv4.ping_group_range=0 2000000
         - name: Configure sysctl for rootless containers
           ansible.posix.sysctl:
             name: "{{ item.name }}"
@@ -93,6 +107,10 @@
             - { name: 'net.ipv4.ping_group_range', value: '0 2000000' }
             - { name: 'net.ipv4.ip_unprivileged_port_start', value: '0' }
 
+        # XDG_RUNTIME_DIR configuration for podman runtime state
+        # Podman stores container runtime state in XDG_RUNTIME_DIR
+        # Without this, containers may fail to start with "runtime state not found" errors
+        # Qubinode pattern: export XDG_RUNTIME_DIR="$HOME/.run/containers" in /etc/profile.d/
         - name: Create XDG runtime directory profile script
           ansible.builtin.copy:
             content: |
