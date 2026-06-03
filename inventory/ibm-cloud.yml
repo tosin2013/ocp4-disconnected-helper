@@ -98,6 +98,14 @@ all:
       ansible_user: "root"
       ansible_connection: "local"  # Running playbook ON the KVM host
 
+  children:
+    registry_vms:
+      hosts:
+        registry:
+          ansible_host: "192.168.122.26"
+          ansible_user: "root"
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
 # ============================================================
 # DNS RECORDS REQUIRED (Point to {{ external_ip }})
 # ============================================================

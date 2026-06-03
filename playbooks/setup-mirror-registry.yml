@@ -58,6 +58,57 @@
     
   tasks:
     # =========================================================================
+    # System Configuration (Qubinode Patterns)
+    # =========================================================================
+    - name: Configure system for rootless podman (Qubinode patterns)
+      block:
+        - name: Install required packages
+          ansible.builtin.dnf:
+            name:
+              - podman
+              - skopeo
+              - buildah
+              - httpd-tools
+              - openssl
+              - firewalld
+              - acl
+              - sshpass
+            state: present
+
+        - name: Set permissions on newgidmap/newuidmap for rootless podman
+          ansible.builtin.file:
+            path: "{{ item }}"
+            mode: '4755'
+          loop:
+            - /usr/bin/newgidmap
+            - /usr/bin/newuidmap
+
+        - name: Configure sysctl for rootless containers
+          ansible.posix.sysctl:
+            name: "{{ item.name }}"
+            value: "{{ item.value }}"
+            state: present
+            reload: yes
+          loop:
+            - { name: 'net.ipv4.ping_group_range', value: '0 2000000' }
+            - { name: 'net.ipv4.ip_unprivileged_port_start', value: '0' }
+
+        - name: Create XDG runtime directory profile script
+          ansible.builtin.copy:
+            content: |
+              export XDG_RUNTIME_DIR="$HOME/.run/containers"
+            dest: /etc/profile.d/xdg_runtime_dir.sh
+            mode: '0644'
+
+        - name: Create XDG runtime directory for target user
+          ansible.builtin.file:
+            path: "{{ ansible_env.HOME }}/.run/containers"
+            state: directory
+            mode: '0700'
+            owner: "{{ ansible_user_id }}"
+            group: "{{ ansible_user_gid }}"
+
+    # =========================================================================
     # Prerequisites Check
     # =========================================================================
     - name: Check prerequisites
@@ -199,7 +250,6 @@
               {{ mirror_registry_install_dir }}/mirror-registry install
               --quayHostname {{ mirror_registry_hostname }}
               --quayRoot {{ mirror_registry_data_dir }}
-              --initUser {{ mirror_registry_user }}
               --initPassword {{ mirror_registry_password }}
           when: not use_custom_certs
 
@@ -209,7 +259,6 @@
               {{ mirror_registry_install_dir }}/mirror-registry install
               --quayHostname {{ mirror_registry_hostname }}
               --quayRoot {{ mirror_registry_data_dir }}
-              --initUser {{ mirror_registry_user }}
               --initPassword {{ mirror_registry_password }}
               --sslCert {{ custom_cert_path }}
               --sslKey {{ custom_key_path }}
@@ -232,9 +281,59 @@
             msg: "{{ install_result.stdout_lines }}"
 
     # =========================================================================
+    # Post-Installation Validation (Enhanced with Qubinode patterns)
+    # =========================================================================
+    - name: Comprehensive post-installation validation
+      block:
+        - name: Wait for Quay containers to start
+          ansible.builtin.pause:
+            seconds: 15
+            prompt: "Waiting for mirror-registry containers to initialize..."
+
+        - name: Verify all required containers are running
+          ansible.builtin.shell: |
+            podman ps --format "{{ '{{' }}.Names{{ '}}' }}" | grep -E "^quay-"
+          register: quay_containers
+          changed_when: false
+          retries: 10
+          delay: 10
+          until: quay_containers.stdout_lines | length >= 3
+
+        - name: Display running containers
+          ansible.builtin.debug:
+            msg: "Running containers: {{ quay_containers.stdout_lines }}"
+
+        - name: Check quay-app container status
+          ansible.builtin.shell: |
+            podman ps --filter "name=quay-app" --format "{{ '{{' }}.Status{{ '}}' }}"
+          register: quay_app_status
+          changed_when: false
+
+        - name: Check quay-redis container status
+          ansible.builtin.shell: |
+            podman ps --filter "name=quay-redis" --format "{{ '{{' }}.Status{{ '}}' }}"
+          register: quay_redis_status
+          changed_when: false
+
+        - name: Check quay-postgres container status
+          ansible.builtin.shell: |
+            podman ps --filter "name=quay-postgres" --format "{{ '{{' }}.Status{{ '}}' }}"
+          register: quay_postgres_status
+          changed_when: false
+
+        - name: Verify no containers are restarting
+          ansible.builtin.fail:
+            msg: "Container {{ item.name }} is unhealthy: {{ item.status }}"
+          when: "'Restarting' in item.status or 'Exited' in item.status"
+          loop:
+            - { name: 'quay-app', status: "{{ quay_app_status.stdout }}" }
+            - { name: 'quay-redis', status: "{{ quay_redis_status.stdout }}" }
+            - { name: 'quay-postgres', status: "{{ quay_postgres_status.stdout }}" }
+
+    # =========================================================================
     # Post-Installation Configuration
     # =========================================================================
-    - name: Wait for registry to be ready
+    - name: Wait for registry API to be ready
       ansible.builtin.uri:
         url: "https://{{ mirror_registry_hostname }}:{{ mirror_registry_port }}/health/instance"
         validate_certs: false
