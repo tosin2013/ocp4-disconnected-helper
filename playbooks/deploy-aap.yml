@@ -23,15 +23,17 @@
     aap_pg_password: "{{ lookup('env', 'AAP_PG_PASSWORD') | default('RedHat123!', true) }}"
 
     # =========================================================================
-    # Red Hat Subscription Configuration
+    # Red Hat Subscription Configuration (ADR 0027)
     # =========================================================================
-    # Option 1: Username/Password
+    # PREFERRED: Activation Key (loaded from vault file)
+    # Usage: -e @extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
+    #
+    # rhsm_org_id and rhsm_activationkey should be defined in vault file
+    # See: extra_vars/rhel-subscription-secrets.yml.example
+    #
+    # FALLBACK: Environment variables (not recommended, use activation keys)
     rhsm_username: "{{ lookup('env', 'RHSM_USERNAME') | default('', true) }}"
     rhsm_password: "{{ lookup('env', 'RHSM_PASSWORD') | default('', true) }}"
-
-    # Option 2: Activation Key (recommended for automation)
-    rhsm_org_id: "{{ lookup('env', 'RHSM_ORG_ID') | default('', true) }}"
-    rhsm_activationkey: "{{ lookup('env', 'RHSM_ACTIVATIONKEY') | default('', true) }}"
 
     # =========================================================================
     # AAP Inventory Configuration (All-in-One Single Node)
@@ -110,21 +112,27 @@
         msg: |
           System is not registered with Red Hat.
 
-          Please set one of the following:
+          RECOMMENDED: Use Activation Key (ADR 0027)
 
-          Option 1: Username/Password
-            export RHSM_USERNAME='your-username'
-            export RHSM_PASSWORD='your-password'
+          1. Create activation key: https://access.redhat.com/management/activation_keys
+          2. Copy template: cp extra_vars/rhel-subscription-secrets.yml.example extra_vars/rhel-subscription-secrets.yml
+          3. Fill in your values
+          4. Encrypt: ansible-vault encrypt extra_vars/rhel-subscription-secrets.yml
+          5. Re-run playbook:
+             ansible-playbook -i inventory/ibm-cloud.yml playbooks/deploy-aap.yml \
+               --vault-password-file ~/.vault_pass \
+               -e @extra_vars/rhel-subscription-secrets.yml
 
-          Option 2: Activation Key (recommended)
-            export RHSM_ORG_ID='your-org-id'
-            export RHSM_ACTIVATIONKEY='your-activation-key'
+          FALLBACK: Environment Variables (not recommended)
+
+          export RHSM_ORG_ID='your-org-id'
+          export RHSM_ACTIVATIONKEY='your-activation-key'
 
           Then re-run the playbook.
       when:
         - "'Overall Status: Current' not in subscription_status.stdout"
-        - rhsm_username == '' or rhsm_password == ''
-        - rhsm_org_id == '' or rhsm_activationkey == ''
+        - (rhsm_org_id is not defined or rhsm_activationkey is not defined)
+        - (rhsm_username == '' or rhsm_password == '')
 
     # =========================================================================
     # Enable Required Repositories

@@ -79,6 +79,11 @@ ansible-playbook playbooks/setup-harbor-registry.yml \
 harbor_admin_password: "CHANGE_ME"
 jfrog_admin_token: "CHANGE_ME"
 pull_secret_path: "/path/to/pull-secret.json"
+
+# extra_vars/rhel-subscription-secrets.yml.example (See ADR 0027)
+rhsm_org_id: "YOUR_ORG_ID"
+rhsm_activationkey: "YOUR_ACTIVATION_KEY"
+aap_admin_password: "CHANGE_ME"
 ```
 
 ## Migration Path
@@ -92,3 +97,4 @@ pull_secret_path: "/path/to/pull-secret.json"
 ## Related ADRs
 - ADR 0004: Dual Registry Support
 - ADR 0008: GitHub Actions Automation
+- ADR 0027: RHEL Subscription Activation Keys (Red Hat credentials)
