@@ -1,0 +1,201 @@
+---
+# Deploy Ansible Automation Platform 2.6 Containerized
+# End-to-end: Register RHEL → Download AAP → Install AAP
+# Uses: infra.aap_utilities collection
+
+- name: Deploy AAP 2.6 Containerized (End-to-End)
+  hosts: aap-vm
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # =========================================================================
+    # AAP Installation Configuration
+    # =========================================================================
+    aap_version: "2.6"
+    aap_setup_containerized: true
+    aap_setup_rhel_version: 9
+    aap_setup_down_type: "setup"  # 'setup' = online installer, 'setup-bundle' = offline
+    aap_setup_working_dir: "/home/ansible/aap"
+
+    # Admin credentials
+    aap_admin_password: "{{ lookup('env', 'AAP_ADMIN_PASSWORD') | default('RedHat123!', true) }}"
+    aap_pg_password: "{{ lookup('env', 'AAP_PG_PASSWORD') | default('RedHat123!', true) }}"
+
+    # =========================================================================
+    # Red Hat Subscription Configuration
+    # =========================================================================
+    # Option 1: Username/Password
+    rhsm_username: "{{ lookup('env', 'RHSM_USERNAME') | default('', true) }}"
+    rhsm_password: "{{ lookup('env', 'RHSM_PASSWORD') | default('', true) }}"
+
+    # Option 2: Activation Key (recommended for automation)
+    rhsm_org_id: "{{ lookup('env', 'RHSM_ORG_ID') | default('', true) }}"
+    rhsm_activationkey: "{{ lookup('env', 'RHSM_ACTIVATIONKEY') | default('', true) }}"
+
+    # =========================================================================
+    # AAP Inventory Configuration (All-in-One Single Node)
+    # =========================================================================
+    aap_setup_prep_inv_nodes:
+      automationcontroller:
+        "{{ ansible_fqdn }}":  # Use VM's FQDN
+
+    aap_setup_prep_inv_vars:
+      all:
+        # Admin credentials
+        admin_password: "{{ aap_admin_password }}"
+        pg_password: "{{ aap_pg_password }}"
+
+        # Containerized installation settings
+        postgresql_admin_username: postgres
+        postgresql_admin_password: "{{ aap_pg_password }}"
+
+        # Bundle container images path (for offline install)
+        # bundle_install: false  # Set to true if using setup-bundle
+
+        # Registry settings (optional - for disconnected environments)
+        # registry_url: registry.ocp4.sandbox3377.opentlc.com
+        # registry_username: init
+        # registry_password: changeme
+
+  pre_tasks:
+    # =========================================================================
+    # System Information
+    # =========================================================================
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - "Deploying AAP {{ aap_version }} Containerized"
+          - "════════════════════════════════════════════════════════════════"
+          - "Target Host: {{ ansible_fqdn }} ({{ ansible_default_ipv4.address }})"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Installer Type: {{ 'Offline Bundle' if aap_setup_down_type == 'setup-bundle' else 'Online' }}"
+          - "Working Directory: {{ aap_setup_working_dir }}"
+
+    # =========================================================================
+    # Red Hat Subscription Management
+    # =========================================================================
+    - name: Check subscription status
+      ansible.builtin.command: subscription-manager status
+      register: subscription_status
+      failed_when: false
+      changed_when: false
+
+    - name: Register with Red Hat (username/password)
+      community.general.redhat_subscription:
+        state: present
+        username: "{{ rhsm_username }}"
+        password: "{{ rhsm_password }}"
+        auto_attach: true
+      when:
+        - "'Overall Status: Current' not in subscription_status.stdout"
+        - rhsm_username != ''
+        - rhsm_password != ''
+      no_log: true
+
+    - name: Register with Red Hat (activation key)
+      community.general.redhat_subscription:
+        state: present
+        org_id: "{{ rhsm_org_id }}"
+        activationkey: "{{ rhsm_activationkey }}"
+      when:
+        - "'Overall Status: Current' not in subscription_status.stdout"
+        - rhsm_org_id != ''
+        - rhsm_activationkey != ''
+      no_log: true
+
+    - name: Fail if not registered and no credentials provided
+      ansible.builtin.fail:
+        msg: |
+          System is not registered with Red Hat.
+
+          Please set one of the following:
+
+          Option 1: Username/Password
+            export RHSM_USERNAME='your-username'
+            export RHSM_PASSWORD='your-password'
+
+          Option 2: Activation Key (recommended)
+            export RHSM_ORG_ID='your-org-id'
+            export RHSM_ACTIVATIONKEY='your-activation-key'
+
+          Then re-run the playbook.
+      when:
+        - "'Overall Status: Current' not in subscription_status.stdout"
+        - rhsm_username == '' or rhsm_password == ''
+        - rhsm_org_id == '' or rhsm_activationkey == ''
+
+    # =========================================================================
+    # Enable Required Repositories
+    # =========================================================================
+    - name: Enable required RHEL 9 repositories
+      community.general.rhsm_repository:
+        name:
+          - rhel-9-for-x86_64-baseos-rpms
+          - rhel-9-for-x86_64-appstream-rpms
+          - ansible-automation-platform-2.6-for-rhel-9-x86_64-rpms
+        state: enabled
+
+    # =========================================================================
+    # Install Prerequisites
+    # =========================================================================
+    - name: Install AAP prerequisites
+      ansible.builtin.dnf:
+        name:
+          - ansible-core
+          - podman
+          - python3
+          - python3-pip
+          - git
+          - wget
+          - curl
+        state: present
+        update_cache: yes
+
+    - name: Create working directory
+      ansible.builtin.file:
+        path: "{{ aap_setup_working_dir }}"
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: '0755'
+
+  roles:
+    # =========================================================================
+    # AAP Installation Roles (from infra.aap_utilities collection)
+    # =========================================================================
+    - role: infra.aap_utilities.aap_setup_download
+      when: aap_setup_down_type != 'setup-bundle'  # Skip if using offline bundle
+
+    - role: infra.aap_utilities.aap_setup_prepare
+
+    - role: infra.aap_utilities.aap_setup_install
+
+  post_tasks:
+    # =========================================================================
+    # Installation Summary
+    # =========================================================================
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - "✅ AAP {{ aap_version }} Installation Complete!"
+          - "════════════════════════════════════════════════════════════════"
+          - ""
+          - "Access AAP Web UI:"
+          - "  URL: https://{{ ansible_fqdn }}"
+          - "  Username: admin"
+          - "  Password: {{ aap_admin_password }}"
+          - ""
+          - "SSH Access:"
+          - "  ssh ansible@{{ ansible_default_ipv4.address }}"
+          - ""
+          - "Container Services:"
+          - "  podman ps  # View running containers"
+          - "  systemctl status automation-controller  # Check service status"
+          - ""
+          - "Documentation:"
+          - "  Local: docs/AAP_DEPLOYMENT_GUIDE.md"
+          - "  Red Hat: https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/"
+          - ""

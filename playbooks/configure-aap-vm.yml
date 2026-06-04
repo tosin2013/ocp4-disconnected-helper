@@ -1,0 +1,151 @@
+---
+# Configure AAP VM and prepare for AAP 2.6 installation
+# Assumes: AAP VM provisioned and accessible in inventory
+
+- name: Configure AAP VM for AAP 2.6 Installation
+  hosts: aap-vm
+  become: yes
+  vars:
+    aap_install_dir: "/home/ansible/aap"
+
+  tasks:
+    # =========================================================================
+    # System Information
+    # =========================================================================
+    - name: Display system information
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ansible_fqdn }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - "User: {{ ansible_user_id }}"
+
+    # =========================================================================
+    # Subscription Status Check
+    # =========================================================================
+    - name: Check subscription status
+      ansible.builtin.command: subscription-manager status
+      register: subscription_status
+      failed_when: false
+      changed_when: false
+
+    - name: Display subscription status
+      ansible.builtin.debug:
+        msg: "{{ subscription_status.stdout_lines }}"
+
+    - name: Display registration instructions if not registered
+      ansible.builtin.debug:
+        msg:
+          - "⚠️  System is NOT registered with Red Hat"
+          - ""
+          - "To register manually:"
+          - "  ssh {{ ansible_user }}@{{ ansible_host }}"
+          - "  sudo subscription-manager register --username <user> --password <pass>"
+          - "  sudo subscription-manager attach --auto"
+          - ""
+          - "Or set environment variables and re-run:"
+          - "  export RHSM_USERNAME='your-username'"
+          - "  export RHSM_PASSWORD='your-password'"
+      when: "'Overall Status: Current' not in subscription_status.stdout"
+
+    - name: Pause for manual registration if needed
+      ansible.builtin.pause:
+        prompt: |
+
+          Press Ctrl+C then A to abort and register manually,
+          or Enter to continue (will skip subscription-dependent tasks)
+      when: "'Overall Status: Current' not in subscription_status.stdout"
+
+    # =========================================================================
+    # Enable Required Repositories (if registered)
+    # =========================================================================
+    - name: Enable required RHEL 9 repositories
+      community.general.rhsm_repository:
+        name:
+          - rhel-9-for-x86_64-baseos-rpms
+          - rhel-9-for-x86_64-appstream-rpms
+          - ansible-automation-platform-2.6-for-rhel-9-x86_64-rpms
+        state: enabled
+      when: "'Overall Status: Current' in subscription_status.stdout"
+
+    # =========================================================================
+    # Install Base Packages
+    # =========================================================================
+    - name: Install base packages (available without subscription)
+      ansible.builtin.dnf:
+        name:
+          - wget
+          - curl
+          - tar
+          - git
+        state: present
+      register: base_packages
+      failed_when: false
+
+    - name: Install AAP prerequisites (requires subscription)
+      ansible.builtin.dnf:
+        name:
+          - podman
+          - podman-docker
+          - python3
+          - python3-pip
+          - postgresql
+          - firewalld
+        state: present
+      when: "'Overall Status: Current' in subscription_status.stdout"
+      register: aap_packages
+
+    - name: Display package installation status
+      ansible.builtin.debug:
+        msg:
+          - "Base packages: {{ 'Installed' if base_packages.changed else 'Already present or failed' }}"
+          - "AAP packages: {{ 'Installed' if aap_packages.changed | default(false) else 'Skipped (no subscription)' }}"
+
+    # =========================================================================
+    # Create Installation Directory
+    # =========================================================================
+    - name: Create AAP installation directory
+      ansible.builtin.file:
+        path: "{{ aap_install_dir }}"
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: '0755'
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - "✅ AAP VM Configuration Complete"
+          - "════════════════════════════════════════════════════════════════"
+          - ""
+          - "VM Details:"
+          - "  Hostname: {{ ansible_fqdn }}"
+          - "  IP: {{ ansible_default_ipv4.address }}"
+          - "  User: ansible"
+          - "  Install Dir: {{ aap_install_dir }}"
+          - ""
+          - "Subscription Status: {{ 'Registered ✅' if 'Overall Status: Current' in subscription_status.stdout else 'NOT Registered ⚠️' }}"
+          - ""
+          - "Next Steps:"
+          - ""
+          - "1. Download AAP 2.6 containerized installer:"
+          - "   https://access.redhat.com/downloads/content/480"
+          - "   Select: Ansible Automation Platform 2.6 → Containerized installer"
+          - ""
+          - "2. Upload installer to VM:"
+          - "   scp ansible-automation-platform-containerized-setup-*.tar.gz ansible@{{ ansible_default_ipv4.address }}:{{ aap_install_dir }}/"
+          - ""
+          - "3. SSH to VM and install:"
+          - "   ssh ansible@{{ ansible_default_ipv4.address }}"
+          - "   cd {{ aap_install_dir }}"
+          - "   tar -xzf ansible-automation-platform-containerized-setup-*.tar.gz"
+          - "   cd ansible-automation-platform-containerized-setup-*/"
+          - "   vi inventory  # Configure installation"
+          - "   ./setup.sh"
+          - ""
+          - "Documentation: docs/AAP_DEPLOYMENT_GUIDE.md"
+          - ""

@@ -129,6 +129,13 @@ all:
       ansible_connection: "local"  # Running playbook ON the KVM host
 
   children:
+    aap_vms:
+      hosts:
+        aap-vm:
+          ansible_host: "192.168.122.72"  # KVM virbr0 network (DHCP)
+          ansible_user: "ansible"  # Cloud-init user
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
     registry_vms:
       hosts:
         registry:
