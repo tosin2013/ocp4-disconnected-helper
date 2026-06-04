@@ -175,6 +175,40 @@ The playbooks handle:
 - Proper error handling and logging
 - State management
 
+### Operational Constraints
+
+#### Ansible Async Cache Management
+
+**Problem**: Ansible's async mechanism (`async: 14400, poll: 30`) creates persistent cache files at `/root/.ansible_async/` or `~/.ansible_async/` that survive across playbook runs. If a previous oc-mirror execution failed, the cached failure will be returned on subsequent runs instead of executing fresh.
+
+**Detection Pattern**:
+- Cached failures return in <5 seconds
+- Real oc-mirror runs take 1-60 minutes depending on image count
+- Error messages may be misleading (e.g., "port 55000 already bound" when port is actually free)
+
+**Constraints**:
+1. **Async cache must be cleared after failed oc-mirror runs**
+   - Location: `/root/.ansible_async/*` (when using `become: true`)
+   - Location: `~/.ansible_async/*` (when running as non-root)
+
+2. **Playbooks must implement preflight validation**
+   - Check for stale async cache files (>1 day old)
+   - Warn operators before execution
+   - Provide clear cleanup instructions
+
+3. **Playbooks must implement cleanup handlers**
+   - On failure: Remove the failed job's async cache file
+   - On success: Optional cleanup (cache entries don't harm successful runs)
+
+**Implementation Status**: 
+- Preflight validation: ✅ Implemented in `playbooks/download-to-disk-v2.yml` v1.1
+- Cleanup handlers: ✅ Implemented in `playbooks/download-to-disk-v2.yml` v1.1
+- Documentation: ✅ Updated in CLAUDE.md and TROUBLESHOOTING.md
+
+**References**:
+- Incident: PMB tag `hardening, v1.0`
+- Hardening Report: `docs/hardening/oc-mirror-async-cache-v1.0-2026-06-04.md`
+
 ## Related ADRs
 - ADR 0002: Ansible Automation Framework
 - ADR 0004: Dual Registry Support

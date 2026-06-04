@@ -98,6 +98,27 @@ Production (Bare Metal):
 ⚠️ MISMATCH: Different tools for VM provisioning vs bare metal setup
 ```
 
+### Constraints
+
+#### Long-Running Operations
+
+**Context**: oc-mirror downloads can take 15-60 minutes for large image sets. Ansible async is required to prevent playbook timeout.
+
+**Async Cache Persistence**: 
+- Ansible async creates cache files that persist indefinitely
+- Stale cache from failed runs can cause misleading errors
+- Operators must clear cache after failures: `sudo rm -rf /root/.ansible_async/*`
+
+**Best Practices**:
+1. Implement preflight checks for stale async cache
+2. Add rescue blocks to cleanup async cache on failure
+3. Document cache locations in troubleshooting guides
+4. Educate operators on cache cleanup procedures
+
+**See Also**: ADR 0003 "Operational Constraints > Ansible Async Cache Management"
+
+**Implementation Reference**: `playbooks/download-to-disk-v2.yml` v1.1+ includes preflight validation and auto-cleanup rescue blocks.
+
 **After (Ansible everywhere):**
 ```
 Development (KVM):
