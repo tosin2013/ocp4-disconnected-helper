@@ -17,10 +17,15 @@
     aap_setup_rhel_version: 9
     aap_setup_down_type: "setup"  # 'setup' = online installer, 'setup-bundle' = offline
     aap_setup_working_dir: "/home/ansible/aap"
+    aap_setup_inst_force: true  # Force installation (skip health check - workaround for collection bug)
+
+    # Red Hat API offline token (required for installer download)
+    # Generate at: https://access.redhat.com/management/api/
+    aap_setup_down_offline_token: "{{ aap_setup_down_offline_token | default(lookup('env', 'AAP_OFFLINE_TOKEN'), true) }}"
 
     # Admin credentials
-    aap_admin_password: "{{ lookup('env', 'AAP_ADMIN_PASSWORD') | default('RedHat123!', true) }}"
-    aap_pg_password: "{{ lookup('env', 'AAP_PG_PASSWORD') | default('RedHat123!', true) }}"
+    aap_admin_password: "{{ aap_admin_password | default(lookup('env', 'AAP_ADMIN_PASSWORD'), true) | default('RedHat123!', true) }}"
+    aap_pg_password: "{{ aap_pg_password | default(lookup('env', 'AAP_PG_PASSWORD'), true) | default('RedHat123!', true) }}"
 
     # =========================================================================
     # Red Hat Subscription Configuration (ADR 0027)
@@ -40,7 +45,7 @@
     # =========================================================================
     aap_setup_prep_inv_nodes:
       automationcontroller:
-        "{{ ansible_fqdn }}":  # Use VM's FQDN
+        "{{ inventory_hostname }}":  # Use inventory hostname (resolved at runtime)
 
     aap_setup_prep_inv_vars:
       all:
@@ -52,13 +57,13 @@
         postgresql_admin_username: postgres
         postgresql_admin_password: "{{ aap_pg_password }}"
 
+        # Red Hat registry authentication (for pulling AAP container images)
+        # Note: Requires Red Hat registry service account or pull secret
+        # For now, disable registry auth - installer will use subscription credentials
+        registry_auth: false
+
         # Bundle container images path (for offline install)
         # bundle_install: false  # Set to true if using setup-bundle
-
-        # Registry settings (optional - for disconnected environments)
-        # registry_url: registry.ocp4.sandbox3377.opentlc.com
-        # registry_username: init
-        # registry_password: changeme
 
   pre_tasks:
     # =========================================================================
