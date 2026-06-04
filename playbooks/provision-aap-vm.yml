@@ -1,0 +1,566 @@
+---
+# Provision AAP VM using community.libvirt
+# ADR Reference: ADR 0021 - Deprecate Airflow and Adopt AAP
+#                ADR 0026 - Use RHEL 9 Base Image for AAP
+#
+# This playbook creates a dedicated VM for hosting Red Hat Ansible Automation
+# Platform (AAP) 2.5 containerized installation.
+#
+# Prerequisites:
+#   - community.libvirt collection installed
+#   - libvirt/KVM running
+#   - RHEL 9 KVM Guest Image available (requires Red Hat subscription)
+#   - xorriso installed (for cloud-init ISO)
+#
+# RHEL 9 Image Download:
+#   1. Login to Red Hat Customer Portal: https://access.redhat.com/downloads/content/rhel
+#   2. Download: Red Hat Enterprise Linux 9.X KVM Guest Image (qcow2)
+#   3. Place at: /var/lib/libvirt/images/rhel9-kvm-guest.qcow2
+#
+#   Or set in inventory:
+#     rhel9_kvm_guest_image_url: "https://..."  # With credentials
+#
+# Usage:
+#   # Create AAP VM with defaults (requires RHEL image)
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/provision-aap-vm.yml
+#
+#   # Delete AAP VM
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/provision-aap-vm.yml \
+#       -e "vm_action=delete"
+
+- name: Provision AAP VM with community.libvirt
+  hosts: localhost
+  gather_facts: yes
+  become: no
+
+  vars:
+    # Get the actual user running the playbook
+    actual_user: "{{ lookup('env', 'USER') }}"
+    actual_home: "{{ lookup('env', 'HOME') }}"
+
+    # VM Configuration
+    vm_name: "aap-vm"
+    vm_hostname: "aap"
+    vm_domain: "{{ ocp_cluster_name }}.{{ external_domain | default('disconnected.local') }}"
+    vm_fqdn: "{{ vm_hostname }}.{{ vm_domain }}"
+    vm_user: "ansible"
+
+    # VM Resources (AAP requirements: 16GB RAM, 4 vCPU, 60GB disk)
+    vm_memory: 16384         # 16GB RAM (AAP minimum)
+    vm_cpus: 4
+    vm_disk_size: 60         # 60GB for AAP installation
+    vm_network: "default"
+
+    # Static IP (matches Task #2 from plan)
+    vm_ip: "192.168.122.30"
+
+    # Base image and paths
+    # IMPORTANT: AAP 2.5 requires RHEL 9.2+ (not CentOS Stream)
+    # Download from: https://access.redhat.com/downloads/content/rhel
+    # ADR 0026: Use RHEL 9 Base Image for AAP
+    base_image_url: "{{ rhel9_kvm_guest_image_url | default('') }}"
+    base_image_path: "/var/lib/libvirt/images/rhel9-kvm-guest.qcow2"
+    vm_disk: "/var/lib/libvirt/images/{{ vm_name }}.qcow2"
+    cloud_init_iso: "/var/lib/libvirt/images/{{ vm_name }}-cloud-init.iso"
+
+    # SSH key for access
+    ssh_public_key: "{{ lookup('file', actual_home + '/.ssh/id_rsa.pub', errors='warn') | default('') }}"
+    ssh_private_key: "{{ actual_home }}/.ssh/id_rsa"
+
+    # Action: create, delete, info
+    vm_action: "create"
+
+    # Wait timeout
+    vm_wait_timeout: 600
+
+  tasks:
+    # =========================================================================
+    # Prerequisites Check
+    # =========================================================================
+    - name: Check if community.libvirt collection is installed
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection list community.libvirt
+      register: libvirt_collection
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if community.libvirt not installed
+      ansible.builtin.fail:
+        msg: |
+          community.libvirt collection not found!
+          Install with: ansible-galaxy collection install community.libvirt
+      when: libvirt_collection.rc != 0
+
+    - name: Check if xorriso is installed
+      ansible.builtin.command:
+        cmd: which xorriso
+      register: xorriso_check
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if xorriso not installed
+      ansible.builtin.fail:
+        msg: |
+          xorriso not found!
+          Install with: dnf install -y xorriso
+      when: xorriso_check.rc != 0
+
+    - name: Verify SSH public key exists
+      ansible.builtin.fail:
+        msg: |
+          SSH public key not found at ~/.ssh/id_rsa.pub
+          Generate one with: ssh-keygen -t rsa -b 4096
+      when: ssh_public_key == ''
+
+    # =========================================================================
+    # Delete VM (if requested)
+    # =========================================================================
+    - name: Delete AAP VM
+      when: vm_action == "delete"
+      become: yes
+      block:
+        - name: Check if VM exists
+          community.libvirt.virt:
+            command: list_vms
+          register: all_vms
+
+        - name: Destroy VM if running
+          community.libvirt.virt:
+            name: "{{ vm_name }}"
+            state: destroyed
+          when: vm_name in all_vms.list_vms
+          ignore_errors: yes
+
+        - name: Undefine VM
+          community.libvirt.virt:
+            name: "{{ vm_name }}"
+            command: undefine
+          when: vm_name in all_vms.list_vms
+          ignore_errors: yes
+
+        - name: Delete VM disk
+          ansible.builtin.file:
+            path: "{{ vm_disk }}"
+            state: absent
+
+        - name: Delete cloud-init ISO
+          ansible.builtin.file:
+            path: "{{ cloud_init_iso }}"
+            state: absent
+
+        - name: Display delete result
+          ansible.builtin.debug:
+            msg: "✅ VM {{ vm_name }} deleted"
+          when: vm_name in all_vms.list_vms
+
+        - name: End play after delete
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Get VM Info (if requested)
+    # =========================================================================
+    - name: Get VM info
+      when: vm_action == "info"
+      block:
+        - name: Check if VM exists
+          community.libvirt.virt:
+            command: list_vms
+          register: all_vms
+
+        - name: Get VM info
+          community.libvirt.virt:
+            command: info
+          register: vm_info
+          when: vm_name in all_vms.list_vms
+
+        - name: Display VM info
+          ansible.builtin.debug:
+            var: vm_info
+          when: vm_name in all_vms.list_vms
+
+        - name: End play after info
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Check if VM Already Exists (Idempotency)
+    # =========================================================================
+    - name: Check if VM already exists
+      community.libvirt.virt:
+        command: list_vms
+      register: existing_vms
+      become: yes
+
+    - name: VM already exists
+      when: vm_name in existing_vms.list_vms
+      block:
+        - name: Display existing VM message
+          ansible.builtin.debug:
+            msg:
+              - "✅ VM {{ vm_name }} already exists (idempotent - no changes made)"
+              - "Expected IP: {{ vm_ip }}"
+              - ""
+              - "To recreate, first delete:"
+              - "  ansible-playbook provision-aap-vm.yml -e 'vm_action=delete'"
+              - ""
+              - "To view info:"
+              - "  virsh dominfo {{ vm_name }}"
+
+        - name: End play if VM exists
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Download Base Image
+    # =========================================================================
+    - name: Check if base image exists
+      ansible.builtin.stat:
+        path: "{{ base_image_path }}"
+      register: base_image_stat
+      become: yes
+
+    - name: Check if RHEL 9 image URL is configured
+      ansible.builtin.fail:
+        msg: |
+          ❌ RHEL 9 KVM Guest Image required but not found!
+
+          AAP 2.5 requires RHEL 9.2+ (ADR 0026). CentOS Stream is not supported.
+
+          Download RHEL 9 KVM Guest Image:
+            1. Login to Red Hat Customer Portal: https://access.redhat.com/downloads/content/rhel
+            2. Download: Red Hat Enterprise Linux 9.X KVM Guest Image (qcow2)
+            3. Place at: {{ base_image_path }}
+
+          Or set rhel9_kvm_guest_image_url in inventory/ibm-cloud.yml:
+            all:
+              vars:
+                rhel9_kvm_guest_image_url: "https://..."  # With Red Hat credentials
+      when:
+        - not base_image_stat.stat.exists
+        - base_image_url == ''
+
+    - name: Download RHEL 9 base image (if URL configured)
+      ansible.builtin.get_url:
+        url: "{{ base_image_url }}"
+        dest: "{{ base_image_path }}"
+        mode: '0644'
+        timeout: 3600
+      when:
+        - not base_image_stat.stat.exists
+        - base_image_url != ''
+      become: yes
+
+    # =========================================================================
+    # Create VM Disk from Base Image
+    # =========================================================================
+    - name: Create VM disk from base image
+      ansible.builtin.command:
+        cmd: qemu-img create -f qcow2 -F qcow2 -b {{ base_image_path }} {{ vm_disk }} {{ vm_disk_size }}G
+      args:
+        creates: "{{ vm_disk }}"
+      become: yes
+
+    - name: Set VM disk permissions
+      ansible.builtin.file:
+        path: "{{ vm_disk }}"
+        owner: qemu
+        group: qemu
+        mode: '0644'
+      become: yes
+
+    # =========================================================================
+    # Generate Cloud-Init Files
+    # =========================================================================
+    - name: Create temporary directory for cloud-init
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: cloud-init-
+      register: cloud_init_tmpdir
+
+    - name: Generate cloud-init user-data for AAP
+      ansible.builtin.copy:
+        content: |
+          #cloud-config
+          hostname: {{ vm_hostname }}
+          fqdn: {{ vm_fqdn }}
+          manage_etc_hosts: true
+
+          users:
+            - name: root
+              ssh_authorized_keys:
+                - {{ ssh_public_key }}
+            - name: {{ vm_user }}
+              groups: wheel
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              ssh_authorized_keys:
+                - {{ ssh_public_key }}
+
+          # AAP-specific packages
+          packages:
+            - podman
+            - podman-docker
+            - firewalld
+            - python3
+            - python3-pip
+            - git
+            - wget
+            - curl
+            - tar
+            - jq
+
+          # Configure firewall for AAP
+          runcmd:
+            - systemctl enable --now firewalld
+            - firewall-cmd --permanent --add-service=https
+            - firewall-cmd --permanent --add-service=http
+            - firewall-cmd --permanent --add-port=5432/tcp  # PostgreSQL
+            - firewall-cmd --permanent --add-port=6379/tcp  # Redis
+            - firewall-cmd --reload
+            - echo "AAP VM ready - $(date)" > /var/log/aap-vm-ready
+
+          power_state:
+            mode: reboot
+            condition: true
+        dest: "{{ cloud_init_tmpdir.path }}/user-data"
+        mode: '0600'
+
+    - name: Generate cloud-init meta-data
+      ansible.builtin.copy:
+        content: |
+          instance-id: {{ vm_name }}-001
+          local-hostname: {{ vm_hostname }}
+        dest: "{{ cloud_init_tmpdir.path }}/meta-data"
+        mode: '0600'
+
+    - name: Generate cloud-init network-config (static IP)
+      ansible.builtin.copy:
+        content: |
+          version: 2
+          ethernets:
+            enp1s0:
+              addresses:
+                - {{ vm_ip }}/24
+              gateway4: 192.168.122.1
+              nameservers:
+                addresses:
+                  - 192.168.122.1
+                  - 8.8.8.8
+        dest: "{{ cloud_init_tmpdir.path }}/network-config"
+        mode: '0600'
+
+    # =========================================================================
+    # Create Cloud-Init ISO
+    # =========================================================================
+    - name: Create cloud-init ISO
+      ansible.builtin.command:
+        cmd: >
+          xorriso -as genisoimage
+          -output {{ cloud_init_iso }}
+          -volid cidata
+          -joliet
+          -rock
+          {{ cloud_init_tmpdir.path }}/user-data
+          {{ cloud_init_tmpdir.path }}/meta-data
+          {{ cloud_init_tmpdir.path }}/network-config
+      args:
+        creates: "{{ cloud_init_iso }}"
+      become: yes
+
+    - name: Set cloud-init ISO permissions
+      ansible.builtin.file:
+        path: "{{ cloud_init_iso }}"
+        owner: qemu
+        group: qemu
+        mode: '0644'
+      become: yes
+
+    - name: Clean up temporary directory
+      ansible.builtin.file:
+        path: "{{ cloud_init_tmpdir.path }}"
+        state: absent
+
+    # =========================================================================
+    # Define VM in libvirt (inline XML)
+    # =========================================================================
+    - name: Define AAP VM in libvirt
+      community.libvirt.virt:
+        command: define
+        xml: |
+          <domain type='kvm'>
+            <name>{{ vm_name }}</name>
+            <memory unit='MiB'>{{ vm_memory }}</memory>
+            <vcpu>{{ vm_cpus }}</vcpu>
+            <os>
+              <type arch='x86_64' machine='q35'>hvm</type>
+              <boot dev='hd'/>
+            </os>
+            <features>
+              <acpi/>
+              <apic/>
+            </features>
+            <cpu mode='host-passthrough'/>
+            <clock offset='utc'>
+              <timer name='rtc' tickpolicy='catchup'/>
+              <timer name='pit' tickpolicy='delay'/>
+              <timer name='hpet' present='no'/>
+            </clock>
+            <on_poweroff>destroy</on_poweroff>
+            <on_reboot>restart</on_reboot>
+            <on_crash>destroy</on_crash>
+            <devices>
+              <emulator>/usr/libexec/qemu-kvm</emulator>
+              <disk type='file' device='disk'>
+                <driver name='qemu' type='qcow2'/>
+                <source file='{{ vm_disk }}'/>
+                <target dev='vda' bus='virtio'/>
+                <address type='pci' domain='0x0000' bus='0x04' slot='0x00' function='0x0'/>
+              </disk>
+              <disk type='file' device='cdrom'>
+                <driver name='qemu' type='raw'/>
+                <source file='{{ cloud_init_iso }}'/>
+                <target dev='sda' bus='sata'/>
+                <readonly/>
+                <address type='drive' controller='0' bus='0' target='0' unit='0'/>
+              </disk>
+              <controller type='sata' index='0'>
+                <address type='pci' domain='0x0000' bus='0x00' slot='0x1f' function='0x2'/>
+              </controller>
+              <interface type='network'>
+                <source network='{{ vm_network }}'/>
+                <model type='virtio'/>
+                <address type='pci' domain='0x0000' bus='0x01' slot='0x00' function='0x0'/>
+              </interface>
+              <serial type='pty'>
+                <target type='isa-serial' port='0'>
+                  <model name='isa-serial'/>
+                </target>
+              </serial>
+              <console type='pty'>
+                <target type='serial' port='0'/>
+              </console>
+              <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'>
+                <listen type='address' address='127.0.0.1'/>
+              </graphics>
+              <video>
+                <model type='virtio' heads='1' primary='yes'/>
+                <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x0'/>
+              </video>
+            </devices>
+          </domain>
+      become: yes
+
+    - name: Start AAP VM
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        state: running
+      become: yes
+
+    - name: Set VM to autostart
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        autostart: yes
+      become: yes
+
+    # =========================================================================
+    # Wait for VM to be Ready
+    # =========================================================================
+    - name: Wait for VM to boot (static IP)
+      ansible.builtin.pause:
+        seconds: 30
+        prompt: "Waiting for AAP VM to boot with static IP {{ vm_ip }}"
+
+    - name: Wait for SSH to be available on static IP
+      ansible.builtin.wait_for:
+        host: "{{ vm_ip }}"
+        port: 22
+        timeout: "{{ vm_wait_timeout }}"
+        state: started
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.shell: |
+        ssh -i {{ ssh_private_key }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o IdentitiesOnly=yes \
+          root@{{ vm_ip }} 'cloud-init status --wait'
+      register: cloud_init_status
+      retries: 20
+      delay: 30
+      until: cloud_init_status.rc == 0
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Verify AAP VM is ready
+      ansible.builtin.shell: |
+        ssh -i {{ ssh_private_key }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          root@{{ vm_ip }} 'cat /var/log/aap-vm-ready'
+      register: aap_ready
+      changed_when: false
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "✅ AAP VM Created Successfully"
+          - "=============================================="
+          - ""
+          - "VM Name:     {{ vm_name }}"
+          - "Hostname:    {{ vm_fqdn }}"
+          - "IP Address:  {{ vm_ip }} (static)"
+          - "Memory:      {{ vm_memory }}MB ({{ vm_memory // 1024 }}GB)"
+          - "CPUs:        {{ vm_cpus }}"
+          - "Disk:        {{ vm_disk_size }}GB"
+          - ""
+          - "🔐 SSH Access:"
+          - "   ssh root@{{ vm_ip }}"
+          - "   ssh {{ vm_user }}@{{ vm_ip }}"
+          - ""
+          - "🚀 Next Steps:"
+          - "   1. Install AAP 2.5 containerized:"
+          - "      ansible-playbook -i inventory/ibm-cloud.yml setup-aap-containerized.yml"
+          - ""
+          - "   2. Access AAP UI:"
+          - "      https://{{ vm_ip }}"
+          - ""
+          - "   3. Manual mirror-registry test (temporary):"
+          - "      ssh root@{{ vm_ip }}"
+          - "      # Download and extract mirror-registry"
+          - "      # Run installation with --quayRoot init"
+          - ""
+          - "=============================================="
+
+    - name: Save AAP VM information
+      ansible.builtin.copy:
+        content: |
+          # AAP VM Information
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          VM Name: {{ vm_name }}
+          Hostname: {{ vm_fqdn }}
+          IP Address: {{ vm_ip }} (static)
+
+          Resources:
+          - Memory: {{ vm_memory }}MB (16GB)
+          - CPUs: {{ vm_cpus }}
+          - Disk: {{ vm_disk_size }}GB
+
+          SSH Access:
+            ssh root@{{ vm_ip }}
+            ssh {{ vm_user }}@{{ vm_ip }}
+
+          AAP Installation:
+            1. SSH to VM: ssh root@{{ vm_ip }}
+            2. Download AAP installer from Red Hat
+            3. Run containerized setup
+
+          Libvirt Commands:
+            virsh list --all
+            virsh dominfo {{ vm_name }}
+            virsh console {{ vm_name }}
+            virsh domifaddr {{ vm_name }}
+        dest: "/tmp/{{ vm_name }}-info.txt"
+        mode: '0644'
