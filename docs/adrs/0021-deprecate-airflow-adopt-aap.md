@@ -27,7 +27,9 @@ However, the **PRD v4.21.0** (dated 2026-05-28) introduces new strategic require
 
 ## Decision
 
-**Deprecate Apache Airflow** and **adopt Red Hat Ansible Automation Platform (AAP) 2.5** as the orchestration layer for ocp4-disconnected-helper.
+**Deprecate Apache Airflow** and **adopt Red Hat Ansible Automation Platform (AAP) 2.6** as the orchestration layer for ocp4-disconnected-helper.
+
+**Update 2026-06-04**: AAP 2.6 is now the recommended version (released 2025-10-08). See "AAP Version Selection" section below.
 
 ### Key Changes
 
@@ -36,6 +38,33 @@ However, the **PRD v4.21.0** (dated 2026-05-28) introduces new strategic require
 3. **Deploy AAP on KVM**: Create `provision-aap-vm.yml` playbook using `community.libvirt`
 4. **Maintain Backward Compatibility**: Preserve Tier 1 (shell + ansible-playbook CLI) execution
 5. **Tag Legacy Code**: Tag current main branch as `v4.20.0-airflow` before migration
+
+## AAP Version Selection (Updated 2026-06-04)
+
+### AAP 2.6 vs AAP 2.5
+
+| Feature | AAP 2.5 | AAP 2.6 (Recommended) |
+|---------|---------|------------------------|
+| **Release Date** | 2024-11 | **2025-10-08** |
+| **RHEL Support** | RHEL 8.8+, RHEL 9.2+ | **RHEL 9.2+, RHEL 10** |
+| **Installation Method** | Containerized + RPM | **Containerized only** (RHEL 9) |
+| **RPM Installer** | Deprecated | **Last version** (RHEL 9 only) |
+| **Ansible Core** | 2.16+ | 2.16+ |
+| **Lifecycle** | Standard | Extended support |
+| **Maturity** | Stable | Latest stable |
+
+**Recommendation**: Deploy **AAP 2.6** for new installations.
+
+**Why AAP 2.6?**
+- Future-proof: RPM installation method deprecated (containerized is primary)
+- Extended RHEL support (RHEL 9 + RHEL 10)
+- Latest features and security updates
+- Containerized-first architecture aligns with modern DevOps
+
+**References**:
+- [AAP 2.6 System Requirements](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/rpm_installation/platform-system-requirements)
+- [AAP 2.6 Containerized Installation](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html-single/containerized_installation/index)
+- [AAP 2.6 Installation Guide Blog](https://www.redhat.com/en/blog/installation-and-upgrade-guide-ansible-automation-platform-26)
 
 ## Rationale
 
