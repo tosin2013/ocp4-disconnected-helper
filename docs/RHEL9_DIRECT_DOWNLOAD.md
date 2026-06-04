@@ -7,6 +7,27 @@
 
 ## Method 1: Web UI + curl (Recommended - Easiest)
 
+### Automated Script (Recommended)
+
+```bash
+cd /home/vpcuser/ocp4-disconnected-helper
+sudo scripts/rhel9-download/download-rhel9-curl.sh
+```
+
+**Features**:
+- Interactive prompts for download URL
+- Automatic disk space check
+- Resume interrupted downloads
+- File size validation
+- qcow2 format verification
+- Automatic permission setting
+
+See: `scripts/rhel9-download/README.md` for full script documentation
+
+---
+
+### Manual Method
+
 ### Step 1: Get Download URL from Red Hat Customer Portal
 
 **On your workstation browser**:
