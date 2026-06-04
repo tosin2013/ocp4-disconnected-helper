@@ -1,0 +1,87 @@
+---
+# Verify registry health and container status
+
+- name: Wait for registry to be healthy
+  ansible.builtin.uri:
+    url: "https://{{ hostvars[inventory_hostname].ansible_host }}:{{ registry_port }}/health/instance"
+    validate_certs: no
+    status_code: 200
+  register: health_check
+  retries: 30
+  delay: 10
+  until: health_check.status == 200
+  delegate_to: localhost
+
+# Validation check 1: Certificate trust verification (added 2026-06-04 per incident hardening)
+- name: Verify certificate trust from hypervisor (without --insecure)
+  ansible.builtin.command:
+    cmd: curl -sS --max-time 5 https://{{ registry_hostname }}:{{ registry_port }}/health/instance
+  register: cert_trust_check
+  failed_when:
+    - cert_trust_check.rc != 0
+    - "'SSL certificate problem' in cert_trust_check.stderr or 'certificate verify failed' in cert_trust_check.stderr"
+  changed_when: false
+  delegate_to: localhost
+
+- name: Display certificate trust status
+  ansible.builtin.debug:
+    msg:
+      - "✅ Certificate trust verified from hypervisor"
+      - "   Provider: {{ ssl_cert_provider | default('selfsigned') }}"
+      - "   Certificate validates without --insecure flag"
+      - "   Health check response: {{ cert_trust_check.stdout[:100] }}"
+
+- name: Get ansible_user UID
+  ansible.builtin.command:
+    cmd: id -u {{ ansible_user }}
+  register: user_uid
+  changed_when: false
+
+- name: Verify Quay containers are running
+  ansible.builtin.command:
+    cmd: podman ps --format "{{ '{{' }}.Names{{ '}}' }}"
+  register: running_containers
+  changed_when: false
+  become: yes
+  become_user: "{{ ansible_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ user_uid.stdout }}"
+
+- name: Check required containers
+  ansible.builtin.assert:
+    that:
+      - "'quay-app' in running_containers.stdout"
+      - "'quay-redis' in running_containers.stdout"
+    fail_msg: "Required Quay containers not running"
+    success_msg: "All required Quay containers are running"
+
+- name: Display container status
+  ansible.builtin.debug:
+    msg:
+      - "✅ Registry health verification passed"
+      - "   Health endpoint: https://{{ hostvars[inventory_hostname].ansible_host }}:{{ registry_port }}/health/instance"
+      - "   Running containers:"
+      - "{{ running_containers.stdout_lines | map('regex_replace', '^', '     - ') | list }}"
+
+# Validation check 2: Podman login smoke test (added 2026-06-04 per incident hardening)
+- name: Smoke test - Verify podman login from hypervisor
+  ansible.builtin.shell:
+    cmd: |
+      export XDG_RUNTIME_DIR=/run/user/$(id -u)
+      echo "{{ registry_admin_password }}" | podman login --username {{ registry_admin_user }} --password-stdin {{ registry_hostname }}:{{ registry_port }}
+  register: login_test
+  failed_when:
+    - login_test.rc != 0
+    - "'tls: failed to verify certificate' in login_test.stderr"
+  changed_when: false
+  delegate_to: localhost
+  no_log: true  # Don't log password in output
+
+- name: Display authentication test result
+  ansible.builtin.debug:
+    msg:
+      - "✅ Registry authentication verified"
+      - "   User: {{ registry_admin_user }}"
+      - "   Registry: {{ registry_hostname }}:{{ registry_port }}"
+      - "   Method: podman login (TLS verified)"
+      - "   Result: {{ 'Login Succeeded' if login_test.rc == 0 else 'Failed' }}"

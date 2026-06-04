@@ -1,0 +1,68 @@
+---
+# Complete registry VM lifecycle orchestrator
+# Handles both VM provisioning (via libvirt/local) and registry installation (via SSH)
+
+# Phase 1: VM Provisioning (runs on localhost via libvirt)
+- name: Provision registry VM with common_vm role
+  ansible.builtin.import_role:
+    name: common_vm
+  vars:
+    vm_use_static_ip: true
+    vm_static_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
+  delegate_to: localhost
+  connection: local
+  when: vm_state | default('present') in ['present', 'absent']
+
+# Phase 2: Certificate Setup (runs on registry VM via SSH)
+- name: Setup SSL/TLS certificates
+  ansible.builtin.import_tasks: setup_certificates.yml
+  when:
+    - vm_state | default('present') == 'present'
+
+# Phase 2.5: Assert certificates were configured (added 2026-06-04 per incident hardening)
+- name: Assert certificates were configured before mirror-registry installation
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_ssl_cert is defined
+      - mirror_registry_ssl_key is defined
+      - mirror_registry_ssl_cert | length > 0
+      - mirror_registry_ssl_key | length > 0
+    fail_msg: |
+      ❌ DEPLOYMENT BLOCKED: SSL certificates not configured before mirror-registry installation.
+
+      Root cause: setup_certificates.yml did not set mirror_registry_ssl_cert and mirror_registry_ssl_key facts.
+
+      This is a CRITICAL failure - mirror-registry v2 requires certificates at install time.
+      Check setup_certificates.yml execution logs for errors.
+    success_msg: "✅ Certificates configured: {{ mirror_registry_ssl_cert }}"
+  when:
+    - vm_state | default('present') == 'present'
+    - registry_type == 'mirror-registry'
+
+# Phase 3: Registry Installation (runs on registry VM via SSH)
+- name: Install mirror-registry
+  ansible.builtin.import_tasks: install_mirror_registry.yml
+  when:
+    - vm_state | default('present') == 'present'
+    - registry_type == 'mirror-registry'
+
+- name: Setup authentication
+  ansible.builtin.import_tasks: setup_auth.yml
+  when:
+    - vm_state | default('present') == 'present'
+
+- name: Verify registry health
+  ansible.builtin.import_tasks: verify.yml
+  when:
+    - vm_state | default('present') == 'present'
+
+- name: Display registry deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "✅ Registry VM deployment complete"
+      - "   URL: https://{{ registry_hostname }}:{{ registry_port }}"
+      - "   SSH: ssh {{ vm_user }}@{{ hostvars[inventory_hostname].ansible_host }}"
+      - "   Credentials: {{ mirror_registry_install_dir }}/credentials.txt on VM"
+      - "   Health: https://{{ hostvars[inventory_hostname].ansible_host }}:{{ registry_port }}/health/instance"
+  when:
+    - vm_state | default('present') == 'present'

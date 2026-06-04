@@ -1,0 +1,204 @@
+---
+# Setup SSL/TLS certificates for registry
+# Supports both Let's Encrypt (cloud/Route53) and self-signed (on-premise)
+
+- name: Determine certificate strategy
+  ansible.builtin.set_fact:
+    use_letsencrypt: "{{ ssl_cert_provider | default('selfsigned') == 'letsencrypt' }}"
+
+- name: Display certificate strategy
+  ansible.builtin.debug:
+    msg:
+      - "Certificate provider: {{ ssl_cert_provider | default('selfsigned') }}"
+      - "Strategy: {{ 'Lets Encrypt Route53 DNS-01' if use_letsencrypt else 'Self-signed CA' }}"
+      - "Registry hostname: {{ registry_hostname }}"
+
+# Preflight validation (added 2026-06-04 per incident hardening)
+- name: Preflight - Validate certificate provider matches infrastructure
+  when: validate_cert_provider | default(true)
+  block:
+    - name: Check for AWS credentials file
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+      register: aws_creds_stat
+      delegate_to: localhost
+
+    - name: Warn if letsencrypt selected but no AWS credentials
+      ansible.builtin.fail:
+        msg: |
+          ❌ PREFLIGHT FAILED: ssl_cert_provider='letsencrypt' but ~/.aws/credentials not found.
+
+          Options:
+          1. Install AWS credentials: aws configure
+          2. Switch to self-signed: ssl_cert_provider='selfsigned'
+          3. Skip this check: validate_cert_provider=false (NOT RECOMMENDED)
+      when:
+        - use_letsencrypt
+        - not aws_creds_stat.stat.exists
+
+    - name: Warn if selfsigned selected but AWS credentials available
+      ansible.builtin.debug:
+        msg: |
+          ⚠️  PREFLIGHT WARNING: ssl_cert_provider='selfsigned' but ~/.aws/credentials found.
+
+          Let's Encrypt certificates are auto-trusted and recommended for cloud deployments.
+          To use Let's Encrypt: ssl_cert_provider='letsencrypt'
+
+          Continuing with self-signed CA as requested...
+      when:
+        - not use_letsencrypt
+        - aws_creds_stat.stat.exists
+
+# ============================================================
+# Let's Encrypt Path (Cloud/Route53)
+# ============================================================
+- name: Setup Let's Encrypt certificates
+  when: use_letsencrypt
+  block:
+    - name: Install certbot with Route53 plugin
+      ansible.builtin.pip:
+        name:
+          - certbot
+          - certbot-dns-route53
+        state: present
+      delegate_to: localhost
+      become: yes
+
+    - name: Check if Let's Encrypt certificate exists
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ registry_hostname }}/fullchain.pem"
+      register: letsencrypt_cert
+      delegate_to: localhost
+
+    - name: Get AWS credentials from user home
+      ansible.builtin.slurp:
+        src: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+      register: aws_creds_file
+      delegate_to: localhost
+      when: not letsencrypt_cert.stat.exists
+
+    - name: Parse AWS credentials
+      ansible.builtin.set_fact:
+        aws_access_key: "{{ (aws_creds_file.content | b64decode | regex_search('aws_access_key_id = (.+)', '\\1'))[0] }}"
+        aws_secret_key: "{{ (aws_creds_file.content | b64decode | regex_search('aws_secret_access_key = (.+)', '\\1'))[0] }}"
+      when: not letsencrypt_cert.stat.exists
+
+    - name: Request Let's Encrypt certificate via DNS-01 challenge
+      ansible.builtin.command:
+        cmd: >
+          /usr/local/bin/certbot certonly
+          --dns-route53
+          --non-interactive
+          --agree-tos
+          --email {{ letsencrypt_email | default('admin@' + registry_hostname) }}
+          -d {{ registry_hostname }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_key }}"
+      when: not letsencrypt_cert.stat.exists
+      delegate_to: localhost
+      become: yes
+
+    - name: Read Let's Encrypt certificate from localhost
+      ansible.builtin.slurp:
+        src: "/etc/letsencrypt/live/{{ registry_hostname }}/fullchain.pem"
+      register: letsencrypt_cert_content
+      delegate_to: localhost
+      become: yes
+
+    - name: Read Let's Encrypt private key from localhost
+      ansible.builtin.slurp:
+        src: "/etc/letsencrypt/live/{{ registry_hostname }}/privkey.pem"
+      register: letsencrypt_key_content
+      delegate_to: localhost
+      become: yes
+
+    - name: Copy Let's Encrypt certificate to registry VM
+      ansible.builtin.copy:
+        content: "{{ letsencrypt_cert_content.content | b64decode }}"
+        dest: "{{ mirror_registry_install_dir }}/ssl.cert"
+        mode: '0644'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      become: yes
+
+    - name: Copy Let's Encrypt private key to registry VM
+      ansible.builtin.copy:
+        content: "{{ letsencrypt_key_content.content | b64decode }}"
+        dest: "{{ mirror_registry_install_dir }}/ssl.key"
+        mode: '0600'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      become: yes
+
+    - name: Set certificate facts for mirror-registry installation
+      ansible.builtin.set_fact:
+        mirror_registry_ssl_cert: "{{ mirror_registry_install_dir }}/ssl.cert"
+        mirror_registry_ssl_key: "{{ mirror_registry_install_dir }}/ssl.key"
+
+# ============================================================
+# Self-Signed Path (On-Premise/Disconnected)
+# ============================================================
+- name: Setup self-signed certificates
+  when: not use_letsencrypt
+  block:
+    - name: Generate self-signed certificate
+      ansible.builtin.command:
+        cmd: >
+          openssl req -newkey rsa:4096 -nodes
+          -sha256
+          -keyout {{ mirror_registry_install_dir }}/ssl.key
+          -x509
+          -days 825
+          -out {{ mirror_registry_install_dir }}/ssl.cert
+          -subj "/C=US/ST=VA/L=Reston/O=OCP4 Lab/CN={{ registry_hostname }}"
+          -addext "subjectAltName=DNS:{{ registry_hostname }},IP:{{ hostvars[inventory_hostname].ansible_host }}"
+        creates: "{{ mirror_registry_install_dir }}/ssl.cert"
+      become: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Set certificate permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      loop:
+        - { path: "{{ mirror_registry_install_dir }}/ssl.cert", mode: '0644' }
+        - { path: "{{ mirror_registry_install_dir }}/ssl.key", mode: '0600' }
+      become: yes
+
+    - name: Set certificate facts for mirror-registry installation
+      ansible.builtin.set_fact:
+        mirror_registry_ssl_cert: "{{ mirror_registry_install_dir }}/ssl.cert"
+        mirror_registry_ssl_key: "{{ mirror_registry_install_dir }}/ssl.key"
+
+    - name: Fetch self-signed CA for hypervisor trust
+      ansible.builtin.fetch:
+        src: "{{ mirror_registry_install_dir }}/ssl.cert"
+        dest: "/tmp/{{ inventory_hostname }}-ca.pem"
+        flat: yes
+
+    - name: Install self-signed CA in hypervisor trust store
+      ansible.builtin.copy:
+        src: "/tmp/{{ inventory_hostname }}-ca.pem"
+        dest: "/etc/pki/ca-trust/source/anchors/{{ registry_hostname }}-ca.pem"
+        mode: '0644'
+      delegate_to: localhost
+      become: yes
+
+    - name: Update CA trust database on hypervisor
+      ansible.builtin.command:
+        cmd: update-ca-trust
+      delegate_to: localhost
+      become: yes
+      changed_when: true
+
+- name: Display certificate setup result
+  ansible.builtin.debug:
+    msg:
+      - "✅ Certificate setup complete"
+      - "   Provider: {{ 'Lets Encrypt auto-trusted' if use_letsencrypt else 'Self-signed CA installed' }}"
+      - "   Certificate: {{ mirror_registry_ssl_cert }}"
+      - "   Key: {{ mirror_registry_ssl_key }}"
+      - "   Hostname: {{ registry_hostname }}"

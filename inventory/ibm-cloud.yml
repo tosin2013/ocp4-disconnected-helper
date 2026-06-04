@@ -39,39 +39,69 @@ all:
     # SSL/TLS CONFIGURATION
     # ============================================================
     # Options: "letsencrypt", "selfsigned", "custom"
-    ssl_cert_provider: "letsencrypt"  # Use Let's Encrypt with Route53 DNS validation
+    ssl_cert_provider: "letsencrypt"  # Use Let's Encrypt with Route53 DNS validation (AWS creds in ~/.aws/)
     letsencrypt_email: "admin@{{ external_domain }}"
 
     # ============================================================
-    # BACKEND VM IPs (Internal Network on KVM Host)
+    # STORAGE CONFIGURATION
     # ============================================================
+    # Primary storage on 1TB disk mounted at /data
+    storage_base_path: "/data"
+    vm_disk_path: "/data/libvirt-images"
+    mirror_storage_path: "/data/ocp-mirror"
+    logs_path: "/data/logs"
+
+    # Libvirt storage pool
+    libvirt_pool: "default"
+
+    # ============================================================
+    # VYOS ROUTER NETWORK INFRASTRUCTURE
+    # ============================================================
+    # VyOS Router (mandatory prerequisite - ADR 0025)
+    vyos_router_ip: "192.168.122.2"  # External interface
+    vyos_mgmt_gateway: "192.168.10.1"  # Management VLAN 1924
+    vyos_ocp_gateway: "192.168.20.1"   # OpenShift VLAN 1925
+    vyos_storage_gateway: "192.168.30.1"  # Storage VLAN 1927
+
+    # ============================================================
+    # BACKEND VM IPs (VLAN-based Network via VyOS Router)
+    # ============================================================
+    # Management Network (VLAN 1924: 192.168.10.0/24)
+    # Used for: Registry, AAP, Bastion, Management tools
+
     # Quay/mirror-registry VM
-    quay_vm_ip: "192.168.122.5"
+    quay_vm_ip: "192.168.10.10"  # VLAN 1924 - Management Network
     quay_vm_port: 8443  # Mirror-registry default port
 
     # Harbor VM
-    harbor_vm_ip: "192.168.122.10"
+    harbor_vm_ip: "192.168.10.11"  # VLAN 1924 - Management Network
     harbor_vm_port: 443
 
     # JFrog Artifactory VM
-    jfrog_vm_ip: "192.168.122.20"
+    jfrog_vm_ip: "192.168.10.12"  # VLAN 1924 - Management Network
     jfrog_vm_port: 8082
     jfrog_docker_port: 5001
 
     # AAP Controller VM
-    aap_vm_ip: "192.168.122.30"
+    aap_vm_ip: "192.168.10.20"  # VLAN 1924 - Management Network
     aap_vm_port: 443
+
+    # OpenShift Network (VLAN 1925: 192.168.20.0/24)
+    # Used for: OpenShift master and worker nodes
 
     # OpenShift Master Nodes
     ocp_master_ips:
-      - "192.168.122.100"
-      - "192.168.122.101"
-      - "192.168.122.102"
+      - "192.168.20.11"  # VLAN 1925 - OpenShift Network
+      - "192.168.20.12"
+      - "192.168.20.13"
 
     # OpenShift Worker Nodes
     ocp_worker_ips:
-      - "192.168.122.110"
-      - "192.168.122.111"
+      - "192.168.20.21"  # VLAN 1925 - OpenShift Network
+      - "192.168.20.22"
+
+    # Storage Network (VLAN 1927: 192.168.30.0/24)
+    # Reserved for: NFS, persistent storage, backups
 
     # ============================================================
     # HAPROXY CONFIGURATION
@@ -102,9 +132,26 @@ all:
     registry_vms:
       hosts:
         registry:
-          ansible_host: "192.168.122.26"
-          ansible_user: "root"
+          ansible_host: "192.168.10.10"  # VLAN 1924 (Management Network)
+          ansible_user: "admin"  # Cloud-init creates admin user (vm_user default)
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+          # VM Provisioning Configuration
+          vyos_managed_network: true  # Use VyOS router for DHCP/routing
+          vm_network: "1924"  # VLAN 1924 bridge
+          vm_gateway: "192.168.10.1"  # VyOS management gateway
+          vm_dns_servers:
+            - "192.168.10.1"  # VyOS DNS forwarder
+            - "161.26.0.10"   # IBM Cloud DNS
+          vm_mac_address: "52:54:00:10:00:10"  # Deterministic MAC
+
+          # Registry Configuration
+          # ⚠️  SECURITY WARNING: Plain-text password in inventory (development only)
+          # TODO: Move to ansible-vault for production
+          # Incident finding 2026-06-04: Random password generation via lookup('password')
+          # caused authentication troubleshooting difficulty. Use static password here,
+          # encrypt with ansible-vault before production deployment.
+          registry_admin_password: "RedHat2026!Quay"
 
 # ============================================================
 # DNS RECORDS REQUIRED (Point to {{ external_ip }})

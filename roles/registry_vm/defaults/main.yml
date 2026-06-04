@@ -1,0 +1,33 @@
+---
+# Override common_vm defaults for registry
+vm_name: "registry-vm"
+vm_memory: 8192
+vm_cpus: 4
+vm_disk_size: 500
+
+# Registry-specific configuration
+registry_type: "mirror-registry"  # mirror-registry, harbor, quay, jfrog
+registry_hostname: "registry.ocp4.sandbox3377.opentlc.com"
+registry_port: 8443
+registry_admin_user: "init"
+# Password must be set in inventory or extra vars to avoid random generation
+# Use ansible-vault for production deployments
+registry_admin_password: ""  # MUST be overridden - will fail if empty
+
+# Certificate provider auto-detection (added 2026-06-04 per incident hardening)
+# Options: "letsencrypt" (cloud/Route53), "selfsigned" (disconnected), "custom"
+# Auto-detects based on AWS credentials presence
+ssl_cert_provider: "{{ 'letsencrypt' if lookup('file', lookup('env', 'HOME') + '/.aws/credentials', errors='ignore') else 'selfsigned' }}"
+
+# Preflight validation (added 2026-06-04 per incident hardening)
+validate_cert_provider: true  # Verify cert provider matches infrastructure
+
+# Mirror-registry specific
+mirror_registry_version: "latest"
+mirror_registry_install_dir: "/opt/mirror-registry"
+mirror_registry_storage_dir: "/opt/mirror-registry/quay-storage"
+mirror_registry_tarball_url: "https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz"
+
+# Authentication
+registry_pull_secret_path: "{{ lookup('env', 'HOME') }}/pull-secret.json"
+registry_combined_pull_secret_path: "{{ lookup('env', 'HOME') }}/pull-secret-combined.json"

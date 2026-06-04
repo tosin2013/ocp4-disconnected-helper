@@ -1,0 +1,112 @@
+---
+# OpenShift Disconnected Helper - Complete Infrastructure Deployment
+# Single entrypoint for full stack deployment
+#
+# Usage:
+#   # Deploy everything (idempotent):
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml
+#
+#   # Deploy only registry:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags registry
+#
+#   # Deploy only AAP:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags aap
+#
+#   # Skip AAP deployment:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --skip-tags aap
+
+- name: Deploy Complete OpenShift Disconnected Infrastructure
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display deployment plan
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "OpenShift Disconnected Helper Deployment"
+          - "=========================================="
+          - ""
+          - "Components to deploy:"
+          - "  1. Registry VM + Mirror-Registry"
+          - "  2. AAP VM + AAP 2.5 Containerized"
+          - ""
+          - "All deployments are idempotent - safe to run multiple times"
+          - ""
+
+# Phase 1: Deploy Container Registry Infrastructure
+- import_playbook: deploy-registry.yml
+  tags: [registry, phase1]
+
+# Phase 2: Deploy Ansible Automation Platform
+# Uncomment when AAP role is ready:
+# - import_playbook: deploy-aap.yml
+#   tags: [aap, phase2]
+
+- name: Deployment Complete
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display success summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "✅ Deployment Complete"
+          - "=========================================="
+          - ""
+          - "Registry VM:"
+          - "  URL: https://{{ hostvars['registry'].quay_url }}:{{ hostvars['registry'].quay_vm_port }}"
+          - "  SSH: ssh registry@{{ hostvars['registry'].ansible_host }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Test registry: podman login https://{{ hostvars['registry'].quay_url }}:{{ hostvars['registry'].quay_vm_port }}"
+          - "  2. Mirror images: ansible-playbook -i inventory/ibm-cloud.yml playbooks/download-to-disk-v2.yml"
+          - "  3. Deploy AAP (when ready): ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags aap"
+          - ""
+
+# Preflight validation mode (added 2026-06-04 per incident hardening)
+# Run before full deployment to catch configuration errors early
+# Usage: ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags validate
+- name: Preflight - Validate deployment configuration
+  hosts: registry_vms
+  gather_facts: false
+  tags: [validate, never]
+  tasks:
+    - name: Check for AWS credentials file
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+      register: aws_creds_check
+      delegate_to: localhost
+
+    - name: Determine recommended certificate provider
+      ansible.builtin.set_fact:
+        recommended_provider: "{{ 'letsencrypt' if aws_creds_check.stat.exists else 'selfsigned' }}"
+        configured_provider: "{{ ssl_cert_provider | default('selfsigned') }}"
+
+    - name: Display validation summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "✅ Preflight Validation Complete"
+          - "=========================================="
+          - ""
+          - "Certificate Configuration:"
+          - "  AWS credentials: {{ 'PRESENT at ~/.aws/credentials' if aws_creds_check.stat.exists else 'NOT FOUND' }}"
+          - "  Recommended provider: {{ recommended_provider }}"
+          - "  Configured provider: {{ configured_provider }}"
+          - "  Configuration match: {{ 'YES ✅' if recommended_provider == configured_provider else 'NO ⚠️' }}"
+          - ""
+
+    - name: Warn about configuration mismatch
+      ansible.builtin.debug:
+        msg:
+          - "⚠️  WARNING: Configuration mismatch detected!"
+          - "   Recommended action: Set ssl_cert_provider='{{ recommended_provider }}' in inventory"
+          - ""
+      when: recommended_provider != configured_provider
+
+    - name: Display ready message
+      ansible.builtin.debug:
+        msg:
+          - "Ready for deployment:"
+          - "  ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags registry"
+          - ""
