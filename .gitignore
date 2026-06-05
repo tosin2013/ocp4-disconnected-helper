@@ -54,3 +54,4 @@ playbooks/oc-mirror-workspace/
 # Ansible Vault secrets (encrypted, contains Red Hat credentials)
 extra_vars/*-secrets.yml
 !extra_vars/*-secrets.yml.example
+token

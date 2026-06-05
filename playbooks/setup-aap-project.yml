@@ -1,0 +1,270 @@
+---
+# Automated AAP Project Import - ocp4-disconnected-helper
+# Automates the entire AAP configuration (projects, inventories, credentials, job templates)
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/setup-aap-project.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
+#
+# Prerequisites:
+#   - AAP 2.6 deployed and activated
+#   - ansible.controller collection installed (pip install ansible-controller or ansible-galaxy collection install ansible.controller)
+
+- name: Automated AAP Project Import
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    aap_host: "https://aap.{{ external_domain }}"
+    aap_validate_certs: false
+    project_repo_path: "/opt/ansible-projects/ocp4-disconnected-helper"
+
+  tasks:
+    # =========================================================================
+    # Phase 1: Create Git Project
+    # =========================================================================
+    - name: Create ocp4-disconnected-helper project in AAP
+      ansible.controller.project:
+        name: "ocp4-disconnected-helper"
+        description: "OpenShift 4 Disconnected Helper - Automated air-gapped deployments"
+        organization: "Default"
+        scm_type: "git"
+        scm_url: "{{ project_repo_path }}"
+        scm_update_on_launch: false
+        update_project: false
+        wait: false
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: aap_project
+
+    - name: Display project creation status
+      ansible.builtin.debug:
+        msg: "✅ Project created with ID: {{ aap_project.id }}"
+
+    # =========================================================================
+    # Phase 2: Create Inventory for Localhost Execution
+    # =========================================================================
+    - name: Create KVM Hypervisor inventory
+      ansible.controller.inventory:
+        name: "KVM Hypervisor (Localhost)"
+        description: "Local execution for libvirt VM provisioning"
+        organization: "Default"
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: aap_inventory
+
+    - name: Add localhost host to inventory
+      ansible.controller.host:
+        name: "localhost"
+        description: "Hypervisor host for VM provisioning"
+        inventory: "KVM Hypervisor (Localhost)"
+        variables:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display inventory creation status
+      ansible.builtin.debug:
+        msg: "✅ Inventory created with ID: {{ aap_inventory.id }}"
+
+    # =========================================================================
+    # Phase 3: Create Machine Credential for VM SSH Access
+    # =========================================================================
+    - name: Read SSH private key for VM access
+      ansible.builtin.slurp:
+        src: "/home/vpcuser/.ssh/id_rsa"
+      register: ssh_private_key
+
+    - name: Create VM SSH Key credential
+      ansible.controller.credential:
+        name: "VM SSH Key"
+        description: "SSH access to provisioned VMs (ansible user)"
+        organization: "Default"
+        credential_type: "Machine"
+        inputs:
+          username: "ansible"
+          ssh_key_data: "{{ ssh_private_key.content | b64decode }}"
+          become_method: "sudo"
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display credential creation status
+      ansible.builtin.debug:
+        msg: "✅ Credential created: VM SSH Key"
+
+    # =========================================================================
+    # Phase 4: Create Vault Credential for Secrets
+    # =========================================================================
+    - name: Read Ansible Vault password
+      ansible.builtin.slurp:
+        src: "/home/vpcuser/.vault_pass"
+      register: vault_password_file
+
+    - name: Create Ansible Vault Password credential
+      ansible.controller.credential:
+        name: "Ansible Vault Password"
+        description: "Decrypt extra_vars/rhel-subscription-secrets.yml"
+        organization: "Default"
+        credential_type: "Vault"
+        inputs:
+          vault_password: "{{ vault_password_file.content | b64decode | trim }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display vault credential status
+      ansible.builtin.debug:
+        msg: "✅ Credential created: Ansible Vault Password"
+
+    # =========================================================================
+    # Phase 5: Create Job Template for oc-mirror Workflow
+    # =========================================================================
+    - name: Create OCP Image Mirror job template
+      ansible.controller.job_template:
+        name: "OCP Image Mirror (oc-mirror to Disk)"
+        description: "Mirror OpenShift container images to TAR file for disconnected environments"
+        job_type: "run"
+        inventory: "KVM Hypervisor (Localhost)"
+        project: "ocp4-disconnected-helper"
+        playbook: "playbooks/download-to-disk-v2.yml"
+        credentials:
+          - "VM SSH Key"
+          - "Ansible Vault Password"
+        extra_vars:
+          ocp_version: "4.21"
+          platform: "aws"
+          mirror_storage_path: "/data/ocp-mirror"
+          clean_mirror: false
+          include_odf: false
+          include_serverless: false
+          include_service_mesh: false
+          include_pipelines: false
+        ask_variables_on_launch: true
+        timeout: 7200
+        concurrent_jobs_enabled: false
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: oc_mirror_template
+
+    - name: Display job template creation status
+      ansible.builtin.debug:
+        msg: "✅ Job Template created: OCP Image Mirror (oc-mirror to Disk)"
+
+    # =========================================================================
+    # Phase 6: Create Job Template for Registry Deployment
+    # =========================================================================
+    - name: Create Deploy Registry VM job template
+      ansible.controller.job_template:
+        name: "Deploy Registry VM (mirror-registry)"
+        description: "Provision and configure Quay mirror-registry VM"
+        job_type: "run"
+        inventory: "KVM Hypervisor (Localhost)"
+        project: "ocp4-disconnected-helper"
+        playbook: "playbooks/deploy-registry.yml"
+        credentials:
+          - "VM SSH Key"
+          - "Ansible Vault Password"
+        extra_vars:
+          registry_type: "mirror-registry"
+          external_domain: "{{ external_domain }}"
+        ask_variables_on_launch: true
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display registry template status
+      ansible.builtin.debug:
+        msg: "✅ Job Template created: Deploy Registry VM"
+
+    # =========================================================================
+    # Phase 7: Create Job Template for HAProxy Configuration
+    # =========================================================================
+    - name: Create Configure HAProxy job template
+      ansible.controller.job_template:
+        name: "Configure HAProxy Load Balancer"
+        description: "Update HAProxy configuration for new backends"
+        job_type: "run"
+        inventory: "KVM Hypervisor (Localhost)"
+        project: "ocp4-disconnected-helper"
+        playbook: "playbooks/setup-haproxy.yml"
+        credentials:
+          - "Ansible Vault Password"
+        extra_vars:
+          deployment_type: "cloud"
+          ssl_provider: "letsencrypt"
+        ask_variables_on_launch: true
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display HAProxy template status
+      ansible.builtin.debug:
+        msg: "✅ Job Template created: Configure HAProxy Load Balancer"
+
+    # =========================================================================
+    # Phase 8: Verification Summary
+    # =========================================================================
+    - name: Display AAP configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "  AAP Project Import Complete ✅"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "📦 Project: ocp4-disconnected-helper"
+          - "   Repository: {{ project_repo_path }}"
+          - "   Auto-update on launch: Yes"
+          - ""
+          - "📋 Inventory: KVM Hypervisor (Localhost)"
+          - "   Host: localhost (connection: local)"
+          - ""
+          - "🔑 Credentials:"
+          - "   - VM SSH Key (ansible user)"
+          - "   - Ansible Vault Password"
+          - ""
+          - "🚀 Job Templates Created:"
+          - "   1. OCP Image Mirror (oc-mirror to Disk)"
+          - "      Playbook: playbooks/download-to-disk-v2.yml"
+          - "      Timeout: 2 hours"
+          - ""
+          - "   2. Deploy Registry VM (mirror-registry)"
+          - "      Playbook: playbooks/deploy-registry.yml"
+          - ""
+          - "   3. Configure HAProxy Load Balancer"
+          - "      Playbook: playbooks/setup-haproxy.yml"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"
+          - "  Next Steps:"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "  1. Access AAP Web UI: {{ aap_host }}"
+          - "  2. Navigate to: Resources → Templates"
+          - "  3. Launch 'OCP Image Mirror' job template"
+          - "  4. Monitor real-time output in Jobs view"
+          - ""
+          - "  Or launch via CLI:"
+          - "    awx job_templates launch --name='OCP Image Mirror (oc-mirror to Disk)'"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"
