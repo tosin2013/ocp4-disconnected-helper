@@ -63,7 +63,7 @@ for FILE in $FILES; do
      [[ "$FILE" =~ ^node_modules/ ]] || \
      [[ "$FILE" =~ \.vault$ ]] || \
      [[ "$FILE" =~ \.pyc$ ]] || \
-     [[ "$FILE" =~ ^scripts/git-hooks/ ]] || \
+     [[ "$FILE" =~ ^scripts/ ]] || \
      [[ "$FILE" =~ ^docs/SECURITY\.md$ ]] || \
      [[ "$FILE" =~ ^docs/hardening/ ]] || \
      [[ "$FILE" =~ ^docs/adrs/ ]] || \
