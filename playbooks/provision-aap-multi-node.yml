@@ -1,0 +1,55 @@
+---
+# Provision AAP 2.6 Multi-Node VMs (Gateway, Controller, Database)
+# ADR Reference: ADR 0024 - Roles Architecture
+#                ADR 0025 - VyOS Router Network Infrastructure
+#                ADR 0026 - RHEL 9 for AAP
+
+- name: Provision AAP Multi-Node VMs
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Provision AAP VMs using common_vm role
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_state: present
+        vm_name: "{{ item }}"
+        vm_static_ip: "{{ hostvars[item].vm_static_ip }}"
+        vm_network: "{{ hostvars[item].vm_network }}"
+        vm_gateway: "{{ hostvars[item].vm_gateway }}"
+        vm_dns_servers: "{{ hostvars[item].vm_dns_servers }}"
+        vm_mac_address: "{{ hostvars[item].vm_mac_address }}"
+        vm_memory: "{{ hostvars[item].vm_memory }}"
+        vm_cpus: "{{ hostvars[item].vm_cpus }}"
+        vm_disk_size: "{{ hostvars[item].vm_disk_size }}"
+        vm_user: "{{ hostvars[item].ansible_user }}"
+        vm_hostname: "{{ item }}"
+        vm_fqdn: "{{ item }}.{{ ocp_cluster_name }}.{{ external_domain }}"
+        vyos_managed_network: "{{ hostvars[item].vyos_managed_network | default(false) }}"
+        # Use RHEL 9 base image for AAP (ADR 0026)
+        vm_base_image_path: "/var/lib/libvirt/images/rhel9-kvm-guest.qcow2"
+        vm_base_image_url: ""  # Image already downloaded
+      loop: "{{ groups['aap_vms'] }}"
+
+    - name: Wait for all AAP VMs to be SSH-ready
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].vm_static_ip }}"
+        port: 22
+        delay: 10
+        timeout: 300
+      loop: "{{ groups['aap_vms'] }}"
+      delegate_to: localhost
+
+    - name: Display provisioned VMs
+      ansible.builtin.debug:
+        msg:
+          - "✅ AAP 2.6 Multi-Node VMs Provisioned:"
+          - "  Gateway:    {{ hostvars['aap-gateway'].vm_static_ip }} (4 vCPU, 8GB RAM)"
+          - "  Controller: {{ hostvars['aap-controller'].vm_static_ip }} (4 vCPU, 16GB RAM)"
+          - "  Database:   {{ hostvars['aap-database'].vm_static_ip }} (4 vCPU, 16GB RAM, 150GB disk)"
+          - ""
+          - "Next Steps:"
+          - "  1. Register VMs with RHEL subscription"
+          - "  2. Install AAP 2.6 across nodes"
+          - "  3. Configure HAProxy for external access"

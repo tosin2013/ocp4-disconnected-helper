@@ -1,0 +1,259 @@
+---
+# Install Ansible Automation Platform 2.6 Containerized on RHEL 9
+# Requires: AAP VM provisioned and accessible via SSH
+
+- name: Install AAP 2.6 Containerized
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    aap_vm_ip: "192.168.122.72"
+    aap_vm_user: "ansible"
+
+    # AAP Configuration
+    aap_install_dir: "/home/ansible/aap"
+    aap_admin_password: "{{ lookup('env', 'AAP_ADMIN_PASSWORD') | default('changeme123!', true) }}"
+
+    # Red Hat Subscription (optional - set via environment or prompt)
+    rhsm_username: "{{ lookup('env', 'RHSM_USERNAME') | default('', true) }}"
+    rhsm_password: "{{ lookup('env', 'RHSM_PASSWORD') | default('', true) }}"
+    rhsm_org_id: "{{ lookup('env', 'RHSM_ORG_ID') | default('', true) }}"
+    rhsm_activationkey: "{{ lookup('env', 'RHSM_ACTIVATIONKEY') | default('', true) }}"
+
+  tasks:
+    # =========================================================================
+    # Preflight Checks
+    # =========================================================================
+    - name: Test SSH connectivity to AAP VM
+      ansible.builtin.wait_for:
+        host: "{{ aap_vm_ip }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost
+
+    - name: Gather facts from AAP VM
+      ansible.builtin.setup:
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+
+    - name: Display AAP VM info
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ hostvars[aap_vm_ip].ansible_fqdn }}"
+          - "OS: {{ hostvars[aap_vm_ip].ansible_distribution }} {{ hostvars[aap_vm_ip].ansible_distribution_version }}"
+          - "IP: {{ aap_vm_ip }}"
+          - "User: {{ aap_vm_user }}"
+
+    # =========================================================================
+    # RHEL Subscription Management
+    # =========================================================================
+    - name: Check if system is already registered
+      ansible.builtin.command: subscription-manager status
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+      register: subscription_status
+      failed_when: false
+      changed_when: false
+
+    - name: Display subscription status
+      ansible.builtin.debug:
+        msg: "{{ subscription_status.stdout_lines }}"
+
+    - name: Prompt for Red Hat credentials if not registered
+      ansible.builtin.pause:
+        prompt: |
+
+          ════════════════════════════════════════════════════════════════
+          Red Hat Subscription Required
+          ════════════════════════════════════════════════════════════════
+
+          The AAP VM needs to be registered with Red Hat Subscription Management
+          to download AAP 2.6 containerized installer and dependencies.
+
+          Options:
+
+          1. Username/Password:
+             export RHSM_USERNAME="your-username"
+             export RHSM_PASSWORD="your-password"
+
+          2. Activation Key (recommended for automation):
+             export RHSM_ORG_ID="your-org-id"
+             export RHSM_ACTIVATIONKEY="your-activation-key"
+
+          3. Manual registration:
+             Press Ctrl+C to abort, then SSH to VM and run:
+             ssh ansible@{{ aap_vm_ip }}
+             sudo subscription-manager register --username <user>
+             sudo subscription-manager attach --auto
+
+          Press Enter to continue with automated registration, or Ctrl+C to abort.
+      when:
+        - "'Overall Status: Current' not in subscription_status.stdout"
+        - rhsm_username == '' and rhsm_activationkey == ''
+
+    - name: Register with Red Hat (username/password)
+      community.general.redhat_subscription:
+        state: present
+        username: "{{ rhsm_username }}"
+        password: "{{ rhsm_password }}"
+        auto_attach: true
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+      when:
+        - "'Overall Status: Current' not in subscription_status.stdout"
+        - rhsm_username != ''
+        - rhsm_password != ''
+      no_log: true
+
+    - name: Register with Red Hat (activation key)
+      community.general.redhat_subscription:
+        state: present
+        org_id: "{{ rhsm_org_id }}"
+        activationkey: "{{ rhsm_activationkey }}"
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+      when:
+        - "'Overall Status: Current' not in subscription_status.stdout"
+        - rhsm_org_id != ''
+        - rhsm_activationkey != ''
+      no_log: true
+
+    # =========================================================================
+    # Enable Required Repositories
+    # =========================================================================
+    - name: Enable required RHEL 9 repositories
+      community.general.rhsm_repository:
+        name:
+          - rhel-9-for-x86_64-baseos-rpms
+          - rhel-9-for-x86_64-appstream-rpms
+          - ansible-automation-platform-2.6-for-rhel-9-x86_64-rpms
+        state: enabled
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+
+    # =========================================================================
+    # Install Prerequisites
+    # =========================================================================
+    - name: Update system packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+      tags: update
+
+    - name: Install AAP prerequisites
+      ansible.builtin.dnf:
+        name:
+          - ansible-automation-platform-installer
+          - podman
+          - podman-docker
+          - python3
+          - python3-pip
+          - git
+          - wget
+          - curl
+          - tar
+          - postgresql
+        state: present
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+
+    # =========================================================================
+    # Download and Extract AAP Installer
+    # =========================================================================
+    - name: Create AAP installation directory
+      ansible.builtin.file:
+        path: "{{ aap_install_dir }}"
+        state: directory
+        owner: "{{ aap_vm_user }}"
+        group: "{{ aap_vm_user }}"
+        mode: '0755'
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      become: yes
+
+    - name: Check if AAP installer is already downloaded
+      ansible.builtin.stat:
+        path: "{{ aap_install_dir }}/ansible-automation-platform-containerized-setup-latest.tar.gz"
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      register: aap_installer_archive
+
+    - name: Download AAP 2.6 containerized installer
+      ansible.builtin.get_url:
+        url: https://access.redhat.com/downloads/content/480/ver=2.6/rhel---9/2.6/x86_64/product-software
+        dest: "{{ aap_install_dir }}/ansible-automation-platform-containerized-setup-latest.tar.gz"
+        mode: '0644'
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      when: not aap_installer_archive.stat.exists
+      register: aap_download
+      failed_when: false
+
+    - name: Display download note if failed
+      ansible.builtin.debug:
+        msg:
+          - "⚠️  AAP installer download may require manual steps:"
+          - ""
+          - "1. Visit: https://access.redhat.com/downloads/content/480"
+          - "2. Select: Ansible Automation Platform 2.6"
+          - "3. Download: Containerized installer for RHEL 9"
+          - "4. Upload to VM:"
+          - "   scp ansible-automation-platform-containerized-setup-*.tar.gz ansible@{{ aap_vm_ip }}:{{ aap_install_dir }}/"
+      when: aap_download is defined and aap_download.failed
+
+    - name: Extract AAP installer
+      ansible.builtin.unarchive:
+        src: "{{ aap_install_dir }}/ansible-automation-platform-containerized-setup-latest.tar.gz"
+        dest: "{{ aap_install_dir }}"
+        remote_src: yes
+        creates: "{{ aap_install_dir }}/ansible-automation-platform-containerized-setup-*/setup.sh"
+      delegate_to: "{{ aap_vm_ip }}"
+      remote_user: "{{ aap_vm_user }}"
+      when: aap_installer_archive.stat.exists or (aap_download is defined and not aap_download.failed)
+
+    # =========================================================================
+    # Summary and Next Steps
+    # =========================================================================
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - "✅ AAP VM Ready for Installation"
+          - "════════════════════════════════════════════════════════════════"
+          - ""
+          - "VM Details:"
+          - "  IP: {{ aap_vm_ip }}"
+          - "  User: {{ aap_vm_user }}"
+          - "  OS: RHEL 9.8"
+          - "  Installation Dir: {{ aap_install_dir }}"
+          - ""
+          - "Next Steps:"
+          - ""
+          - "1. SSH to AAP VM:"
+          - "   ssh {{ aap_vm_user }}@{{ aap_vm_ip }}"
+          - ""
+          - "2. Configure inventory file:"
+          - "   cd {{ aap_install_dir }}/ansible-automation-platform-containerized-setup-*/"
+          - "   vi inventory"
+          - ""
+          - "3. Run AAP installer:"
+          - "   ./setup.sh -i inventory -e @extra_vars.yml"
+          - ""
+          - "4. Access AAP Web UI:"
+          - "   https://{{ aap_vm_ip }}"
+          - "   Username: admin"
+          - "   Password: {{ aap_admin_password }}"
+          - ""
+          - "Documentation:"
+          - "  - AAP 2.6 Guide: docs/AAP_DEPLOYMENT_GUIDE.md"
+          - "  - Red Hat Docs: https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/"
+          - ""

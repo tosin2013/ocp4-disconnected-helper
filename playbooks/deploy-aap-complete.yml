@@ -1,0 +1,116 @@
+---
+# Complete AAP 2.6 Deployment - End-to-End
+# Provisions VM on VLAN 1924 → Installs AAP 2.6 → Configures HAProxy
+# ADR Reference: ADR 0024 - Roles Architecture
+#                ADR 0025 - VyOS Router Network Infrastructure
+#                ADR 0027 - RHEL Subscription Activation Keys
+
+# =========================================================================
+# Play 1: Provision AAP VM on VLAN 1924
+# =========================================================================
+- name: Provision AAP VM on VLAN 1924
+  hosts: localhost
+  gather_facts: no
+  vars:
+    target_vm: "{{ groups['aap_vms'][0] }}"
+
+  tasks:
+    - name: Provision AAP VM using common_vm role
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_state: present
+        vm_name: "{{ target_vm }}"
+        vm_static_ip: "{{ hostvars[target_vm].vm_static_ip }}"
+        vm_network: "{{ hostvars[target_vm].vm_network }}"
+        vm_gateway: "{{ hostvars[target_vm].vm_gateway }}"
+        vm_dns_servers: "{{ hostvars[target_vm].vm_dns_servers }}"
+        vm_mac_address: "{{ hostvars[target_vm].vm_mac_address }}"
+        vm_memory: "{{ hostvars[target_vm].vm_memory }}"
+        vm_cpus: "{{ hostvars[target_vm].vm_cpus }}"
+        vm_disk_size: "{{ hostvars[target_vm].vm_disk_size }}"
+        vm_user: "{{ hostvars[target_vm].ansible_user }}"
+        vm_hostname: "aap"
+        vm_fqdn: "aap.{{ ocp_cluster_name }}.{{ external_domain }}"
+        vyos_managed_network: "{{ hostvars[target_vm].vyos_managed_network | default(false) }}"
+        # Use RHEL 9 base image for AAP (ADR 0026)
+        vm_base_image_path: "/var/lib/libvirt/images/rhel9-kvm-guest.qcow2"
+        vm_base_image_url: ""  # Image already downloaded
+
+    - name: Wait for AAP VM SSH to be ready
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[target_vm].vm_static_ip }}"
+        port: 22
+        delay: 10
+        timeout: 300
+      delegate_to: localhost
+
+# =========================================================================
+# Play 2: Deploy AAP 2.6 Containerized
+# =========================================================================
+- name: Deploy AAP 2.6 Containerized
+  import_playbook: deploy-aap.yml
+
+# =========================================================================
+# Play 3: Configure HAProxy for AAP Access
+# =========================================================================
+- name: Configure HAProxy for AAP
+  hosts: localhost
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: Update HAProxy configuration
+      ansible.builtin.template:
+        src: ../templates/haproxy/haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: '0644'
+        backup: yes
+      notify: Reload HAProxy
+
+    - name: Verify HAProxy configuration
+      ansible.builtin.command:
+        cmd: haproxy -c -f /etc/haproxy/haproxy.cfg
+      changed_when: false
+
+  handlers:
+    - name: Reload HAProxy
+      ansible.builtin.systemd:
+        name: haproxy
+        state: reloaded
+
+# =========================================================================
+# Play 4: Display Access Information
+# =========================================================================
+- name: Display AAP Access Information
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - "✅ AAP 2.6 Deployment Complete!"
+          - "════════════════════════════════════════════════════════════════"
+          - ""
+          - "Direct Access (VLAN 1924):"
+          - "  URL: https://{{ aap_vm_ip }}"
+          - "  Username: admin"
+          - "  Password: {{ aap_admin_password }}"
+          - ""
+          - "HAProxy Access (SNI Routing):"
+          - "  URL: https://{{ aap_url }}"
+          - "  Username: admin"
+          - "  Password: {{ aap_admin_password }}"
+          - ""
+          - "SSH Access:"
+          - "  ssh ansible@{{ aap_vm_ip }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Configure DNS: Point {{ aap_url }} to {{ external_ip }}"
+          - "  2. Upload Red Hat subscription manifest"
+          - "  3. Configure projects and inventories"
+          - ""
