@@ -1,0 +1,307 @@
+---
+# oc-mirror v2 Push to Registry Playbook
+#
+# This playbook pushes mirrored OpenShift images from disk to a registry
+# using oc-mirror v2 (diskToMirror workflow).
+#
+# Prerequisites:
+#   - oc-mirror workspace created by download-to-disk-v2.yml
+#   - Target registry deployed and accessible
+#   - Combined pull-secret with both Red Hat and mirror registry credentials
+#
+# Usage:
+#   # Dry-run mode (validate only)
+#   ansible-playbook -i inventory push-to-registry-v2.yml \
+#     -e "dry_run=true" \
+#     -e "target_registry=registry.example.com:8443"
+#
+#   # Production push
+#   ansible-playbook -i inventory push-to-registry-v2.yml \
+#     -e "target_registry=registry.example.com:8443"
+#
+# Variables:
+#   workspace_path: Path to oc-mirror workspace (default: /data/ocp-mirror/oc-mirror-workspace)
+#   target_registry: Registry URL (e.g., registry.example.com:8443)
+#   target_namespace: Namespace in registry (default: openshift4)
+#   combined_pull_secret: Path to combined pull-secret (default: ~/pull-secret-combined.json)
+#   skip_tls_verify: Skip TLS verification (default: false, set true for self-signed certs)
+#   dry_run: Validation only (default: false)
+
+- name: Push mirrored images to registry using oc-mirror v2
+  hosts: localhost
+  gather_facts: true
+  become: false
+
+  vars:
+    # Default values (override in inventory or CLI)
+    workspace_path: "/data/ocp-mirror/oc-mirror-workspace"
+    target_registry: "{{ quay_url }}:{{ quay_vm_port }}"  # From inventory
+    target_namespace: "openshift4"
+    combined_pull_secret: "{{ lookup('env', 'HOME') }}/pull-secret-combined.json"
+    imageset_config: "{{ workspace_path | dirname }}/imageset-config-v2.yml"
+    skip_tls_verify: false
+    dry_run: false
+
+    # oc-mirror v2 settings
+    parallel_images: 4
+    parallel_layers: 5
+    max_retries: 5
+
+  tasks:
+    # =========================================================================
+    # Prerequisites Validation
+    # =========================================================================
+    - name: Validate oc-mirror is installed
+      ansible.builtin.command: which oc-mirror
+      register: oc_mirror_check
+      changed_when: false
+      failed_when: oc_mirror_check.rc != 0
+
+    - name: Check oc-mirror version
+      ansible.builtin.command: oc-mirror version
+      register: oc_mirror_version
+      changed_when: false
+
+    - name: Display oc-mirror version
+      ansible.builtin.debug:
+        msg: "{{ oc_mirror_version.stdout_lines }}"
+
+    - name: Validate workspace exists
+      ansible.builtin.stat:
+        path: "{{ workspace_path }}"
+      register: workspace_stat
+
+    - name: Fail if workspace not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ ERROR: Workspace not found at {{ workspace_path }}
+
+          Run download-to-disk-v2.yml first to create the workspace.
+      when: not workspace_stat.stat.exists
+
+    - name: Validate ImageSetConfiguration exists
+      ansible.builtin.stat:
+        path: "{{ imageset_config }}"
+      register: imageset_stat
+
+    - name: Fail if ImageSetConfiguration not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ ERROR: ImageSetConfiguration not found at {{ imageset_config }}
+
+          Expected location: {{ workspace_path | dirname }}/imageset-config-v2.yml
+      when: not imageset_stat.stat.exists
+
+    - name: Validate combined pull-secret exists
+      ansible.builtin.stat:
+        path: "{{ combined_pull_secret }}"
+      register: pull_secret_stat
+
+    - name: Fail if combined pull-secret not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ ERROR: Combined pull-secret not found at {{ combined_pull_secret }}
+
+          Run setup-registry-authentication.yml to create it, or specify the path:
+            -e "combined_pull_secret=/path/to/pull-secret.json"
+      when: not pull_secret_stat.stat.exists
+
+    - name: Validate pull-secret JSON format
+      ansible.builtin.command:
+        cmd: jq empty {{ combined_pull_secret }}
+      changed_when: false
+
+    # =========================================================================
+    # Registry Connectivity Test
+    # =========================================================================
+    - name: Test registry connectivity
+      ansible.builtin.uri:
+        url: "https://{{ target_registry }}/v2/"
+        validate_certs: "{{ not skip_tls_verify }}"
+        status_code: [200, 401]  # 401 is OK (means auth required but reachable)
+      register: registry_check
+      failed_when: false
+
+    - name: Display registry connectivity
+      ansible.builtin.debug:
+        msg: "{{ '✅' if registry_check.status in [200, 401] else '❌' }} Registry connectivity: {{ 'SUCCESS' if registry_check.status in [200, 401] else 'FAILED' }}"
+
+    - name: Warn if registry unreachable
+      ansible.builtin.debug:
+        msg:
+          - "⚠️  WARNING: Registry not reachable at https://{{ target_registry }}/v2/"
+          - "   This may cause the push to fail"
+          - "   Check HAProxy routing, DNS, and firewall rules"
+      when: registry_check.status not in [200, 401]
+
+    - name: Test registry authentication
+      ansible.builtin.command:
+        cmd: >
+          podman login
+          --authfile {{ combined_pull_secret }}
+          {{ target_registry }}
+      register: login_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display authentication test
+      ansible.builtin.debug:
+        msg: "{{ '✅' if login_test.rc == 0 else '❌' }} Registry authentication: {{ 'SUCCESS' if login_test.rc == 0 else 'FAILED' }}"
+
+    - name: Fail if authentication failed
+      ansible.builtin.fail:
+        msg: |
+          ❌ ERROR: Registry authentication failed
+
+          Error: {{ login_test.stderr }}
+
+          Troubleshooting:
+          1. Verify credentials in {{ combined_pull_secret }}
+          2. Check registry is accessible: curl -k https://{{ target_registry }}/health/instance
+          3. Run setup-registry-authentication.yml to regenerate pull-secret
+      when: login_test.rc != 0
+
+    # =========================================================================
+    # Dry-Run Mode
+    # =========================================================================
+    - name: Dry-run validation
+      when: dry_run | bool
+      block:
+        - name: Build dry-run command
+          ansible.builtin.set_fact:
+            dry_run_cmd: >-
+              oc-mirror
+              --config {{ imageset_config }}
+              --from file://{{ workspace_path }}
+              docker://{{ target_registry }}/{{ target_namespace }}
+              --authfile {{ combined_pull_secret }}
+              {{ '--dest-tls-verify=false' if skip_tls_verify else '' }}
+              --dry-run
+              --v2
+
+        - name: Display dry-run command
+          ansible.builtin.debug:
+            msg: "{{ dry_run_cmd }}"
+
+        - name: Run oc-mirror dry-run
+          ansible.builtin.command:
+            cmd: "{{ dry_run_cmd }}"
+          register: dry_run_output
+          changed_when: false
+          failed_when: false
+          environment:
+            PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+
+        - name: Display dry-run results
+          ansible.builtin.debug:
+            msg: "{{ dry_run_output.stdout_lines }}"
+
+        - name: Display dry-run errors if any
+          ansible.builtin.debug:
+            msg: "{{ dry_run_output.stderr_lines }}"
+          when: dry_run_output.stderr | length > 0
+
+        - name: Dry-run summary
+          ansible.builtin.debug:
+            msg:
+              - "=============================================="
+              - "Dry-Run Validation Complete"
+              - "=============================================="
+              - ""
+              - "Status: {{ '✅ PASSED' if dry_run_output.rc == 0 else '❌ FAILED' }}"
+              - "Workspace: {{ workspace_path }}"
+              - "Target: docker://{{ target_registry }}/{{ target_namespace }}"
+              - ""
+              - "{{ 'Ready for production push. Remove -e \"dry_run=true\" to proceed.' if dry_run_output.rc == 0 else 'Fix errors above before proceeding.' }}"
+              - ""
+              - "=============================================="
+
+        - name: End play after dry-run
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Production Push (diskToMirror)
+    # =========================================================================
+    - name: Build oc-mirror push command
+      ansible.builtin.set_fact:
+        oc_mirror_push_cmd: >-
+          oc-mirror
+          --config {{ imageset_config }}
+          --from file://{{ workspace_path }}
+          docker://{{ target_registry }}/{{ target_namespace }}
+          --authfile {{ combined_pull_secret }}
+          {{ '--dest-tls-verify=false' if skip_tls_verify else '' }}
+          --parallel-images {{ parallel_images }}
+          --parallel-layers {{ parallel_layers }}
+          --retry-times {{ max_retries }}
+          --v2
+
+    - name: Display push command
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "Starting oc-mirror v2 Push to Registry"
+          - "=============================================="
+          - ""
+          - "Command: {{ oc_mirror_push_cmd }}"
+          - ""
+          - "Source: file://{{ workspace_path }}"
+          - "Target: docker://{{ target_registry }}/{{ target_namespace }}"
+          - ""
+          - "This may take 30-60 minutes depending on image count..."
+          - ""
+          - "=============================================="
+
+    - name: Run oc-mirror push (diskToMirror) - Phase 2
+      ansible.builtin.command:
+        cmd: "{{ oc_mirror_push_cmd }}"
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      async: 14400  # 4 hours timeout
+      poll: 30      # Check every 30 seconds
+      register: push_output
+
+    - name: Display push results
+      ansible.builtin.debug:
+        msg: "{{ push_output.stdout_lines }}"
+
+    # =========================================================================
+    # Post-Push Validation
+    # =========================================================================
+    - name: Verify images in registry
+      ansible.builtin.uri:
+        url: "https://{{ target_registry }}/v2/_catalog"
+        validate_certs: "{{ not skip_tls_verify }}"
+        url_username: "{{ lookup('env', 'REGISTRY_USER') | default(omit) }}"
+        url_password: "{{ lookup('env', 'REGISTRY_PASSWORD') | default(omit) }}"
+        force_basic_auth: yes
+      register: catalog_check
+      failed_when: false
+
+    - name: Count repositories in registry
+      ansible.builtin.set_fact:
+        repo_count: "{{ (catalog_check.json.repositories | default([])) | length }}"
+      when: catalog_check.status == 200
+
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "oc-mirror v2 Push Complete"
+          - "=============================================="
+          - ""
+          - "Registry: {{ target_registry }}"
+          - "Namespace: {{ target_namespace }}"
+          - "{{ 'Repositories: ' + repo_count if catalog_check.status == 200 else 'Registry catalog check failed' }}"
+          - ""
+          - "Verify images:"
+          - "  curl -k https://{{ target_registry }}/v2/_catalog | jq '.repositories'"
+          - ""
+          - "Test pull:"
+          - "  podman pull {{ target_registry }}/{{ target_namespace }}/openshift4/ose-cli:latest --authfile {{ combined_pull_secret }}"
+          - ""
+          - "Next Steps:"
+          - "1. Configure install-config.yaml with imageContentSources"
+          - "2. Run OpenShift installer with mirror registry"
+          - ""
+          - "=============================================="

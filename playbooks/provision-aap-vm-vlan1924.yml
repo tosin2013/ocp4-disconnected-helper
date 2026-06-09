@@ -1,0 +1,31 @@
+---
+# Provision AAP VM on VLAN 1924 using common_vm role
+# ADR Reference: ADR 0024 - Roles Architecture
+#                ADR 0025 - VyOS Router Network Infrastructure
+
+- name: Provision AAP VM on VLAN 1924
+  hosts: localhost
+  gather_facts: no
+  vars:
+    # Target host from inventory
+    target_vm: "{{ groups['aap_vms'][0] }}"
+
+  tasks:
+    - name: Provision AAP VM using common_vm role
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_state: present
+        vm_name: "{{ target_vm }}"
+        vm_static_ip: "{{ hostvars[target_vm].vm_static_ip }}"
+        vm_network: "{{ hostvars[target_vm].vm_network }}"
+        vm_gateway: "{{ hostvars[target_vm].vm_gateway }}"
+        vm_dns_servers: "{{ hostvars[target_vm].vm_dns_servers }}"
+        vm_mac_address: "{{ hostvars[target_vm].vm_mac_address }}"
+        vm_memory: "{{ hostvars[target_vm].vm_memory }}"
+        vm_cpus: "{{ hostvars[target_vm].vm_cpus }}"
+        vm_disk_size: "{{ hostvars[target_vm].vm_disk_size }}"
+        vm_user: "{{ hostvars[target_vm].ansible_user }}"
+        vm_hostname: "aap"
+        vm_fqdn: "aap.{{ ocp_cluster_name }}.{{ external_domain }}"
+        vyos_managed_network: "{{ hostvars[target_vm].vyos_managed_network | default(false) }}"  # Skip libvirt DHCP on VyOS networks

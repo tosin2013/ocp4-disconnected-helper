@@ -1,0 +1,80 @@
+---
+- name: Configure Static IP on VM
+  hosts: "{{ target_host | default('localhost') }}"
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # These should be provided via -e or inventory
+    static_ip: "{{ vm_static_ip }}"
+    netmask: "{{ vm_netmask | default('255.255.255.0') }}"
+    gateway: "{{ vm_gateway | default('192.168.122.1') }}"
+    dns_servers: "{{ vm_dns | default(['8.8.8.8', '8.8.4.4']) }}"
+
+  tasks:
+    - name: Get primary network interface
+      ansible.builtin.set_fact:
+        primary_interface: "{{ ansible_default_ipv4.interface }}"
+
+    - name: Display current IP configuration
+      ansible.builtin.debug:
+        msg:
+          - "Current interface: {{ primary_interface }}"
+          - "Current IP: {{ ansible_default_ipv4.address }}"
+          - "Target static IP: {{ static_ip }}"
+
+    - name: Check if NetworkManager is running
+      ansible.builtin.systemd:
+        name: NetworkManager
+        state: started
+      register: nm_status
+
+    - name: Get current connection name
+      ansible.builtin.command:
+        cmd: nmcli -t -f NAME,DEVICE con show --active
+      register: active_connections
+      changed_when: false
+
+    - name: Parse connection name
+      ansible.builtin.set_fact:
+        connection_name: "{{ (active_connections.stdout_lines | select('search', primary_interface) | first).split(':')[0] }}"
+
+    - name: Display connection to modify
+      ansible.builtin.debug:
+        msg: "Modifying connection: {{ connection_name }}"
+
+    - name: Configure static IP with NetworkManager
+      ansible.builtin.command:
+        cmd: >
+          nmcli con mod "{{ connection_name }}"
+          ipv4.method manual
+          ipv4.addresses {{ static_ip }}/24
+          ipv4.gateway {{ gateway }}
+          ipv4.dns "{{ dns_servers | join(' ') }}"
+      changed_when: true
+      register: nm_config
+
+    - name: Apply network configuration (reboot required)
+      ansible.builtin.reboot:
+        msg: "Rebooting to apply static IP {{ static_ip }}"
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: nm_config is changed
+
+    - name: Wait for VM to come back on new IP
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        timeout: 300
+      when: nm_config is changed
+
+    - name: Verify new IP configuration
+      ansible.builtin.setup:
+        filter: ansible_default_ipv4
+
+    - name: Display final IP configuration
+      ansible.builtin.debug:
+        msg:
+          - "✅ Static IP configured successfully"
+          - "Interface: {{ ansible_default_ipv4.interface }}"
+          - "IP Address: {{ ansible_default_ipv4.address }}"
+          - "Gateway: {{ ansible_default_ipv4.gateway }}"
