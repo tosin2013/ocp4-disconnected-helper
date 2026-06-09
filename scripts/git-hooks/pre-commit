@@ -10,7 +10,7 @@ echo "🔍 Running credential safety checks..."
 CREDENTIAL_PATTERNS=(
   # Red Hat service account credentials
   "[0-9]{8}\|[a-zA-Z0-9_-]+"  # Pattern: 12216224|service-account-name
-  "eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*"  # JWT tokens
+  "eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}"  # JWT tokens (full length only, not "eyJ..." examples)
 
   # Generic credentials (but not variable assignments like REGISTRY_PASSWORD=$(...)
   "password['\"]?[[:space:]]*=[[:space:]]*['\"][^<\$][^'\"]{8,}['\"]"  # password='actual-password'

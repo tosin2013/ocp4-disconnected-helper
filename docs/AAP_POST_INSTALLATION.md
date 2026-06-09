@@ -394,6 +394,254 @@ sudo systemctl restart nginx
 
 ---
 
+---
+
+## Configure Red Hat Container Registry Credentials
+
+**Required for**: Execution environment container image pulls from registry.redhat.io
+
+**Symptom if missing**: Project syncs fail with "unable to retrieve auth token: invalid username/password: unauthorized"
+
+### Via Web UI
+
+1. **Navigate to Administration**:
+   - Log in: https://aap.sandbox3377.opentlc.com
+   - Click **Administration** → **Execution Environments**
+
+2. **Edit Control Plane Execution Environment**:
+   - Click on **Control Plane Execution Environment**
+   - Click **Edit**
+
+3. **Create Container Registry Credential** (if not exists):
+   - Under **Credential**, click **+** (Add)
+   - Fill in:
+     ```
+     Name: Red Hat Registry Credential
+     Description: registry.redhat.io authentication
+     Credential Type: Container Registry
+     ```
+   - Authentication:
+     ```
+     Registry URL: registry.redhat.io
+     Username: <your Red Hat username from extra_vars/rhel-subscription-secrets.yml>
+     Password or Token: <your Red Hat registry password>
+     Verify SSL: ✅ (checked)
+     ```
+   - Click **Save**
+
+4. **Assign Credential to Execution Environment**:
+   - In the **Control Plane Execution Environment** edit screen
+   - **Credential** dropdown: Select **Red Hat Registry Credential**
+   - Click **Save**
+
+### Via API
+
+```bash
+# Create Container Registry credential
+CRED_ID=$(curl -k -u admin:<admin_password> \
+  -H "Content-Type: application/json" \
+  -X POST \
+  https://aap.sandbox3377.opentlc.com/api/controller/v2/credentials/ \
+  -d '{
+    "name": "Red Hat Registry Credential",
+    "description": "registry.redhat.io authentication",
+    "organization": 1,
+    "credential_type": 18,
+    "inputs": {
+      "host": "registry.redhat.io",
+      "username": "<registry_username>",
+      "password": "<registry_password>",
+      "verify_ssl": true
+    }
+  }' | jq -r '.id')
+
+# Update execution environment to use the credential
+curl -k -u admin:<admin_password> \
+  -H "Content-Type: application/json" \
+  -X PATCH \
+  https://aap.sandbox3377.opentlc.com/api/controller/v2/execution_environments/3/ \
+  -d "{\"credential\": $CRED_ID}"
+```
+
+**Verification**:
+```bash
+# Test project sync (should succeed now)
+curl -k -u admin:<admin_password> \
+  -X POST \
+  https://aap.sandbox3377.opentlc.com/api/controller/v2/projects/<project_id>/update/
+```
+
+---
+
+## Credential Rotation and Security Maintenance
+
+### Red Hat Service Account Rotation
+
+**Rotation Schedule**: Every 90-180 days (or per your organization's security policy)
+
+**Why Rotate**: Service accounts with long-lived tokens pose security risks if compromised. Regular rotation limits exposure window.
+
+#### Step 1: Generate New Service Account
+
+1. Navigate to https://access.redhat.com/terms-based-registry/
+2. Click **"New Service Account"**
+3. Configure:
+   - **Name**: `ansible-execution-environment-<date>` (e.g., `ansible-execution-environment-jun2026`)
+   - **Description**: `AAP 2.6 execution environment authentication`
+4. Click **"Create"**
+5. **Copy and save securely**:
+   - **Service Account Name**: `<org-id>|<service-account-name>`
+   - **Token**: `eyJ...` (2000+ character JWT)
+
+⚠️ **Security**: Store credentials in password manager immediately - token only displayed once
+
+#### Step 2: Update Ansible Vault
+
+```bash
+# Edit encrypted secrets file
+ansible-vault edit extra_vars/rhel-subscription-secrets.yml
+
+# Update these variables:
+registry_username: '<new-org-id>|<new-service-account-name>'
+registry_password: '<new-jwt-token>'
+```
+
+**Verify encryption**:
+```bash
+# Should show "$ANSIBLE_VAULT;1.1;AES256..." not plaintext
+cat extra_vars/rhel-subscription-secrets.yml
+```
+
+#### Step 3: Update AAP Installer Inventory
+
+**On AAP Gateway VM**:
+```bash
+# SSH to AAP gateway
+ssh ansible@aap.sandbox3377.opentlc.com
+
+# Backup current inventory
+sudo cp /opt/ansible-automation-platform/installer/inventory \
+  /opt/ansible-automation-platform/installer/inventory.backup.$(date +%Y%m%d_%H%M%S)
+
+# Edit inventory file
+sudo vim /opt/ansible-automation-platform/installer/inventory
+```
+
+**Update [all:vars] section**:
+```ini
+[all:vars]
+registry_url='registry.redhat.io'
+registry_username='<new-org-id>|<new-service-account-name>'
+registry_password='<new-jwt-token>'
+```
+
+**Save and verify**:
+```bash
+# Confirm credentials present
+sudo grep "^registry_" /opt/ansible-automation-platform/installer/inventory
+```
+
+#### Step 4: Reconfigure AAP with New Credentials
+
+**Run AAP setup.sh**:
+```bash
+cd /opt/ansible-automation-platform/installer/
+sudo ./setup.sh -i inventory
+```
+
+**Expected output**:
+- All nodes reconfigured (5-10 minutes)
+- Gateway: ~197 ok, ~25 changed
+- Controller: ~312 ok, ~52 changed  
+- Database: ~81 ok, ~9 changed
+
+**Wait for services to restart** (2-3 minutes):
+```bash
+# Check Gateway services
+sudo systemctl status nginx
+
+# Check Controller services
+ssh ansible@192.168.10.21 "sudo systemctl status automation-controller"
+
+# Check Database services
+ssh ansible@192.168.10.22 "sudo systemctl status postgresql"
+```
+
+#### Step 5: Verify New Credentials Work
+
+**Test project sync**:
+```bash
+# Via API (from any host with network access)
+curl -sk -u admin:<admin_password> \
+  "https://aap.sandbox3377.opentlc.com/api/controller/v2/projects/<project-id>/update/" \
+  -X POST
+```
+
+**Check sync status**:
+```bash
+curl -sk -u admin:<admin_password> \
+  "https://aap.sandbox3377.opentlc.com/api/controller/v2/project_updates/?order_by=-id" | \
+  jq -r '.results[0] | {status, started, finished}'
+```
+
+**Expected**: `"status": "successful"` (not "failed")
+
+#### Step 6: Revoke Old Service Account
+
+**After confirming new credentials work**:
+
+1. Navigate to https://access.redhat.com/terms-based-registry/
+2. Find old service account in list
+3. Click **"..." (Actions)** → **"Delete"**
+4. Confirm deletion
+
+⚠️ **Warning**: Do NOT revoke old credentials before verifying new ones work - you'll lose AAP access
+
+### AAP Admin Password Rotation
+
+**Rotation Schedule**: Every 90 days (or per security policy)
+
+**Passwords to Rotate**:
+- `automationgateway_admin_password` (Web UI login)
+- `admin_password` (Controller API authentication)
+- Database passwords (if not using managed PostgreSQL)
+
+**Process**: See [ADR 0028: AAP Multi-Node Password Architecture](adrs/0028-aap-multi-node-password-architecture.md) for password rotation procedures.
+
+### Certificate Rotation
+
+**For Let's Encrypt Certificates** (automatic renewal):
+- **Renewal**: Automatic via certbot (every 60 days)
+- **Verification**: Check `/var/log/letsencrypt/letsencrypt.log`
+
+**For Self-Signed Certificates** (manual renewal):
+- **Expiration**: Typically 365 days
+- **Renewal Process**: Re-run `playbooks/setup-certificates.yml` before expiration
+- **Update AAP**: Re-run `setup.sh` after certificate renewal
+
+### Security Audit Checklist
+
+**Monthly**:
+- [ ] Review AAP user accounts - remove inactive users
+- [ ] Check API access logs for anomalies
+- [ ] Verify HTTPS certificates have >30 days until expiration
+- [ ] Review job template permissions
+
+**Quarterly** (90 days):
+- [ ] Rotate Red Hat service account credentials
+- [ ] Rotate AAP admin passwords
+- [ ] Review and update firewall rules
+- [ ] Update AAP to latest patch version
+- [ ] Review execution environment images for vulnerabilities
+
+**Annually**:
+- [ ] Renew Red Hat subscription manifest
+- [ ] Review and update ADRs for accuracy
+- [ ] Security audit of automation workflows
+- [ ] Backup and disaster recovery test
+
+---
+
 ## Next Steps
 
 After successful activation and verification:
@@ -413,3 +661,5 @@ After successful activation and verification:
 - [Subscription Management](https://access.redhat.com/management/subscription_allocations)
 - [AAP License Model](https://www.redhat.com/en/technologies/management/ansible/pricing)
 - [ADR 0028: Multi-Node Password Architecture](adrs/0028-aap-multi-node-password-architecture.md)
+- [ADR 0031: AAP Installer Registry Credentials](adrs/0031-aap-installer-registry-credentials.md)
+- [docs/SECURITY.md: Credential Management Guidelines](SECURITY.md)
