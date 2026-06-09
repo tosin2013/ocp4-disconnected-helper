@@ -1,0 +1,40 @@
+---
+# Deploy Complete Registry Infrastructure
+# Unified playbook using registry_vm role for atomic deployment
+#
+# Usage:
+#   # Deploy registry:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/deploy-registry.yml
+#
+#   # Delete registry:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/deploy-registry.yml -e vm_state=absent
+
+- name: Deploy Registry VM and Mirror-Registry
+  hosts: registry
+  gather_facts: yes
+  vars:
+    # VM provisioning (delegated to localhost for libvirt operations)
+    ansible_connection: "{{ 'local' if (vm_state | default('present') != 'present') or (registry_vm_exists | default(false) == false) else 'ssh' }}"
+
+    # Registry configuration
+    registry_hostname: "{{ quay_url }}"
+    registry_port: "{{ quay_vm_port }}"
+
+  tasks:
+    - name: Check if registry VM exists
+      ansible.builtin.command: virsh domstate registry
+      register: vm_check
+      delegate_to: localhost
+      failed_when: false
+      changed_when: false
+
+    - name: Set registry VM exists fact
+      ansible.builtin.set_fact:
+        registry_vm_exists: "{{ vm_check.rc == 0 }}"
+
+    - name: Deploy registry using registry_vm role
+      ansible.builtin.import_role:
+        name: registry_vm
+      vars:
+        vm_use_static_ip: true
+        vm_static_ip: "{{ hostvars[inventory_hostname].ansible_host }}"

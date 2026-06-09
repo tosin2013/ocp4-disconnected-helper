@@ -1,0 +1,26 @@
+---
+# Teardown existing aap-vm to prepare for multi-node deployment
+# ADR Reference: ADR 0024 - Roles Architecture (Ansible-first)
+
+- name: Teardown Existing AAP VM
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Teardown aap-vm using common_vm role
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_state: absent
+        vm_name: "aap-vm"
+        vm_disk_path: "/data/libvirt-images"
+
+    - name: Display teardown complete
+      ansible.builtin.debug:
+        msg:
+          - "✅ aap-vm teardown complete"
+          - "   VM destroyed and undefined"
+          - "   Disk image removed"
+          - "   Cloud-init ISO removed"
+          - ""
+          - "Ready for multi-node AAP 2.6 deployment"

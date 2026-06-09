@@ -1,0 +1,70 @@
+---
+# Provision Registry VM with Static IP Configuration
+# This playbook combines VM provisioning with post-boot static IP setup
+# to ensure HAProxy can reliably connect to the registry backend
+
+- name: Provision Registry VM
+  import_playbook: provision-registry-vm.yml
+
+- name: Configure Static IP on Registry VM
+  hosts: localhost
+  gather_facts: no
+  vars:
+    registry_temp_ip: "{{ lookup('pipe', 'sudo virsh domifaddr registry-vm | grep ipv4 | awk \"{print $4}\" | cut -d/ -f1') }}"
+    registry_static_ip: "{{ quay_vm_ip }}"
+
+  tasks:
+    - name: Wait for VM to get DHCP IP
+      ansible.builtin.pause:
+        seconds: 60
+        prompt: "Waiting for VM to boot and get DHCP IP"
+
+    - name: Detect VM IP address
+      ansible.builtin.command:
+        cmd: sudo virsh domifaddr registry-vm
+      register: vm_ip_output
+      retries: 10
+      delay: 10
+      until: vm_ip_output.stdout is search('ipv4')
+
+    - name: Parse DHCP IP
+      ansible.builtin.set_fact:
+        current_dhcp_ip: "{{ vm_ip_output.stdout | regex_search('([0-9]{1,3}\\.){3}[0-9]{1,3}') }}"
+
+    - name: Display detected IP
+      ansible.builtin.debug:
+        msg:
+          - "VM booted with DHCP IP: {{ current_dhcp_ip }}"
+          - "Will configure static IP: {{ registry_static_ip }}"
+
+    - name: Configure static IP via SSH to DHCP address
+      ansible.builtin.command:
+        cmd: >
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          registry@{{ current_dhcp_ip }}
+          'sudo nmcli con mod "System eth0" ipv4.method manual ipv4.addresses {{ registry_static_ip }}/24 ipv4.gateway 192.168.122.1 ipv4.dns 8.8.8.8 &&
+          sudo nmcli con down "System eth0" && sudo nmcli con up "System eth0"'
+      register: ip_config
+      ignore_errors: yes
+
+    - name: Wait for VM to come back on static IP
+      ansible.builtin.wait_for:
+        host: "{{ registry_static_ip }}"
+        port: 22
+        delay: 10
+        timeout: 120
+      when: ip_config is succeeded
+
+    - name: Verify static IP is configured
+      ansible.builtin.command:
+        cmd: ssh -o StrictHostKeyChecking=no registry@{{ registry_static_ip }} 'ip addr show eth0'
+      register: final_ip
+      failed_when: registry_static_ip not in final_ip.stdout
+
+    - name: Display success
+      ansible.builtin.debug:
+        msg:
+          - "✅ Registry VM provisioned with static IP"
+          - "   IP: {{ registry_static_ip }}"
+          - "   Hostname: registry.ocp4.sandbox3377.opentlc.com"
+          - "   SSH: ssh registry@{{ registry_static_ip }}"

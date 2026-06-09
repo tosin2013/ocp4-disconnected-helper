@@ -1,0 +1,242 @@
+---
+# Setup Registry Authentication for oc-mirror
+#
+# This playbook:
+# 1. Validates pull-secret.json exists
+# 2. Extracts Red Hat registry credentials
+# 3. Retrieves mirror-registry credentials
+# 4. Creates combined pull-secret with both registries
+# 5. Tests authentication to both registries
+#
+# Prerequisites:
+#   - ~/pull-secret.json exists (HARD REQUIREMENT)
+#   - Mirror-registry deployed and accessible
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/setup-registry-authentication.yml
+
+- name: Setup Registry Authentication for oc-mirror
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    pull_secret_path: "{{ lookup('env', 'HOME') }}/pull-secret.json"
+    mirror_registry_url: "{{ quay_url }}"
+    mirror_registry_port: "{{ quay_vm_port }}"
+    combined_secret_path: "{{ lookup('env', 'HOME') }}/pull-secret-combined.json"
+
+  tasks:
+    # =========================================================================
+    # Validate Prerequisites
+    # =========================================================================
+    - name: Check if pull-secret.json exists
+      ansible.builtin.stat:
+        path: "{{ pull_secret_path }}"
+      register: pull_secret_stat
+
+    - name: Fail if pull-secret.json not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ HARD REQUIREMENT: pull-secret.json not found at {{ pull_secret_path }}
+
+          Download your pull secret from:
+          https://console.redhat.com/openshift/install/pull-secret
+
+          Save it to: {{ pull_secret_path }}
+      when: not pull_secret_stat.stat.exists
+
+    - name: Validate pull-secret.json is valid JSON
+      ansible.builtin.command:
+        cmd: jq empty {{ pull_secret_path }}
+      register: pull_secret_validation
+      failed_when: pull_secret_validation.rc != 0
+      changed_when: false
+
+    # =========================================================================
+    # Extract Red Hat Registry Credentials
+    # =========================================================================
+    - name: Extract Red Hat registry credentials from pull-secret
+      ansible.builtin.shell: |
+        REDHAT_CREDS=$(cat {{ pull_secret_path }} | jq .auths.\"registry.redhat.io\".auth -r | base64 -d)
+        RHN_USER=$(echo $REDHAT_CREDS | cut -d: -f1)
+        RHN_PASSWORD=$(echo $REDHAT_CREDS | cut -d: -f2)
+        echo "{ \"user\": \"$RHN_USER\", \"password\": \"$RHN_PASSWORD\" }"
+      register: rhn_creds
+      changed_when: false
+      no_log: true  # Don't log credentials
+
+    - name: Parse Red Hat credentials
+      ansible.builtin.set_fact:
+        rhn_user: "{{ (rhn_creds.stdout | from_json).user }}"
+        rhn_password: "{{ (rhn_creds.stdout | from_json).password }}"
+      no_log: true
+
+    - name: Display Red Hat registry user (masked)
+      ansible.builtin.debug:
+        msg: "Red Hat registry user: {{ rhn_user | regex_replace('(.{3}).*', '\\1***') }}"
+
+    # =========================================================================
+    # Retrieve Mirror-Registry Credentials
+    # =========================================================================
+    - name: Get mirror-registry credentials from registry VM
+      ansible.builtin.shell: |
+        ssh -i {{ lookup('env', 'HOME') }}/.ssh/id_rsa \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          root@{{ quay_vm_ip }} \
+          'grep -E "^REGISTRY_(USER|PASSWORD)=" /opt/mirror-registry/credentials.txt' 2>/dev/null
+      register: mirror_creds_raw
+      changed_when: false
+      failed_when: false
+
+
+    - name: Set mirror-registry user
+      ansible.builtin.set_fact:
+        mirror_user: "{{ (mirror_creds_raw.stdout_lines | select('search', 'REGISTRY_USER') | first).split('=')[1] }}"
+
+    - name: Set mirror-registry password
+      ansible.builtin.set_fact:
+        mirror_password: "{{ (mirror_creds_raw.stdout_lines | select('search', 'REGISTRY_PASSWORD') | first).split('=')[1] }}"
+      no_log: true
+
+    - name: Display mirror-registry user
+      ansible.builtin.debug:
+        msg: "Mirror-registry user: {{ mirror_user }}"
+
+    # =========================================================================
+    # Create Combined Pull Secret
+    # =========================================================================
+    - name: Create base64 auth string for mirror-registry
+      ansible.builtin.shell: |
+        echo -n "{{ mirror_user }}:{{ mirror_password }}" | base64 -w0
+      register: mirror_auth_b64
+      changed_when: false
+      no_log: true
+
+    - name: Load existing pull-secret
+      ansible.builtin.slurp:
+        src: "{{ pull_secret_path }}"
+      register: pull_secret_content
+
+    - name: Add mirror-registry to pull-secret
+      ansible.builtin.set_fact:
+        combined_secret: >-
+          {{
+            pull_secret_content.content | b64decode | from_json |
+            combine({
+              'auths': (pull_secret_content.content | b64decode | from_json).auths | combine({
+                (mirror_registry_url + ':' + (mirror_registry_port | string)): {
+                  'auth': mirror_auth_b64.stdout,
+                  'email': 'registry@' + mirror_registry_url
+                }
+              })
+            })
+          }}
+      no_log: true
+
+    - name: Write combined pull-secret
+      ansible.builtin.copy:
+        content: "{{ combined_secret | to_nice_json }}"
+        dest: "{{ combined_secret_path }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Display combined pull-secret location
+      ansible.builtin.debug:
+        msg:
+          - "✅ Combined pull-secret created: {{ combined_secret_path }}"
+          - "   Includes credentials for:"
+          - "   - registry.redhat.io (Red Hat)"
+          - "   - {{ mirror_registry_url }}:{{ mirror_registry_port }} (Mirror)"
+
+    # =========================================================================
+    # Test Authentication
+    # =========================================================================
+    - name: Test Red Hat registry authentication
+      ansible.builtin.shell: |
+        podman login -u "{{ rhn_user }}" -p "{{ rhn_password }}" registry.redhat.io
+      register: rhn_login
+      changed_when: false
+      no_log: true
+
+    - name: Display Red Hat registry login result
+      ansible.builtin.debug:
+        msg: "✅ Red Hat registry authentication: SUCCESS"
+      when: rhn_login.rc == 0
+
+    - name: Test mirror-registry authentication (direct credentials)
+      ansible.builtin.shell: |
+        podman login -u "{{ mirror_user }}" -p "{{ mirror_password }}" \
+          {{ mirror_registry_url }}:{{ mirror_registry_port }}
+      register: mirror_login
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Display mirror-registry login result
+      ansible.builtin.debug:
+        msg: "{{ '✅' if mirror_login.rc == 0 else '❌' }} Mirror-registry authentication: {{ 'SUCCESS' if mirror_login.rc == 0 else 'FAILED' }}"
+
+    - name: Show mirror-registry error if failed
+      ansible.builtin.debug:
+        msg:
+          - "❌ Mirror-registry login error:"
+          - "{{ mirror_login.stderr }}"
+      when: mirror_login.rc != 0
+
+    # =========================================================================
+    # Test with Combined Pull Secret
+    # =========================================================================
+    - name: Test authentication with combined pull-secret
+      ansible.builtin.shell: |
+        podman login --authfile {{ combined_secret_path }} \
+          {{ mirror_registry_url }}:{{ mirror_registry_port }}
+      register: combined_login
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Display combined pull-secret test result
+      ansible.builtin.debug:
+        msg: "{{ '✅' if combined_login.rc == 0 else '❌' }} Combined pull-secret test: {{ 'SUCCESS' if combined_login.rc == 0 else 'FAILED' }}"
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display authentication summary
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "Registry Authentication Summary"
+          - "=============================================="
+          - ""
+          - "Red Hat Registry:"
+          - "  User: {{ rhn_user | regex_replace('(.{3}).*', '\\1***') }}"
+          - "  Status: {{ '✅ SUCCESS' if rhn_login.rc == 0 else '❌ FAILED' }}"
+          - ""
+          - "Mirror Registry:"
+          - "  URL: {{ mirror_registry_url }}:{{ mirror_registry_port }}"
+          - "  User: {{ mirror_user }}"
+          - "  Status: {{ '✅ SUCCESS' if mirror_login.rc == 0 else '❌ FAILED' }}"
+          - ""
+          - "Combined Pull Secret:"
+          - "  Path: {{ combined_secret_path }}"
+          - "  Status: {{ '✅ READY' if (rhn_login.rc == 0 and mirror_login.rc == 0) else '⚠️ NEEDS ATTENTION' }}"
+          - ""
+          - "Next Steps:"
+          - "{% if rhn_login.rc == 0 and mirror_login.rc == 0 %}  ✅ Ready for oc-mirror testing{% else %}  ❌ Fix authentication issues before proceeding{% endif %}"
+          - "{% if rhn_login.rc == 0 and mirror_login.rc == 0 %}  Run: oc-mirror --config imageset-config.yml docker://{{ mirror_registry_url }}:{{ mirror_registry_port }}/openshift4 --authfile {{ combined_secret_path }} --v2{% endif %}"
+          - ""
+          - "=============================================="
+
+    - name: Fail if authentication not working
+      ansible.builtin.fail:
+        msg: |
+          ❌ Authentication failed. Check errors above.
+
+          Troubleshooting:
+          1. Verify mirror-registry is running: ssh root@{{ quay_vm_ip }} 'podman ps'
+          2. Check HAProxy routing: curl -k https://{{ mirror_registry_url }}:{{ mirror_registry_port }}/health/instance
+          3. Review Quay logs: ssh root@{{ quay_vm_ip }} 'podman logs quay-app'
+      when: rhn_login.rc != 0 or mirror_login.rc != 0
