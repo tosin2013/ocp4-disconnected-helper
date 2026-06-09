@@ -51,8 +51,8 @@
     vm_ip: "{{ quay_vm_ip }}"
 
     # Base image and paths
-    base_image_url: "https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2"
-    base_image_path: "/var/lib/libvirt/images/centos10-stream-base.qcow2"
+    base_image_url: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
+    base_image_path: "/var/lib/libvirt/images/centos9-stream-base.qcow2"
     vm_disk: "/var/lib/libvirt/images/{{ vm_name }}.qcow2"
     cloud_init_iso: "/var/lib/libvirt/images/{{ vm_name }}-cloud-init.iso"
 

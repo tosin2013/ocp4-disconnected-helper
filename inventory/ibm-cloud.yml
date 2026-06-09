@@ -131,10 +131,72 @@ all:
   children:
     aap_vms:
       hosts:
-        aap-vm:
-          ansible_host: "192.168.122.72"  # KVM virbr0 network (DHCP)
-          ansible_user: "ansible"  # Cloud-init user
+        # AAP 2.6 Multi-Node Deployment (3 VMs minimum)
+        # Gateway: User-facing web UI and API gateway
+        aap-gateway:
+          ansible_host: "192.168.10.20"  # VLAN 1924 (Management Network)
+          ansible_user: "ansible"
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          aap_component: "gateway"
+
+          # VM Provisioning Configuration
+          vyos_managed_network: true
+          vm_network: "1924"
+          vm_static_ip: "192.168.10.20"
+          vm_gateway: "192.168.10.1"
+          vm_dns_servers:
+            - "192.168.10.1"
+            - "161.26.0.10"
+          vm_mac_address: "52:54:00:aa:10:14"
+
+          # VM Resources (Gateway: 4 vCPU, 8GB RAM minimum)
+          vm_memory: 8192
+          vm_cpus: 4
+          vm_disk_size: 40
+
+        # Controller: Automation engine and job execution
+        aap-controller:
+          ansible_host: "192.168.10.21"  # VLAN 1924 (Management Network)
+          ansible_user: "ansible"
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          aap_component: "controller"
+
+          # VM Provisioning Configuration
+          vyos_managed_network: true
+          vm_network: "1924"
+          vm_static_ip: "192.168.10.21"
+          vm_gateway: "192.168.10.1"
+          vm_dns_servers:
+            - "192.168.10.1"
+            - "161.26.0.10"
+          vm_mac_address: "52:54:00:aa:10:15"
+
+          # VM Resources (Controller: 4 vCPU, 16GB RAM minimum)
+          vm_memory: 16384
+          vm_cpus: 4
+          vm_disk_size: 60
+
+        # Database: PostgreSQL for all AAP services
+        aap-database:
+          ansible_host: "192.168.10.22"  # VLAN 1924 (Management Network)
+          ansible_user: "ansible"
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          aap_component: "database"
+
+          # VM Provisioning Configuration
+          vyos_managed_network: true
+          vm_network: "1924"
+          vm_static_ip: "192.168.10.22"
+          vm_gateway: "192.168.10.1"
+          vm_dns_servers:
+            - "192.168.10.1"
+            - "161.26.0.10"
+          vm_mac_address: "52:54:00:aa:10:16"
+
+          # VM Resources (Database: 4 vCPU, 16GB RAM, 150GB disk minimum)
+          vm_memory: 16384
+          vm_cpus: 4
+          vm_disk_size: 150
 
     registry_vms:
       hosts:

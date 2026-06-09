@@ -78,6 +78,7 @@ frontend https_front
 
     # Service selection based on SNI hostname
     acl host_quay hdr(host) -i {{ quay_url }}
+    acl host_quay_8443 hdr(host) -i {{ quay_url }}:8443
     acl host_harbor hdr(host) -i {{ harbor_url }}
     acl host_jfrog hdr(host) -i {{ jfrog_url }}
     acl host_aap hdr(host) -i {{ aap_url }}
@@ -88,6 +89,7 @@ frontend https_front
 
     # Route to appropriate backend
     use_backend quay_backend if host_quay
+    use_backend quay_backend if host_quay_8443
     use_backend harbor_backend if host_harbor
     use_backend jfrog_backend if host_jfrog
     use_backend aap_backend if host_aap
@@ -95,6 +97,14 @@ frontend https_front
     use_backend ocp_ingress_backend if host_ocp_console
     use_backend ocp_ingress_backend if host_ocp_oauth
     use_backend ocp_ingress_backend if host_ocp_apps
+
+#---------------------------------------------------------------------
+# Quay Registry Frontend (Port 8443 for OAuth compatibility)
+#---------------------------------------------------------------------
+frontend quay_8443_front
+    bind *:8443 ssl crt /etc/haproxy/certs/{{ external_domain }}.pem
+    mode http
+    default_backend quay_backend
 
 #---------------------------------------------------------------------
 # OpenShift API Frontend (Port 6443)
@@ -132,7 +142,8 @@ backend jfrog_backend
 backend aap_backend
     mode http
     balance roundrobin
-    option httpchk GET /api/v2/ping/
+    option httpchk
+    http-check send meth GET uri / ver HTTP/1.1 hdr Host aap.{{ external_domain }}
     http-check expect status 200
     server aap {{ aap_vm_ip }}:{{ aap_vm_port }} check ssl verify none
 
@@ -232,7 +243,8 @@ frontend aap_front
 backend aap_backend
     mode http
     balance roundrobin
-    option httpchk GET /api/v2/ping/
+    option httpchk
+    http-check send meth GET uri / ver HTTP/1.1 hdr Host aap.{{ external_domain }}
     http-check expect status 200
     server aap {{ aap_vm_ip }}:{{ aap_vm_port }} check ssl verify none
 

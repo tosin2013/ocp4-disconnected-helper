@@ -7,15 +7,16 @@ fqdn: {{ vm_fqdn }}
 manage_etc_hosts: true
 
 users:
-  - name: root
-    lock_passwd: false
-    ssh_authorized_keys:
-      - {{ ssh_public_key }}
-
   - name: {{ vm_user }}
     groups: wheel
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys:
+      - {{ ssh_public_key }}
+
+  - name: root
+    lock_passwd: true
     ssh_authorized_keys:
       - {{ ssh_public_key }}
 
@@ -64,9 +65,5 @@ write_files:
       fs.inotify.max_user_instances = 512
     permissions: '0644'
 
-# Power management
-power_state:
-  mode: reboot
-  condition: true
-
+# Final message
 final_message: "Registry VM {{ vm_fqdn }} is ready after $UPTIME seconds"
