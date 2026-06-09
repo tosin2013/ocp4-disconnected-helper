@@ -1,0 +1,279 @@
+---
+# Configure AAP Job Templates for Disconnected OpenShift Deployment
+# Assumes VyOS router is already deployed (ADR 0025 prerequisite)
+#
+# Prerequisites:
+#   - AAP 2.6 deployed and accessible
+#   - Project 'ocp4-disconnected-helper' already imported
+#   - Credentials configured (SSH, Vault, Registry)
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml \
+#     playbooks/configure-aap-job-templates.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml \
+#     --vault-password-file ~/.vault_pass
+
+- name: Configure AAP Job Templates
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+
+    # Job template configuration
+    organization_name: "Default"
+    inventory_name: "Disconnected Infrastructure"
+    project_name: "ocp4-disconnected-helper"
+
+  tasks:
+    # =========================================================================
+    # Step 1: Create Inventory
+    # =========================================================================
+    - name: Create Disconnected Infrastructure inventory
+      ansible.controller.inventory:
+        name: "{{ inventory_name }}"
+        organization: "{{ organization_name }}"
+        description: "KVM hypervisor and disconnected infrastructure hosts"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: inventory_result
+
+    - name: Add localhost to inventory
+      ansible.controller.host:
+        name: localhost
+        inventory: "{{ inventory_name }}"
+        variables:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    # =========================================================================
+    # Step 2: Verify Credentials Exist
+    # =========================================================================
+    - name: Check for SSH credential
+      ansible.controller.credential:
+        name: "KVM Hypervisor SSH Key"
+        organization: "{{ organization_name }}"
+        credential_type: "Machine"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+      register: ssh_cred
+      ignore_errors: yes
+
+    - name: Warn if SSH credential missing
+      ansible.builtin.debug:
+        msg: |
+          ⚠️  WARNING: 'KVM Hypervisor SSH Key' credential not found.
+          Create it manually via AAP Web UI:
+            Administration → Credentials → Add
+            Type: Machine
+            Username: vpcuser
+            SSH Private Key: <paste your key>
+      when: ssh_cred is failed
+
+    - name: Check for Vault credential
+      ansible.controller.credential:
+        name: "Ansible Vault Password"
+        organization: "{{ organization_name }}"
+        credential_type: "Vault"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+      register: vault_cred
+      ignore_errors: yes
+
+    - name: Warn if Vault credential missing
+      ansible.builtin.debug:
+        msg: |
+          ⚠️  WARNING: 'Ansible Vault Password' credential not found.
+          Create it manually via AAP Web UI:
+            Administration → Credentials → Add
+            Type: Vault
+            Vault Password: <your vault password>
+      when: vault_cred is failed
+
+    # =========================================================================
+    # Step 3: Create Job Template - Deploy Registry VM
+    # =========================================================================
+    - name: Create job template - Deploy Registry VM
+      ansible.controller.job_template:
+        name: "Deploy Registry VM"
+        description: "Deploy Quay mirror-registry on dedicated VM (VLAN 1924)"
+        organization: "{{ organization_name }}"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/deploy-registry.yml"
+        job_type: "run"
+        credentials:
+          - "KVM Hypervisor SSH Key"
+          - "Ansible Vault Password"
+        become_enabled: yes
+        extra_vars:
+          registry_type: mirror-registry
+          registry_hostname: registry.sandbox3377.opentlc.com
+          registry_version: latest
+          vm_static_ip: 192.168.10.10
+          vm_gateway: 192.168.10.1
+          vm_netmask: 255.255.255.0
+          vm_dns_servers:
+            - 192.168.10.1
+            - 1.1.1.1
+          vm_name: registry
+          vm_memory_mb: 16384
+          vm_vcpus: 4
+          vm_disk_size: 500G
+          ssl_cert_provider: letsencrypt
+          external_domain: sandbox3377.opentlc.com
+          mirror_data_dir: /opt/mirror-registry
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: job_template_registry
+
+    - name: Display Deploy Registry VM template URL
+      ansible.builtin.debug:
+        msg: "✅ Job Template Created: {{ aap_host }}/#/templates/job_template/{{ job_template_registry.id }}"
+
+    # =========================================================================
+    # Step 4: Create Job Template - Mirror OpenShift Images
+    # =========================================================================
+    - name: Create job template - Mirror OpenShift Images
+      ansible.controller.job_template:
+        name: "Mirror OpenShift Images to Registry"
+        description: "Download OpenShift images with oc-mirror and push to registry"
+        organization: "{{ organization_name }}"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/push-to-registry-v2.yml"
+        job_type: "run"
+        credentials:
+          - "KVM Hypervisor SSH Key"
+          - "Ansible Vault Password"
+        become_enabled: yes
+        ask_tags_on_launch: yes  # Allow running with specific tags (download, push)
+        extra_vars:
+          mirror_mode: to-registry
+          mirror_config_file: extra_vars/mirror-v2-example.yml
+          target_registry: registry.sandbox3377.opentlc.com:8443
+          registry_namespace: ocp4/openshift4
+          ocp_version: "4.21.18"
+          ocp_channel: stable-4.21
+          mirror_operators: true
+          operator_packages:
+            - local-storage-operator
+            - ocs-operator
+            - metallb-operator
+            - kubernetes-nmstate-operator
+          pull_secret_file: /root/pull-secret.json
+          workflow: full
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: job_template_mirror
+
+    - name: Display Mirror Images template URL
+      ansible.builtin.debug:
+        msg: "✅ Job Template Created: {{ aap_host }}/#/templates/job_template/{{ job_template_mirror.id }}"
+
+    # =========================================================================
+    # Step 5: Create Workflow Template (Optional)
+    # =========================================================================
+    - name: Create workflow template - Deploy Disconnected Infrastructure
+      ansible.controller.workflow_job_template:
+        name: "Deploy Disconnected OpenShift Infrastructure"
+        description: "End-to-end deployment: Registry → Mirror → (Future: Cluster)"
+        organization: "{{ organization_name }}"
+        inventory: "{{ inventory_name }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: workflow_template
+
+    - name: Add Deploy Registry step to workflow
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Deploy Disconnected OpenShift Infrastructure"
+        identifier: deploy_registry
+        unified_job_template: "Deploy Registry VM"
+        organization: "{{ organization_name }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Add Mirror Images step to workflow
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Deploy Disconnected OpenShift Infrastructure"
+        identifier: mirror_images
+        unified_job_template: "Mirror OpenShift Images to Registry"
+        organization: "{{ organization_name }}"
+        success_nodes:
+          - deploy_registry
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display workflow template URL
+      ansible.builtin.debug:
+        msg: "✅ Workflow Template Created: {{ aap_host }}/#/templates/workflow_job_template/{{ workflow_template.id }}"
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg: |
+
+          ════════════════════════════════════════════════════════════════
+            AAP Job Templates Configuration Complete
+          ════════════════════════════════════════════════════════════════
+
+          ✅ Inventory Created: {{ inventory_name }}
+          ✅ Job Template: Deploy Registry VM
+          ✅ Job Template: Mirror OpenShift Images to Registry
+          ✅ Workflow Template: Deploy Disconnected OpenShift Infrastructure
+
+          Next Steps:
+
+          1. Verify Credentials (if warnings appeared above):
+             {{ aap_host }}/#/credentials
+
+          2. Launch Job Template:
+             {{ aap_host }}/#/templates/job_template/{{ job_template_registry.id }}
+
+          3. View Workflow:
+             {{ aap_host }}/#/templates/workflow_job_template/{{ workflow_template.id }}
+
+          4. Monitor Jobs:
+             {{ aap_host }}/#/jobs
+
+          Prerequisites Assumed:
+          - ✅ VyOS router deployed on VLAN 1924/1925/1927 (ADR 0025)
+          - ✅ KVM hypervisor accessible
+          - ✅ DNS configured for registry.sandbox3377.opentlc.com
+
+          Documentation:
+          - docs/AAP_JOB_TEMPLATES.md
+          - docs/adrs/0025-vyos-router-network-prerequisite.md
+
+          ════════════════════════════════════════════════════════════════
