@@ -66,6 +66,7 @@ for FILE in $FILES; do
      [[ "$FILE" =~ ^scripts/git-hooks/ ]] || \
      [[ "$FILE" =~ ^docs/SECURITY\.md$ ]] || \
      [[ "$FILE" =~ ^docs/hardening/ ]] || \
+     [[ "$FILE" =~ ^docs/adrs/ ]] || \
      [[ "$FILE" == "CLAUDE.md" ]]; then
     continue
   fi

@@ -62,3 +62,10 @@ token
 **/installer/inventory
 !**/installer/inventory.example
 inventory-*.backup.*
+
+# Temporary and backup files
+*.swp
+*.backup.*
+*~
+.#*
+memory_script.sh
