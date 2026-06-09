@@ -1,0 +1,34 @@
+---
+# Fix Control Plane Execution Environment credential
+# Required for AAP project syncs to work
+
+- name: Configure Control Plane EE with Registry Credential
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aap_host: "https://aap.{{ external_domain }}"
+    aap_validate_certs: false
+
+  tasks:
+    - name: Update Control Plane Execution Environment with registry credential
+      ansible.controller.execution_environment:
+        name: "Control Plane Execution Environment"
+        image: "registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9:latest"
+        pull: "missing"
+        credential: "Red Hat Registry Credential"
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: control_plane_ee
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg:
+          - "✅ Control Plane EE updated with registry credential"
+          - "   Name: Control Plane Execution Environment"
+          - "   Image: registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9:latest"
+          - "   Credential: Red Hat Registry Credential"
+          - ""
+          - "Now project syncs should work!"

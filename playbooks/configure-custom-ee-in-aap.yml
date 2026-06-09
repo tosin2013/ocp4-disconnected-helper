@@ -1,0 +1,226 @@
+---
+# Configure Custom Execution Environment in AAP
+# Implements ADR 0029: Custom Execution Environment for AAP Registry Authentication
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml playbooks/configure-custom-ee-in-aap.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
+#
+# Prerequisites:
+#   - Custom EE built and pushed to Quay (run playbooks/build-custom-ee.yml first)
+#   - AAP 2.6 deployed and accessible
+#   - ansible.controller collection installed
+
+- name: Configure Custom Execution Environment in AAP
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    aap_host: "https://aap.{{ external_domain }}"
+    aap_validate_certs: false
+    ee_image_name: "quay.io/takinosh/ocp4-aap-execution-environment"
+    ee_image_tag: "latest"
+    ee_full_image: "{{ ee_image_name }}:{{ ee_image_tag }}"
+
+  tasks:
+    # =========================================================================
+    # Phase 1: Create Quay Registry Credential in AAP
+    # =========================================================================
+    - name: Create Quay Container Registry credential
+      ansible.controller.credential:
+        name: "Quay Custom EE Registry"
+        description: "Quay registry authentication for custom execution environments"
+        organization: "Default"
+        credential_type: "Container Registry"
+        inputs:
+          host: "quay.io"
+          username: "{{ quay_username }}"
+          password: "{{ quay_password }}"
+          verify_ssl: true
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: quay_credential
+
+    - name: Display Quay credential status
+      ansible.builtin.debug:
+        msg: "✅ Quay registry credential created with ID: {{ quay_credential.id }}"
+
+    # =========================================================================
+    # Phase 2: Create Custom Execution Environment in AAP
+    # =========================================================================
+    - name: Create custom execution environment
+      ansible.controller.execution_environment:
+        name: "Custom OCP4 EE"
+        description: "Custom execution environment with registry.redhat.io authentication for OCP4 disconnected helper"
+        image: "{{ ee_full_image }}"
+        pull: "always"
+        credential: "Quay Custom EE Registry"
+        organization: "Default"
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: custom_ee
+
+    - name: Display custom EE status
+      ansible.builtin.debug:
+        msg:
+          - "✅ Custom execution environment created"
+          - "  - ID: {{ custom_ee.id }}"
+          - "  - Name: Custom OCP4 EE"
+          - "  - Image: {{ ee_full_image }}"
+          - "  - Pull Policy: Always"
+
+    # =========================================================================
+    # Phase 3: Set Custom EE as Default for Organization
+    # =========================================================================
+    - name: Get Default organization details
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/organizations/?name=Default"
+        method: GET
+        user: "admin"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+      register: default_org
+
+    - name: Extract organization ID
+      ansible.builtin.set_fact:
+        org_id: "{{ default_org.json.results[0].id }}"
+
+    - name: Update Default organization with custom EE
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
+        method: PATCH
+        user: "admin"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+        body_format: json
+        body:
+          default_environment: "{{ custom_ee.id }}"
+        status_code: 200
+      register: org_update
+
+    - name: Display organization update status
+      ansible.builtin.debug:
+        msg: "✅ Default organization now uses Custom OCP4 EE as default execution environment"
+
+    # =========================================================================
+    # Phase 4: Verify Configuration
+    # =========================================================================
+    - name: Test EE image pull from AAP
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/execution_environments/{{ custom_ee.id }}/"
+        method: GET
+        user: "admin"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+      register: ee_verify
+
+    - name: Display EE configuration
+      ansible.builtin.debug:
+        var: ee_verify.json
+
+    # =========================================================================
+    # Phase 5: Trigger Project Sync to Test
+    # =========================================================================
+    - name: Get ocp4-disconnected-helper project ID
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/?name=ocp4-disconnected-helper"
+        method: GET
+        user: "admin"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+      register: project_query
+
+    - name: Extract project ID
+      ansible.builtin.set_fact:
+        project_id: "{{ project_query.json.results[0].id }}"
+      when: project_query.json.count > 0
+
+    - name: Trigger project sync to test custom EE
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/{{ project_id }}/update/"
+        method: POST
+        user: "admin"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: 202
+      register: project_sync
+      when: project_id is defined
+
+    - name: Wait for project sync to complete
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/project_updates/{{ project_sync.json.id }}/"
+        method: GET
+        user: "admin"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+      register: sync_status
+      until: sync_status.json.status in ['successful', 'failed', 'error', 'canceled']
+      retries: 30
+      delay: 10
+      when: project_id is defined
+
+    - name: Display project sync result
+      ansible.builtin.debug:
+        msg:
+          - "{{ '✅' if sync_status.json.status == 'successful' else '❌' }} Project Sync Status: {{ sync_status.json.status }}"
+          - "  - Project: ocp4-disconnected-helper"
+          - "  - Update ID: {{ project_sync.json.id }}"
+          - "  - Execution Environment: Custom OCP4 EE"
+      when: project_id is defined
+
+    # =========================================================================
+    # Phase 6: Summary
+    # =========================================================================
+    - name: Display final configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "  Custom Execution Environment Configuration Complete ✅"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "🔧 AAP Configuration:"
+          - "   URL: {{ aap_host }}"
+          - "   Organization: Default"
+          - "   Default EE: Custom OCP4 EE"
+          - ""
+          - "📦 Execution Environment:"
+          - "   Name: Custom OCP4 EE"
+          - "   ID: {{ custom_ee.id }}"
+          - "   Image: {{ ee_full_image }}"
+          - "   Pull Policy: Always"
+          - "   Registry Credential: Quay Custom EE Registry"
+          - ""
+          - "✅ Verification:"
+          - "   - Quay credential created and linked"
+          - "   - Custom EE configured in AAP"
+          - "   - Default organization updated"
+          - "   - Project sync {{ sync_status.json.status if project_id is defined else 'not tested (project not found)' }}"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"
+          - "  Next Steps:"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "  1. Access AAP Web UI:"
+          - "     {{ aap_host }}"
+          - ""
+          - "  2. Verify execution environment:"
+          - "     Administration → Execution Environments → Custom OCP4 EE"
+          - ""
+          - "  3. Test job template:"
+          - "     Resources → Templates → Deploy Registry VM → Launch"
+          - ""
+          - "  4. Monitor for registry auth errors (should be resolved)"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"
