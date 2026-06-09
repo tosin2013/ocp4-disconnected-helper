@@ -1,0 +1,53 @@
+---
+# oc-mirror v2 Test Configuration
+# Minimal test to validate registry workflow without downloading full OCP release
+
+# =========================================================================
+# Storage Configuration
+# =========================================================================
+target_mirror_path: "/data/ocp-mirror-test"  # Use /data disk (1TB available)
+clean_mirror_path: false  # Keep existing data
+
+# =========================================================================
+# OpenShift Releases to Mirror
+# =========================================================================
+# Test with minimal release - just download metadata and a few images
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true  # Minimal download
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+# =========================================================================
+# Operators to Mirror
+# =========================================================================
+# Start with NO operators to keep test small
+operators: []
+
+# =========================================================================
+# Additional Images (Test with small public images first)
+# =========================================================================
+additional_images:
+  - quay.io/centos/centos:stream9  # Already tested, known working
+  - quay.io/prometheus/prometheus:latest  # Small test image
+
+# =========================================================================
+# oc-mirror Performance Tuning
+# =========================================================================
+parallel_images: 2  # Conservative for test
+parallel_layers: 3
+max_retries: 3
+
+# =========================================================================
+# Registry Push Configuration
+# =========================================================================
+# Use inventory variables for our deployed Quay registry
+target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
+target_namespace: "openshift4-test"
+combined_pull_secret: "{{ lookup('env', 'HOME') }}/pull-secret-combined.json"
+skip_tls_verify: false  # We have Let's Encrypt, validation should work

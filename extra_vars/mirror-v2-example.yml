@@ -1,0 +1,59 @@
+---
+# oc-mirror v2 Example Variables
+# Copy this file and customize for your environment
+
+# =========================================================================
+# Storage Configuration
+# =========================================================================
+target_mirror_path: "/tmp/ocp-mirror-test"  # Local storage for downloaded images
+clean_mirror_path: false  # Set to true to clear existing workspace
+
+# =========================================================================
+# OpenShift Releases to Mirror
+# =========================================================================
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: false
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+# =========================================================================
+# Operators to Mirror (Optional)
+# =========================================================================
+operators: []
+# Example:
+#  - name: local-storage-operator
+#  - name: ocs-operator
+#  - name: serverless-operator
+
+# =========================================================================
+# Additional Images (Optional)
+# =========================================================================
+additional_images: []
+# Example:
+#  - quay.io/example/custom-image:latest
+
+# =========================================================================
+# oc-mirror Performance Tuning
+# =========================================================================
+parallel_images: 4
+parallel_layers: 5
+max_retries: 5
+
+# =========================================================================
+# Registry Push Configuration (for push-to-registry-v2.yml)
+# =========================================================================
+# These use inventory variables by default:
+# target_registry: "{{ quay_url }}:{{ quay_vm_port }}"
+# target_namespace: "openshift4"
+# combined_pull_secret: "{{ lookup('env', 'HOME') }}/pull-secret-combined.json"
+# skip_tls_verify: false
+
+# Override if needed:
+# target_registry: "registry.example.com:8443"
+# skip_tls_verify: true  # For self-signed certs
