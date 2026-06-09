@@ -1,0 +1,115 @@
+---
+# Install Red Hat mirror-registry on the VM
+
+- name: Install required packages on registry VM
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - firewalld
+      - python3
+      - tar
+      - wget
+    state: present
+  become: yes
+
+- name: Configure sysctl for rootless containers
+  ansible.builtin.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop:
+    - { name: "fs.file-max", value: "2097152" }
+    - { name: "fs.inotify.max_user_watches", value: "524288" }
+    - { name: "fs.inotify.max_user_instances", value: "512" }
+  become: yes
+
+- name: Enable and start firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    enabled: yes
+    state: started
+  become: yes
+
+- name: Configure firewall for registry
+  ansible.posix.firewalld:
+    port: "{{ registry_port }}/tcp"
+    permanent: yes
+    state: enabled
+    immediate: yes
+  become: yes
+
+- name: Create mirror-registry installation directory
+  ansible.builtin.file:
+    path: "{{ mirror_registry_install_dir }}"
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Download mirror-registry tarball
+  ansible.builtin.get_url:
+    url: "{{ mirror_registry_tarball_url }}"
+    dest: "{{ mirror_registry_install_dir }}/mirror-registry.tar.gz"
+    mode: '0644'
+  become: yes
+  become_user: "{{ ansible_user }}"
+
+- name: Extract mirror-registry
+  ansible.builtin.unarchive:
+    src: "{{ mirror_registry_install_dir }}/mirror-registry.tar.gz"
+    dest: "{{ mirror_registry_install_dir }}"
+    remote_src: yes
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  become: yes
+
+- name: Make mirror-registry executable
+  ansible.builtin.file:
+    path: "{{ mirror_registry_install_dir }}/mirror-registry"
+    mode: '0755'
+  become: yes
+
+- name: Check if mirror-registry is already installed
+  ansible.builtin.command:
+    cmd: podman ps -a --format "{{ '{{' }}.Names{{ '}}' }}"
+  register: existing_containers
+  changed_when: false
+  become: yes
+  become_user: "{{ ansible_user }}"
+
+- name: Run mirror-registry installation
+  ansible.builtin.command:
+    cmd: >
+      {{ mirror_registry_install_dir }}/mirror-registry install
+      --quayHostname {{ registry_hostname }}
+      --quayRoot {{ mirror_registry_storage_dir }}
+      --initPassword {{ registry_admin_password }}
+      {% if mirror_registry_ssl_cert is defined and mirror_registry_ssl_key is defined %}
+      --sslCert {{ mirror_registry_ssl_cert }}
+      --sslKey {{ mirror_registry_ssl_key }}
+      {% endif %}
+      --verbose
+  when: "'quay-app' not in existing_containers.stdout"
+  register: mirror_install
+  become: yes
+  become_user: "{{ ansible_user }}"
+
+- name: Save credentials to file
+  ansible.builtin.copy:
+    content: |
+      REGISTRY_URL=https://{{ registry_hostname }}:{{ registry_port }}
+      REGISTRY_USER={{ registry_admin_user }}
+      REGISTRY_PASSWORD={{ registry_admin_password }}
+    dest: "{{ mirror_registry_install_dir }}/credentials.txt"
+    mode: '0600'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  become: yes
+
+- name: Display installation result
+  ansible.builtin.debug:
+    msg:
+      - "✅ Mirror-registry installation complete"
+      - "   Installation dir: {{ mirror_registry_install_dir }}"
+      - "   Storage dir: {{ mirror_registry_storage_dir }}"
+      - "   Admin user: {{ registry_admin_user }}"

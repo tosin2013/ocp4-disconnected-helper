@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  author: Platform Team
+  description: Common VM provisioning tasks using community.libvirt and cloud-init
+  company: ocp4-disconnected-helper
+  license: MIT
+  min_ansible_version: "2.15"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+
+  galaxy_tags:
+    - vm
+    - libvirt
+    - kvm
+    - cloud-init
+    - infrastructure
+
+dependencies: []
+# Note: This role uses community.libvirt collection, not role
+# Install with: ansible-galaxy collection install community.libvirt

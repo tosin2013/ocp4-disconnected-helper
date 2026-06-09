@@ -1,0 +1,16 @@
+# Cloud-init network configuration
+# Using static IP configuration for all networks
+
+version: 2
+ethernets:
+  eth0:
+{% if vm_use_static_ip and vm_static_ip %}
+    dhcp4: false
+    addresses:
+      - {{ vm_static_ip }}/24
+    gateway4: {{ vm_gateway }}
+    nameservers:
+      addresses: {{ vm_dns_servers | to_json }}
+{% else %}
+    dhcp4: true
+{% endif %}

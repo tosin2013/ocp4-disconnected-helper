@@ -1,0 +1,41 @@
+---
+# VM Configuration
+vm_name: "{{ inventory_hostname }}"
+vm_state: present              # present, absent
+vm_memory: 8192                # MB
+vm_cpus: 2
+vm_disk_size: 100              # GB
+
+# Network Configuration
+vm_use_static_ip: true
+vm_static_ip: ""               # Required if vm_use_static_ip is true
+vm_mac_address: ""             # If not set, deterministic MAC generated from vm_name
+vm_netmask: "255.255.255.0"
+vm_gateway: "192.168.122.1"
+vm_dns_servers:
+  - 8.8.8.8
+  - 8.8.4.4
+vm_network: "default"
+vm_network_bridge: "virbr0"
+
+# Cloud-init Configuration
+vm_hostname: "{{ vm_name }}"
+vm_fqdn: "{{ vm_hostname }}.{{ external_domain | default('example.com') }}"
+vm_user: "admin"
+vm_ssh_public_key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub') }}"
+
+# Paths
+vm_base_image_url: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
+vm_images_dir: "{{ vm_disk_path | default('/var/lib/libvirt/images') }}"
+vm_base_image_path: "{{ vm_images_dir }}/centos-stream-9-base.qcow2"
+vm_disk_path_full: "{{ vm_images_dir }}/{{ vm_name }}.qcow2"
+vm_cloud_init_iso: "{{ vm_images_dir }}/{{ vm_name }}-cloud-init.iso"
+
+# Timeouts
+vm_boot_timeout: 60            # Seconds to wait after VM start
+vm_ssh_timeout: 300            # Seconds to wait for SSH
+vm_network_timeout: 120        # Seconds to wait for network configuration
+
+# Behavior
+vm_force_recreate: false       # If true, delete and recreate existing VM
+vm_cleanup_on_failure: true    # If true, cleanup VM on any failure

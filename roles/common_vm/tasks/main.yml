@@ -1,0 +1,37 @@
+---
+# Main orchestrator for common VM lifecycle
+
+- name: Include delete tasks
+  ansible.builtin.import_tasks: delete.yml
+  when: vm_state == 'absent'
+
+- name: Setup static DHCP reservation (before VM creation)
+  ansible.builtin.import_tasks: setup_static_dhcp.yml
+  when:
+    - vm_state == 'present'
+    - vm_use_static_ip | bool
+    - vm_static_ip | length > 0
+    - not (vyos_managed_network | default(false))
+
+- name: Include provision tasks
+  ansible.builtin.import_tasks: provision.yml
+  when: vm_state == 'present'
+
+- name: Configure static IP post-boot (dnsmasq networks only)
+  ansible.builtin.import_tasks: configure_static_ip.yml
+  when:
+    - vm_state == 'present'
+    - vm_use_static_ip | bool
+    - vm_static_ip | length > 0
+    - not (vyos_managed_network | default(false))
+
+- name: Verify static IP is accessible
+  ansible.builtin.wait_for:
+    host: "{{ vm_static_ip }}"
+    port: 22
+    delay: 10
+    timeout: "{{ vm_network_timeout }}"
+  delegate_to: localhost
+  when:
+    - vm_state == 'present'
+    - vm_use_static_ip | bool

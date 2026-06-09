@@ -1,0 +1,47 @@
+---
+# Delete VM and cleanup all resources
+
+- name: Check if VM exists
+  community.libvirt.virt:
+    command: list_vms
+  register: existing_vms
+  delegate_to: localhost
+
+- name: VM does not exist
+  ansible.builtin.debug:
+    msg: "VM {{ vm_name }} does not exist, nothing to delete"
+  when: vm_name not in existing_vms.list_vms
+
+- name: Delete VM resources
+  when: vm_name in existing_vms.list_vms
+  block:
+    - name: Destroy VM if running
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        state: destroyed
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: Undefine VM
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        command: undefine
+      delegate_to: localhost
+
+    - name: Delete VM disk
+      ansible.builtin.file:
+        path: "{{ vm_disk_path_full }}"
+        state: absent
+      delegate_to: localhost
+      become: yes
+
+    - name: Delete cloud-init ISO
+      ansible.builtin.file:
+        path: "{{ vm_cloud_init_iso }}"
+        state: absent
+      delegate_to: localhost
+      become: yes
+
+    - name: Display delete result
+      ansible.builtin.debug:
+        msg: "✅ VM {{ vm_name }} deleted"

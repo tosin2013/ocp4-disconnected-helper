@@ -1,0 +1,54 @@
+---
+# Setup static DHCP reservation BEFORE VM creation
+# This ensures VM gets correct IP immediately on first boot
+
+- name: Generate deterministic MAC address from VM name (if not provided)
+  ansible.builtin.set_fact:
+    vm_mac_address: "{{ vm_mac_address if vm_mac_address else '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+  when: vm_use_static_ip | bool
+
+- name: Display network configuration
+  ansible.builtin.debug:
+    msg:
+      - "Network Configuration:"
+      - "  VM Name: {{ vm_name }}"
+      - "  MAC Address: {{ vm_mac_address }}"
+      - "  Static IP: {{ vm_static_ip }}"
+      - "  Network: {{ vm_network }}"
+
+- name: Check if DHCP reservation already exists
+  ansible.builtin.shell:
+    cmd: virsh net-dumpxml {{ vm_network }} | grep "mac='{{ vm_mac_address }}'" | grep -o "ip='[^']*'" | cut -d"'" -f2 || echo ""
+  register: existing_dhcp_ip
+  delegate_to: localhost
+  changed_when: false
+
+- name: Set DHCP reservation status
+  ansible.builtin.set_fact:
+    dhcp_needs_update: "{{ existing_dhcp_ip.stdout != vm_static_ip }}"
+    dhcp_exists: "{{ existing_dhcp_ip.stdout | length > 0 }}"
+
+- name: Remove old DHCP reservation if IP changed
+  ansible.builtin.command:
+    cmd: >
+      virsh net-update {{ vm_network }} delete ip-dhcp-host
+      "<host mac='{{ vm_mac_address }}'/>" --live --config
+  when: dhcp_exists and dhcp_needs_update
+  delegate_to: localhost
+  changed_when: true
+  failed_when: false
+
+- name: Create static DHCP reservation
+  ansible.builtin.command:
+    cmd: >
+      virsh net-update {{ vm_network }} add ip-dhcp-host
+      "<host mac='{{ vm_mac_address }}' name='{{ vm_name }}' ip='{{ vm_static_ip }}'/>"
+      --live --config
+  when: dhcp_needs_update
+  register: dhcp_reservation
+  delegate_to: localhost
+  changed_when: true
+
+- name: Display DHCP reservation status
+  ansible.builtin.debug:
+    msg: "{% if dhcp_needs_update %}✅ Static DHCP reservation created: {{ vm_mac_address }} → {{ vm_static_ip }}{% else %}✅ Static DHCP reservation already exists: {{ vm_mac_address }} → {{ vm_static_ip }}{% endif %}"

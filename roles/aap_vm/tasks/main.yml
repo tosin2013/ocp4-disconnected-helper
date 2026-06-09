@@ -1,0 +1,115 @@
+---
+# AAP VM Role - Main Tasks
+# Orchestrates AAP VM deployment following atomic roles pattern (ADR 0024)
+
+# =========================================================================
+# Phase 1: VM Provisioning (Delegate to common_vm)
+# =========================================================================
+
+- name: Phase 1 - Provision AAP VM
+  ansible.builtin.include_role:
+    name: common_vm
+  vars:
+    vm_state: "{{ vm_state | default('present') }}"
+  delegate_to: localhost
+  when: vm_state | default('present') == 'present'
+
+# =========================================================================
+# Phase 2: Wait for VM to be Ready
+# =========================================================================
+
+- name: Wait for AAP VM to be accessible
+  ansible.builtin.wait_for:
+    host: "{{ vm_static_ip }}"
+    port: 22
+    timeout: 300
+  delegate_to: localhost
+  when: vm_state | default('present') == 'present'
+
+- name: Gather facts from AAP VM
+  ansible.builtin.setup:
+  when: vm_state | default('present') == 'present'
+
+# =========================================================================
+# Phase 3: Install AAP Prerequisites
+# =========================================================================
+
+- name: Phase 3 - Install prerequisites
+  when: vm_state | default('present') == 'present'
+  block:
+    - name: Import prerequisites tasks
+      ansible.builtin.import_tasks: prerequisites.yml
+
+# =========================================================================
+# Phase 4: Download AAP Installer
+# =========================================================================
+
+- name: Phase 4 - Download AAP installer
+  when: vm_state | default('present') == 'present'
+  block:
+    - name: Import download tasks
+      ansible.builtin.import_tasks: download_installer.yml
+
+# =========================================================================
+# Phase 5: Configure AAP Installation
+# =========================================================================
+
+- name: Phase 5 - Configure AAP installation
+  when: vm_state | default('present') == 'present'
+  block:
+    - name: Import configuration tasks
+      ansible.builtin.import_tasks: configure_aap.yml
+
+# =========================================================================
+# Phase 6: Install AAP
+# =========================================================================
+
+- name: Phase 6 - Install AAP containerized
+  when: vm_state | default('present') == 'present'
+  block:
+    - name: Import installation tasks
+      ansible.builtin.import_tasks: install_aap.yml
+
+# =========================================================================
+# Phase 7: Post-Installation Configuration
+# =========================================================================
+
+- name: Phase 7 - Post-installation setup
+  when: vm_state | default('present') == 'present'
+  block:
+    - name: Import post-install tasks
+      ansible.builtin.import_tasks: post_install.yml
+
+# =========================================================================
+# Phase 8: Import Existing Playbooks
+# =========================================================================
+
+- name: Phase 8 - Import ocp4-disconnected-helper playbooks
+  when:
+    - vm_state | default('present') == 'present'
+    - aap_import_playbooks | default(true)
+  block:
+    - name: Import playbook import tasks
+      ansible.builtin.import_tasks: import_playbooks.yml
+
+# =========================================================================
+# Phase 9: Verification
+# =========================================================================
+
+- name: Phase 9 - Verify AAP installation
+  when: vm_state | default('present') == 'present'
+  block:
+    - name: Import verification tasks
+      ansible.builtin.import_tasks: verify.yml
+
+# =========================================================================
+# VM Deletion (when vm_state=absent)
+# =========================================================================
+
+- name: Delete AAP VM
+  ansible.builtin.include_role:
+    name: common_vm
+  vars:
+    vm_state: absent
+  delegate_to: localhost
+  when: vm_state | default('present') == 'absent'

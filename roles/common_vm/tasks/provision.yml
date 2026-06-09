@@ -1,0 +1,176 @@
+---
+# VM Provisioning with community.libvirt and cloud-init
+
+- name: Ensure VM images directory exists with correct permissions
+  ansible.builtin.file:
+    path: "{{ vm_images_dir }}"
+    state: directory
+    mode: '0755'
+    owner: qemu
+    group: qemu
+    setype: virt_image_t
+  delegate_to: localhost
+  become: yes
+
+- name: Check for ISO creation tool
+  ansible.builtin.command:
+    cmd: which xorrisofs genisoimage mkisofs
+  register: iso_tool_check
+  failed_when: false
+  changed_when: false
+  delegate_to: localhost
+
+- name: Set ISO creation command
+  ansible.builtin.set_fact:
+    iso_create_cmd: "{{ iso_tool_check.stdout_lines[0] if iso_tool_check.stdout_lines else 'xorrisofs' }}"
+  delegate_to: localhost
+
+- name: Check if VM already exists (using virsh directly to avoid cache issues)
+  ansible.builtin.command:
+    cmd: virsh list --all --name
+  register: existing_vms_raw
+  changed_when: false
+  delegate_to: localhost
+
+- name: Set VM exists fact
+  ansible.builtin.set_fact:
+    vm_already_exists: "{{ vm_name in existing_vms_raw.stdout_lines }}"
+
+- name: Handle existing VM
+  when: vm_already_exists | bool
+  block:
+    - name: Display existing VM message
+      ansible.builtin.debug:
+        msg: "VM {{ vm_name }} already exists"
+
+    - name: Delete existing VM if force recreate
+      ansible.builtin.include_tasks: delete.yml
+      when: vm_force_recreate | bool
+
+    - name: Update VM exists fact after force recreate
+      ansible.builtin.set_fact:
+        vm_already_exists: false
+      when: vm_force_recreate | bool
+
+- name: Provision new VM
+  when: not (vm_already_exists | default(false) | bool)
+  block:
+    - name: Check if base image exists
+      ansible.builtin.stat:
+        path: "{{ vm_base_image_path }}"
+      register: base_image
+      delegate_to: localhost
+
+    - name: Download base image if not present
+      ansible.builtin.get_url:
+        url: "{{ vm_base_image_url }}"
+        dest: "{{ vm_base_image_path }}"
+        mode: '0644'
+      when: not base_image.stat.exists
+      delegate_to: localhost
+
+    - name: Create VM disk from base image
+      ansible.builtin.command:
+        cmd: qemu-img create -f qcow2 -F qcow2 -b {{ vm_base_image_path }} {{ vm_disk_path_full }} {{ vm_disk_size }}G
+        creates: "{{ vm_disk_path_full }}"
+      delegate_to: localhost
+
+    - name: Set VM disk permissions, ownership, and SELinux context
+      ansible.builtin.file:
+        path: "{{ vm_disk_path_full }}"
+        mode: '0644'
+        owner: qemu
+        group: qemu
+        setype: virt_image_t
+      delegate_to: localhost
+      become: yes
+
+    - name: Create temporary directory for cloud-init
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: cloud-init-
+      register: cloud_init_temp
+      delegate_to: localhost
+
+    - name: Generate cloud-init user-data
+      ansible.builtin.template:
+        src: cloud-init/user-data.yml.j2
+        dest: "{{ cloud_init_temp.path }}/user-data"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Generate cloud-init meta-data
+      ansible.builtin.template:
+        src: cloud-init/meta-data.yml.j2
+        dest: "{{ cloud_init_temp.path }}/meta-data"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Generate cloud-init network-config
+      ansible.builtin.template:
+        src: cloud-init/network-config.yml.j2
+        dest: "{{ cloud_init_temp.path }}/network-config"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Create cloud-init ISO
+      ansible.builtin.command:
+        cmd: >
+          {{ iso_create_cmd }} -output {{ vm_cloud_init_iso }}
+          -volid cidata -joliet -rock
+          {{ cloud_init_temp.path }}/user-data
+          {{ cloud_init_temp.path }}/meta-data
+          {{ cloud_init_temp.path }}/network-config
+        creates: "{{ vm_cloud_init_iso }}"
+      delegate_to: localhost
+
+    - name: Set cloud-init ISO permissions, ownership, and SELinux context
+      ansible.builtin.file:
+        path: "{{ vm_cloud_init_iso }}"
+        mode: '0644'
+        owner: qemu
+        group: qemu
+        setype: virt_content_t
+      delegate_to: localhost
+      become: yes
+
+    - name: Clean up temporary directory
+      ansible.builtin.file:
+        path: "{{ cloud_init_temp.path }}"
+        state: absent
+      delegate_to: localhost
+
+    - name: Generate VM XML definition
+      ansible.builtin.set_fact:
+        vm_xml: "{{ lookup('template', 'libvirt/domain.xml.j2') }}"
+
+    - name: Define VM in libvirt
+      community.libvirt.virt:
+        command: define
+        xml: "{{ vm_xml }}"
+      delegate_to: localhost
+
+    - name: Start VM
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        state: running
+      delegate_to: localhost
+
+    - name: Set VM to autostart
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        autostart: yes
+      delegate_to: localhost
+
+    - name: Wait for VM to boot
+      ansible.builtin.pause:
+        seconds: "{{ vm_boot_timeout }}"
+        prompt: "Waiting {{ vm_boot_timeout }}s for {{ vm_name }} to boot"
+
+    - name: Display provisioning success
+      ansible.builtin.debug:
+        msg:
+          - "✅ VM {{ vm_name }} provisioned successfully"
+          - "   Memory: {{ vm_memory }}MB"
+          - "   CPUs: {{ vm_cpus }}"
+          - "   Disk: {{ vm_disk_size }}GB"

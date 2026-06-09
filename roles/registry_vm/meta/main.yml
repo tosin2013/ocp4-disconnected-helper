@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  author: Platform Team
+  description: Complete registry VM lifecycle (provision, install, configure)
+  company: ocp4-disconnected-helper
+  license: MIT
+  min_ansible_version: "2.15"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+
+  galaxy_tags:
+    - registry
+    - quay
+    - mirror-registry
+    - openshift
+    - disconnected
+
+dependencies:
+  - role: common_vm

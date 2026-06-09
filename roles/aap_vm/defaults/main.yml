@@ -1,0 +1,136 @@
+---
+# AAP VM Role Defaults
+# Based on ADR 0021: AAP 2.5 Containerized Installation
+
+# =========================================================================
+# VM Configuration (via common_vm role)
+# =========================================================================
+vm_name: "aap-controller"
+vm_memory: 16384  # 16GB RAM (AAP 2.5 minimum requirement)
+vm_cpus: 4        # 4 vCPU (AAP 2.5 minimum requirement)
+vm_disk_size: 60  # 60GB disk for AAP data
+
+# Network configuration
+vm_network: "management"  # VLAN 1924 - Management network
+vm_static_ip: "192.168.10.20"  # Static IP for AAP controller
+vm_gateway: "192.168.10.1"     # VyOS gateway
+vm_netmask: "255.255.255.0"
+vm_dns_servers:
+  - "192.168.10.1"  # VyOS DNS
+  - "1.1.1.1"
+
+# Base OS
+vm_os_variant: "centos-stream9"
+vm_base_image: "/data/libvirt-images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
+
+# Cloud-init
+vm_ssh_user: "admin"
+vm_ssh_authorized_keys:
+  - "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub') }}"
+
+# =========================================================================
+# AAP Installation Configuration
+# =========================================================================
+
+# AAP version
+aap_version: "2.5"
+aap_installer_type: "containerized"  # AAP 2.5+ uses containerized install
+
+# AAP admin credentials
+aap_admin_username: "admin"
+aap_admin_password: "{{ lookup('password', '/dev/null length=16 chars=ascii_letters,digits') }}"  # Random password
+aap_admin_email: "admin@{{ external_domain | default('ocp4.local') }}"
+
+# AAP components to install
+aap_install_controller: true   # Automation Controller (primary component)
+aap_install_hub: false         # Private Automation Hub (optional)
+aap_install_eda: false         # Event-Driven Ansible (optional)
+
+# AAP database (embedded PostgreSQL for single-node)
+aap_database_type: "embedded"  # embedded or external
+aap_database_name: "awx"
+aap_database_user: "awx"
+
+# AAP SSL/TLS
+aap_ssl_cert_provider: "selfsigned"  # selfsigned or letsencrypt
+aap_ssl_cert_path: "/etc/aap/ssl/aap.crt"
+aap_ssl_key_path: "/etc/aap/ssl/aap.key"
+
+# AAP networking
+aap_controller_port: 443      # HTTPS port for web UI
+aap_receptor_port: 27199      # Receptor mesh port
+
+# AAP storage paths
+aap_install_dir: "/opt/ansible-automation-platform"
+aap_data_dir: "/var/lib/aap"
+aap_projects_dir: "{{ aap_data_dir }}/projects"
+
+# =========================================================================
+# Integration with ocp4-disconnected-helper
+# =========================================================================
+
+# Import existing playbooks as AAP projects
+aap_import_playbooks: true
+aap_project_repo_url: "https://github.com/tosin2013/ocp4-disconnected-helper.git"
+aap_project_repo_branch: "main"
+
+# Import inventory
+aap_import_inventory: true
+aap_inventory_source: "{{ playbook_dir }}/../inventory/ibm-cloud.yml"
+
+# Credentials to configure
+aap_credentials:
+  - name: "KVM Hypervisor SSH"
+    type: "ssh"
+    username: "{{ ansible_user }}"
+    ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_rsa"
+
+# =========================================================================
+# Job Templates to Create
+# =========================================================================
+# Based on ADR 0021 migration from Airflow DAGs
+
+aap_job_templates:
+  - name: "Deploy Registry VM"
+    playbook: "playbooks/site.yml"
+    inventory: "ocp4-disconnected-helper"
+    extra_vars:
+      tags: "registry"
+
+  - name: "Deploy AAP VM"
+    playbook: "playbooks/site.yml"
+    inventory: "ocp4-disconnected-helper"
+    extra_vars:
+      tags: "aap"
+
+  - name: "oc-mirror Download to Disk"
+    playbook: "playbooks/download-to-disk-v2.yml"
+    inventory: "ocp4-disconnected-helper"
+    survey_enabled: true
+    survey_spec:
+      - question: "OpenShift Version"
+        variable: "openshift_version"
+        type: "text"
+        default: "4.21.0"
+
+  - name: "Push Images to Registry"
+    playbook: "playbooks/push-to-registry-v2.yml"
+    inventory: "ocp4-disconnected-helper"
+
+# =========================================================================
+# AAP Installer Download
+# =========================================================================
+
+aap_installer_url: "https://access.redhat.com/downloads/content/480/ver=2.5/rhel---9/2.5/x86_64/product-software"
+aap_installer_bundle: "ansible-automation-platform-containerized-setup-bundle-2.5-1.tar.gz"
+aap_installer_checksum: "sha256:PLACEHOLDER"  # Update with actual checksum
+
+# =========================================================================
+# Resource Requirements Check
+# =========================================================================
+
+# Minimum requirements for AAP 2.5 containerized
+aap_min_memory_mb: 16384  # 16GB
+aap_min_cpus: 4
+aap_min_disk_gb: 40
+aap_recommended_disk_gb: 60

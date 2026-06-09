@@ -1,0 +1,47 @@
+---
+# Setup registry authentication and merge with pull-secret
+
+- name: Check if pull-secret exists locally
+  ansible.builtin.stat:
+    path: "{{ registry_pull_secret_path }}"
+  register: pull_secret_file
+  delegate_to: localhost
+
+- name: Warn if pull-secret not found
+  ansible.builtin.debug:
+    msg:
+      - "⚠️  Pull-secret not found at {{ registry_pull_secret_path }}"
+      - "   Skipping authentication merge"
+      - "   To add authentication later, place pull-secret.json and re-run"
+  when: not pull_secret_file.stat.exists
+
+- name: Merge registry credentials with pull-secret
+  when: pull_secret_file.stat.exists
+  block:
+    - name: Load existing pull-secret
+      ansible.builtin.set_fact:
+        pull_secret_data: "{{ lookup('file', registry_pull_secret_path) | from_json }}"
+      delegate_to: localhost
+
+    - name: Create base64 auth string for mirror-registry
+      ansible.builtin.set_fact:
+        registry_auth_string: "{{ (registry_admin_user + ':' + registry_admin_password) | b64encode }}"
+
+    - name: Add mirror-registry to pull-secret
+      ansible.builtin.set_fact:
+        combined_pull_secret: "{{ pull_secret_data | combine({'auths': pull_secret_data.auths | combine({registry_hostname + ':' + (registry_port | string): {'auth': registry_auth_string, 'email': ''}}) }) }}"
+
+    - name: Write combined pull-secret
+      ansible.builtin.copy:
+        content: "{{ combined_pull_secret | to_nice_json }}"
+        dest: "{{ registry_combined_pull_secret_path }}"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Display authentication summary
+      ansible.builtin.debug:
+        msg:
+          - "✅ Registry authentication configured"
+          - "   Combined pull-secret: {{ registry_combined_pull_secret_path }}"
+          - "   Registry: {{ registry_hostname }}:{{ registry_port }}"
+          - "   User: {{ registry_admin_user }}"

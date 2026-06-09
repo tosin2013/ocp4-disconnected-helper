@@ -1,0 +1,7 @@
+---
+# Cleanup handlers for failure scenarios
+
+- name: Cleanup VM on failure
+  ansible.builtin.include_tasks: tasks/delete.yml
+  when: vm_cleanup_on_failure | default(true)
+  listen: cleanup_vm

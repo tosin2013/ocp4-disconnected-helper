@@ -1,0 +1,159 @@
+---
+# Configure static IP post-boot (handles cloud-init network-config failure on CentOS Stream 9)
+
+# For VyOS-managed networks: VM boots with DHCP, we SSH in and configure static IP
+- name: VyOS-managed network - configure static IP post-boot
+  when: vyos_managed_network | default(false)
+  block:
+    - name: Display VyOS network info
+      ansible.builtin.debug:
+        msg:
+          - "VyOS-managed network detected"
+          - "VM will boot with DHCP from VyOS"
+          - "Will configure static IP: {{ vm_static_ip }}"
+          - "Gateway: {{ vm_gateway }} (VyOS router)"
+
+    - name: Wait for VM to get DHCP lease from VyOS
+      ansible.builtin.pause:
+        seconds: 30
+        prompt: "Waiting for VM to boot and get DHCP from VyOS..."
+
+    - name: Find VM IP from VyOS DHCP leases
+      ansible.builtin.shell: |
+        sshpass -p 'vyos' ssh -o StrictHostKeyChecking=no vyos@192.168.122.2 \
+        "show dhcp server leases" | grep -i "{{ vm_mac_address }}" | awk '{print $2}' || echo ""
+      register: vyos_dhcp_ip
+      delegate_to: localhost
+      changed_when: false
+      retries: 10
+      delay: 10
+      until: vyos_dhcp_ip.stdout | length > 0
+
+    - name: Set VM current DHCP IP from VyOS
+      ansible.builtin.set_fact:
+        vm_current_dhcp_ip: "{{ vyos_dhcp_ip.stdout | trim }}"
+
+    - name: Display IP configuration plan
+      ansible.builtin.debug:
+        msg:
+          - "Current DHCP IP from VyOS: {{ vm_current_dhcp_ip }}"
+          - "Target static IP: {{ vm_static_ip }}"
+          - "Will reconfigure via NetworkManager..."
+
+    - name: Apply static IP configuration via NetworkManager
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        {{ vm_user }}@{{ vm_current_dhcp_ip }} \
+        'sudo nmcli con mod "System eth0" \
+        ipv4.method manual \
+        ipv4.addresses {{ vm_static_ip }}/24 \
+        ipv4.gateway {{ vm_gateway }} \
+        ipv4.dns "{{ vm_dns_servers[0] }} {{ vm_dns_servers[1] }}" && \
+        sudo nmcli con down "System eth0" && \
+        sudo nmcli con up "System eth0"'
+      register: ip_reconfig
+      delegate_to: localhost
+      changed_when: true
+      when: vm_current_dhcp_ip != vm_static_ip
+
+    - name: Display static IP success
+      ansible.builtin.debug:
+        msg:
+          - "✅ Static IP configured successfully"
+          - "   VM {{ vm_name }} now accessible at {{ vm_static_ip }}"
+
+# For dnsmasq-managed networks: detect DHCP IP, then reconfigure to static
+- name: dnsmasq-managed network - post-boot static IP configuration
+  when: not (vyos_managed_network | default(false))
+  block:
+    - name: Get VM MAC address from domain XML
+      ansible.builtin.command:
+        cmd: virsh domiflist {{ vm_name }} --inactive
+      register: vm_mac_output
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Parse VM MAC address
+      ansible.builtin.set_fact:
+        vm_mac_address: "{{ vm_mac_output.stdout_lines[2].split()[4] }}"
+
+    - name: Wait for DHCP lease (check dnsmasq status file)
+      ansible.builtin.command:
+        cmd: cat /var/lib/libvirt/dnsmasq/virbr0.status
+      register: dhcp_status
+      retries: 20
+      delay: 15
+      until: dhcp_status.stdout is search(vm_mac_address)
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Parse current DHCP IP from lease
+      ansible.builtin.shell:
+        cmd: jq -r '.[] | select(."mac-address"=="{{ vm_mac_address }}") | ."ip-address"' /var/lib/libvirt/dnsmasq/virbr0.status
+      register: dhcp_ip
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Set VM current DHCP IP fact
+      ansible.builtin.set_fact:
+        vm_current_dhcp_ip: "{{ dhcp_ip.stdout }}"
+
+    - name: Display IP transition plan
+      ansible.builtin.debug:
+        msg:
+          - "Current DHCP IP: {{ vm_current_dhcp_ip }}"
+          - "Target static IP: {{ vm_static_ip }}"
+          - "Configuring static IP via NetworkManager..."
+
+    - name: Check if already on static IP
+      ansible.builtin.set_fact:
+        already_static: "{{ vm_current_dhcp_ip == vm_static_ip }}"
+
+    - name: Skip configuration if already on static IP
+      ansible.builtin.debug:
+        msg: "✅ VM already configured with static IP {{ vm_static_ip }}"
+      when: already_static | bool
+
+    - name: Apply static IP configuration via NetworkManager
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        {{ vm_user }}@{{ vm_current_dhcp_ip }} \
+        'sudo nmcli con mod "System eth0" \
+        ipv4.method manual \
+        ipv4.addresses {{ vm_static_ip }}/24 \
+        ipv4.gateway {{ vm_gateway }} \
+        ipv4.dns "{{ vm_dns_servers | join(' ') }}" && \
+        sudo nmcli con down "System eth0" && \
+        sudo nmcli con up "System eth0"'
+      register: ip_reconfig
+      ignore_errors: yes
+      delegate_to: localhost
+      changed_when: true
+      when: not already_static | bool
+
+    - name: Wait for VM to come back on static IP
+      ansible.builtin.wait_for:
+        host: "{{ vm_static_ip }}"
+        port: 22
+        delay: 10
+        timeout: "{{ vm_network_timeout }}"
+      delegate_to: localhost
+      when:
+        - not already_static | bool
+        - ip_reconfig is succeeded
+
+    - name: Verify static IP configured
+      ansible.builtin.command:
+        cmd: ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_user }}@{{ vm_static_ip }} 'ip addr show eth0'
+      register: final_ip_check
+      failed_when: vm_static_ip not in final_ip_check.stdout
+      delegate_to: localhost
+      changed_when: false
+      when: not already_static | bool
+
+    - name: Display static IP success
+      ansible.builtin.debug:
+        msg:
+          - "✅ Static IP configured successfully"
+          - "   VM {{ vm_name }} now accessible at {{ vm_static_ip }}"
+      when: not already_static | bool

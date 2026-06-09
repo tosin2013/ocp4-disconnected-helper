@@ -1,0 +1,70 @@
+---
+# Configure static DHCP reservation in libvirt network (replaces cloud-init static IP)
+# This ensures VM always gets the same IP via DHCP without manual network configuration
+
+- name: Check if libvirt network has existing DHCP reservation
+  ansible.builtin.command:
+    cmd: virsh net-dumpxml default
+  register: network_xml
+  delegate_to: localhost
+  changed_when: false
+
+- name: Parse existing DHCP host entries
+  ansible.builtin.set_fact:
+    has_dhcp_reservation: "{{ network_xml.stdout is search(vm_static_ip) }}"
+
+- name: Display DHCP reservation status
+  ansible.builtin.debug:
+    msg: "{% if has_dhcp_reservation %}✅ DHCP reservation already exists for {{ vm_static_ip }}{% else %}⚠️  No DHCP reservation found, will create{% endif %}"
+
+- name: Create static DHCP reservation for VM
+  when: not has_dhcp_reservation
+  block:
+    - name: Add DHCP host entry to libvirt network
+      ansible.builtin.command:
+        cmd: >
+          virsh net-update default add ip-dhcp-host
+          "<host mac='{{ vm_mac_address }}' name='{{ vm_name }}' ip='{{ vm_static_ip }}'/>"
+          --live --config
+      register: dhcp_update
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Display DHCP reservation created
+      ansible.builtin.debug:
+        msg:
+          - "✅ Static DHCP reservation created"
+          - "   MAC: {{ vm_mac_address }}"
+          - "   IP: {{ vm_static_ip }}"
+          - "   Name: {{ vm_name }}"
+
+- name: Verify DHCP reservation is active
+  ansible.builtin.command:
+    cmd: virsh net-dumpxml default
+  register: verify_network
+  failed_when: vm_static_ip not in verify_network.stdout
+  delegate_to: localhost
+  changed_when: false
+
+- name: Wait for VM to get static IP via DHCP
+  ansible.builtin.wait_for:
+    host: "{{ vm_static_ip }}"
+    port: 22
+    delay: 10
+    timeout: "{{ vm_network_timeout }}"
+  delegate_to: localhost
+
+- name: Verify VM is accessible via static IP
+  ansible.builtin.command:
+    cmd: ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_user }}@{{ vm_static_ip }} 'echo SUCCESS'
+  register: ssh_test
+  failed_when: "'SUCCESS' not in ssh_test.stdout"
+  delegate_to: localhost
+  changed_when: false
+
+- name: Display static IP configuration success
+  ansible.builtin.debug:
+    msg:
+      - "✅ Static DHCP reservation working"
+      - "   VM {{ vm_name }} accessible at {{ vm_static_ip }}"
+      - "   No manual network configuration needed!"

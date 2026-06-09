@@ -1,0 +1,66 @@
+---
+# AAP VM Prerequisites Installation
+
+- name: Update system packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_cache: true
+
+- name: Install required packages
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - python3
+      - python3-pip
+      - git
+      - wget
+      - curl
+      - tar
+      - rsync
+      - firewalld
+    state: present
+
+- name: Enable and start firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Open firewall ports for AAP
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop:
+    - "{{ aap_controller_port }}/tcp"       # HTTPS web UI
+    - "{{ aap_receptor_port }}/tcp"         # Receptor mesh
+    - "80/tcp"                               # HTTP (redirect to HTTPS)
+
+- name: Create AAP directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ aap_install_dir }}"
+    - "{{ aap_data_dir }}"
+    - "{{ aap_projects_dir }}"
+    - "/etc/aap/ssl"
+
+- name: Check available disk space
+  ansible.builtin.shell: |
+    df -BG {{ aap_data_dir }} | tail -1 | awk '{print $4}' | sed 's/G//'
+  register: available_disk
+  changed_when: false
+
+- name: Warn if disk space is low
+  ansible.builtin.debug:
+    msg: "⚠️  WARNING: Only {{ available_disk.stdout }}GB available. AAP recommends {{ aap_recommended_disk_gb }}GB."
+  when: available_disk.stdout | int < aap_recommended_disk_gb
+
+- name: Fail if disk space is critically low
+  ansible.builtin.fail:
+    msg: "❌ Insufficient disk space: {{ available_disk.stdout }}GB available, {{ aap_min_disk_gb }}GB required"
+  when: available_disk.stdout | int < aap_min_disk_gb
