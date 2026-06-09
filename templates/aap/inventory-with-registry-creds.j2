@@ -1,0 +1,14 @@
+{{ original_inventory.rstrip() }}
+
+# Red Hat Registry Credentials (added by update-aap-registry-credentials.yml)
+# These credentials allow the Control Plane EE to pull images from registry.redhat.io
+# for AAP project syncs and internal operations.
+{% if not has_registry_url %}
+registry_url='registry.redhat.io'
+{% endif %}
+{% if not has_registry_username %}
+registry_username='{{ registry_username }}'
+{% endif %}
+{% if not has_registry_password %}
+registry_password='{{ registry_password }}'
+{% endif %}

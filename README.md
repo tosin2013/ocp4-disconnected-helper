@@ -2,6 +2,16 @@
 
 This repository provides some automation and other utilities to deploy OpenShift in a disconnected environment.
 
+## ⚠️ First-Time Setup - Install Git Hooks
+
+**After cloning this repository, run:**
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+This installs a pre-commit hook that **prevents accidentally committing credentials** (passwords, tokens, keys) to Git. See [docs/SECURITY.md](docs/SECURITY.md) for details.
+
 Currently supports the following patterns:
 
 1. [**Downloading OpenShift releases to a local directory and package as a TAR file.**](#1-download-openshift-releases-and-operator-catalog-to-a-local-directory-and-package-as-a-tar-file) - This is intended to be done in a network with WAN access or a via a DMZ host.

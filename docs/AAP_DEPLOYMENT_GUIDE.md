@@ -166,6 +166,33 @@ cd ansible-automation-platform-containerized-setup-bundle-2.6-1.1
 
 ### Installation Configuration
 
+⚠️ **CRITICAL REQUIREMENT: Red Hat Registry Credentials**
+
+**AAP 2.6 requires authentication to `registry.redhat.io` for Control Plane Execution Environment.**
+
+Without these credentials, all project syncs will fail with:
+```
+Error: unable to retrieve auth token: unauthorized
+```
+
+**Before running `setup.sh`, you MUST:**
+
+1. **Generate Red Hat Service Account** at https://access.redhat.com/terms-based-registry/
+   - Service Account Name: `ansible-execution-environment`
+   - Purpose: AAP 2.6 Container Registry Authentication
+   - Save credentials (username format: `<org-id>|<service-account-name>`)
+
+2. **Add credentials to inventory file** (see below)
+
+3. **Run preflight check**:
+   ```bash
+   ./scripts/preflight-aap-registry-check.sh
+   ```
+
+**Why this matters:** The Control Plane Execution Environment is **system-managed** and cannot be configured with registry credentials after deployment via Web UI or API. Credentials must be in the installer inventory **before running `setup.sh`**. See [ADR-0031](./adrs/0031-aap-installer-registry-credentials.md) for complete details.
+
+---
+
 **Create `inventory` file** before running `setup.sh`:
 
 ```ini
@@ -173,20 +200,32 @@ cd ansible-automation-platform-containerized-setup-bundle-2.6-1.1
 aap-vm.example.com ansible_connection=local
 
 [all:vars]
+# ============================================================================
+# MANDATORY: Red Hat Registry Credentials
+# ============================================================================
+# These credentials allow Control Plane Execution Environment to pull images
+# from registry.redhat.io for project syncs and internal operations.
+#
+# Generate at: https://access.redhat.com/terms-based-registry/
+# Related ADR: docs/adrs/0031-aap-installer-registry-credentials.md
+registry_url='registry.redhat.io'
+registry_username='<YOUR-ORG-ID>|<YOUR-SERVICE-ACCOUNT-NAME>'
+registry_password='<YOUR-SERVICE-ACCOUNT-TOKEN-HERE>'
+
 # Admin credentials
 admin_password='SecurePassword123!'
 
 # Database
 postgresql_admin_password='PostgresPassword!'
 
-# Registry (for bundle installations)
-registry_url='registry.example.com:8443'
-registry_username='admin'
-registry_password='RegistryPassword!'
-
 # Network
 controller_hostname='aap-vm.example.com'
 controller_external_url='https://aap-vm.example.com'
+```
+
+**Security Note:** Protect inventory file permissions:
+```bash
+chmod 600 inventory
 ```
 
 ---

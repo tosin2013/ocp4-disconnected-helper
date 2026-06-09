@@ -1,0 +1,133 @@
+#!/bin/bash
+# Pre-commit hook to prevent committing credentials and sensitive data
+# Related: ADR-0031, Security hardening for credential management
+
+set -e
+
+echo "🔍 Running credential safety checks..."
+
+# Define sensitive patterns to detect
+CREDENTIAL_PATTERNS=(
+  # Red Hat service account credentials
+  "[0-9]{8}\|[a-zA-Z0-9_-]+"  # Pattern: 12216224|service-account-name
+  "eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*"  # JWT tokens
+
+  # Generic credentials (but not variable assignments like REGISTRY_PASSWORD=$(...)
+  "password['\"]?[[:space:]]*=[[:space:]]*['\"][^<\$][^'\"]{8,}['\"]"  # password='actual-password'
+  "token['\"]?[[:space:]]*=[[:space:]]*['\"][^<\$][^'\"]{20,}['\"]"    # token='actual-token'
+
+  # API keys
+  "api[_-]?key.*['\"][a-zA-Z0-9]{20,}['\"]"
+
+  # AWS credentials
+  "AKIA[0-9A-Z]{16}"  # AWS Access Key
+  "aws_secret_access_key.*['\"][a-zA-Z0-9/+=]{40}['\"]"
+
+  # Private keys
+  "BEGIN.*PRIVATE KEY"
+
+  # Ansible Vault unencrypted
+  "vault_[a-z_]*password.*['\"][^<$][^'\"]{8,}['\"]"
+)
+
+# Exclude patterns (these are safe placeholders)
+SAFE_PATTERNS=(
+  "<YOUR-"
+  "<service-account-"
+  "changeme"
+  "SecurePassword123"
+  "YourSecure"
+  "\$\{.*\}"  # Variable references
+  "\{\{.*\}\}"  # Jinja2 templates
+)
+
+# Get list of files to be committed
+FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$FILES" ]; then
+  echo "✅ No files to check"
+  exit 0
+fi
+
+VIOLATIONS_FOUND=0
+
+# Check each file
+for FILE in $FILES; do
+  # Skip binary files, images, and archives
+  if [[ "$FILE" =~ \.(png|jpg|jpeg|gif|pdf|tar|gz|zip|qcow2)$ ]]; then
+    continue
+  fi
+
+  # Skip files that should be ignored
+  if [[ "$FILE" =~ ^\.git/ ]] || \
+     [[ "$FILE" =~ ^node_modules/ ]] || \
+     [[ "$FILE" =~ \.vault$ ]] || \
+     [[ "$FILE" =~ \.pyc$ ]] || \
+     [[ "$FILE" =~ ^scripts/git-hooks/ ]] || \
+     [[ "$FILE" =~ ^docs/SECURITY\.md$ ]] || \
+     [[ "$FILE" =~ ^docs/hardening/ ]] || \
+     [[ "$FILE" == "CLAUDE.md" ]]; then
+    continue
+  fi
+
+  # Get file content
+  CONTENT=$(git show ":$FILE")
+
+  # Check each credential pattern
+  for PATTERN in "${CREDENTIAL_PATTERNS[@]}"; do
+    if echo "$CONTENT" | grep -P "$PATTERN" > /dev/null; then
+      # Check if it's a safe placeholder
+      MATCHED_LINE=$(echo "$CONTENT" | grep -P "$PATTERN" | head -1)
+      IS_SAFE=0
+
+      for SAFE_PATTERN in "${SAFE_PATTERNS[@]}"; do
+        if echo "$MATCHED_LINE" | grep -P "$SAFE_PATTERN" > /dev/null; then
+          IS_SAFE=1
+          break
+        fi
+      done
+
+      if [ $IS_SAFE -eq 0 ]; then
+        echo ""
+        echo "❌ CREDENTIAL DETECTED in: $FILE"
+        echo "   Pattern: $PATTERN"
+        echo "   Line: $MATCHED_LINE"
+        echo ""
+        VIOLATIONS_FOUND=1
+      fi
+    fi
+  done
+done
+
+if [ $VIOLATIONS_FOUND -eq 1 ]; then
+  echo "════════════════════════════════════════════════════════════════"
+  echo "  ⛔ COMMIT BLOCKED: Potential credentials detected"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "Credentials should NEVER be committed to Git."
+  echo ""
+  echo "Safe credential storage:"
+  echo "  1. Ansible Vault (encrypted):"
+  echo "     extra_vars/rhel-subscription-secrets.yml"
+  echo ""
+  echo "  2. Environment variables:"
+  echo "     export RH_REGISTRY_USERNAME='...'"
+  echo ""
+  echo "  3. AAP installer inventory (chmod 600, not in Git):"
+  echo "     /opt/ansible-automation-platform/installer/inventory"
+  echo ""
+  echo "To fix:"
+  echo "  1. Remove actual credentials from staged files"
+  echo "  2. Replace with placeholders: <YOUR-CREDENTIAL-HERE>"
+  echo "  3. Store real credentials in Ansible Vault or environment"
+  echo ""
+  echo "To bypass this check (NOT RECOMMENDED):"
+  echo "  git commit --no-verify"
+  echo ""
+  echo "See: docs/adrs/0031-aap-installer-registry-credentials.md"
+  echo ""
+  exit 1
+fi
+
+echo "✅ No credentials detected - safe to commit"
+exit 0

@@ -6,6 +6,36 @@ This project automates the deployment of disconnected/air-gapped OpenShift 4 inf
 
 **Architecture**: Nested KVM hypervisor on IBM Cloud VSI → VyOS router → Registry VMs → OpenShift clusters
 
+## Security Rules - MANDATORY
+
+### Rule 1: NEVER Commit Credentials to Git
+
+**Absolutely forbidden in any file committed to Git:**
+- Real service account credentials (Red Hat, AWS, Azure, Quay)
+- JWT tokens, API keys, passwords
+- Private keys, certificates (except `.example` files)
+- AAP installer inventory files with real credentials
+
+**Always use placeholders in documentation:**
+```
+❌ registry_username='12216224|ansible-execution-environment'
+✅ registry_username='<YOUR-ORG-ID>|<YOUR-SERVICE-ACCOUNT-NAME>'
+```
+
+**Pre-commit hook protection:** The `.git/hooks/pre-commit` script automatically blocks commits containing credentials. If it triggers:
+1. Replace real credentials with placeholders
+2. Store real credentials in Ansible Vault or environment variables
+3. Never use `--no-verify` to bypass the check
+
+**Safe credential storage locations:**
+- Ansible Vault: `extra_vars/rhel-subscription-secrets.yml` (encrypted)
+- Environment variables: `export RH_REGISTRY_USERNAME='...'`
+- AAP installer inventory: `/opt/ansible-automation-platform/installer/inventory` (chmod 600, not in Git)
+
+**Related:** ADR-0031, `.gitignore` rules, `docs/SECURITY.md`
+
+---
+
 ## Project Memory Strategy
 
 This project uses **PMB (Personal Memory Brain)** for persistent architectural and troubleshooting memory across sessions.
@@ -131,6 +161,67 @@ Old deprecated URL: `https://developers.redhat.com/content-gateway/...` (404 err
 
 ## Known Failure Patterns — v1.0
 
+### AAP 2.6 Project Sync Failure - Control Plane EE Registry Authentication
+**Pattern**: AAP project sync fails with "Project update failed" or "unable to retrieve auth token: unauthorized"
+
+**Root Cause**: Control Plane Execution Environment is a **system-managed resource** that cannot be configured with registry credentials after deployment via Web UI or API. Registry credentials for `registry.redhat.io` must be in the AAP installer inventory file **before running `setup.sh`** during initial deployment.
+
+**Prevention Rules**:
+1. **Always configure registry credentials in installer inventory** before running `setup.sh`:
+   ```bash
+   # Edit /opt/ansible-automation-platform/installer/inventory
+   # Add to [all:vars] section:
+   registry_url='registry.redhat.io'
+   registry_username='<org-id>|<service-account-name>'
+   registry_password='<service-account-token>'
+   ```
+
+2. **Run preflight validation** before AAP deployment:
+   ```bash
+   ./scripts/preflight-aap-registry-check.sh
+   ```
+
+3. **Never attempt to configure Control Plane EE via Web UI or API** post-deployment:
+   - ❌ NO: ansible.controller.execution_environment API (returns HTTP 403 Forbidden)
+   - ❌ NO: Web UI → Administration → Execution Environments → Control Plane EE (read-only)
+   - ✅ YES: Installer inventory + setup.sh (only method that works)
+
+4. **Custom EEs are supplemental, not a replacement**:
+   - Custom EEs are for job template execution (with extra collections/tools)
+   - Control Plane EE is for project syncs (system-managed, needs separate config)
+   - Both need registry credentials, but via different methods
+
+5. **Credential rotation requires re-running setup.sh**:
+   - Update credentials in installer inventory
+   - Re-run `./setup.sh -i inventory` (5-10 minute process)
+   - All AAP containers (Gateway, Controller, Database) reconfigure automatically
+
+**Verification**:
+After deployment with credentials configured:
+```bash
+# Test project sync
+curl -sk -u admin:<password> \
+  "https://aap.example.com/api/controller/v2/project_updates/?order_by=-id" | \
+  jq -r '.results[0].status'
+# Expected: "successful"
+```
+
+**Incident Reference**: See PMB tag: `hardening, v2.6` (ULID: `0019eacef79b0_1bc6597a`)
+
+**Related ADRs**:
+- ADR 0031: AAP 2.6 Installer Registry Credential Configuration (mandatory requirement)
+- ADR 0029: Custom Execution Environment (supplemental for job templates)
+- ADR 0028: AAP 2.6 Multi-Node Password Architecture
+- ADR 0021: Deprecate Airflow and Adopt AAP
+
+**Related Files**:
+- `scripts/preflight-aap-registry-check.sh`: Preflight validation for registry credentials
+- `playbooks/deploy-aap-multi-node.yml`: Includes preflight check before setup.sh
+- `docs/AAP_DEPLOYMENT_GUIDE.md`: Step-by-step deployment with credential configuration
+- `docs/hardening/aap-control-plane-ee-registry-v2.6-2026-06-09.md`: Complete incident analysis
+
+---
+
 ### Registry Authentication with TLS Certificate Verification Failure
 **Pattern**: `podman login` fails with "tls: failed to verify certificate: x509: certificate signed by unknown authority"
 
@@ -173,6 +264,113 @@ echo "$PASSWORD" | podman login --username init --password-stdin $REGISTRY_URL
 **Related ADRs**:
 - ADR 0016: Trusted Certificate Management (dual-path: Let's Encrypt + self-signed)
 - ADR 0017: Quay Mirror Registry (certificate injection via --sslCert/--sslKey)
+
+---
+
+### oc-mirror Playbook Returns Cached Failure ("Port 55000 Already Bound")
+**Pattern**: `ansible-playbook download-to-disk-v2.yml` fails immediately (<5 seconds) with error: `[ERROR] [Executor] 55000 is already bound and cannot be used`
+
+**Root Cause**: Stale Ansible async cache at `/root/.ansible_async/` (or `~/.ansible_async/`) returning cached failure from a previous playbook run. The playbook does NOT actually execute - it returns the cached result immediately with the original job ID (e.g., `j571283734101.416643`).
+
+**Prevention Rules**:
+1. **Always clear async cache after failed oc-mirror runs**:
+   ```bash
+   sudo rm -rf /root/.ansible_async/*
+   # Or use the cleanup script:
+   sudo ./scripts/clear-async-cache.sh
+   ```
+
+2. **Detect cached failures by execution time**:
+   - Real oc-mirror runs take 1-60 minutes depending on image count
+   - Cached failures return in <5 seconds
+   - If playbook fails instantly with network/port errors, suspect async cache
+
+3. **Verify port is actually free before assuming process conflict**:
+   ```bash
+   sudo ss -tlnp | grep 55000
+   ps aux | grep oc-mirror
+   ```
+   If port is free and no process is running, it's async cache, not a real conflict.
+
+4. **Check for preflight warning** (playbooks/download-to-disk-v2.yml v1.1+):
+   The playbook warns about stale async cache during preflight. Heed the warning and clear cache before proceeding.
+
+**Verification**:
+After clearing async cache, playbook should:
+- Take >30 seconds to start (installing prerequisites)
+- Show oc-mirror progress messages
+- Complete successfully with "✓ N / N images mirrored successfully"
+
+**Incident Reference**: See PMB tag: `hardening, v1.0`, incident summary ULID: `0019e9367f9c1_8e5c2a4b`
+
+**Related ADRs**:
+- ADR 0003: oc-mirror v2 for Image Mirroring (updated with Ansible async constraints)
+- ADR 0022: Standalone Architecture (pure Ansible with async for long-running operations)
+- ADR 0023: Pure Ansible with community.libvirt
+
+**Related Docs**:
+- `docs/TROUBLESHOOTING.md`: Full troubleshooting steps
+- `docs/hardening/oc-mirror-async-cache-v1.0-2026-06-04.md`: Complete incident analysis
+
+---
+
+### AAP 2.6 Multi-Node Login Failure ("Invalid username or password")
+**Pattern**: Web UI login at https://aap.sandbox3377.opentlc.com returns "Invalid username or password" despite entering correct credentials. API authentication with same credentials works.
+
+**Root Cause**: AAP 2.6 multi-node architecture uses **two separate admin passwords**:
+- `automationgateway_admin_password` - For **Web UI login** (Gateway component)
+- `admin_password` - For **Controller API authentication** (Controller component)
+
+**Prevention Rules**:
+1. **Always use Gateway password for Web UI login**:
+   ```
+   URL: https://aap.sandbox3377.opentlc.com
+   Username: admin
+   Password: <automationgateway_admin_password from secrets file>
+   ```
+
+2. **Use Controller password for API authentication**:
+   ```bash
+   curl -u admin:<admin_password> https://aap.../api/controller/v2/ping/
+   ```
+
+3. **Run password validation before deployment**:
+   ```bash
+   ansible-playbook -i inventory/ibm-cloud.yml playbooks/validate-aap-passwords.yml \
+     -e@extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
+   ```
+
+4. **Set different passwords for Gateway and Controller** (security best practice):
+   - Do NOT use the same password for both components
+   - Validation playbook enforces this separation
+
+5. **Check deployment summary for password reference**:
+   The deployment playbook displays which password to use for Web UI vs API
+
+**Verification**:
+After deployment, test both authentication contexts:
+```bash
+# Test Web UI (Gateway) - Open in browser
+https://aap.sandbox3377.opentlc.com
+# Login: admin / <automationgateway_admin_password>
+
+# Test Controller API
+curl -u admin:<admin_password> https://aap.../api/controller/v2/ping/
+```
+
+**Incident Reference**: See PMB tag: `hardening, v1.0` (ULID: `0019e9806e6c4_72f49a83`)
+
+**Related ADRs**:
+- ADR 0028: AAP 2.6 Multi-Node Password Architecture (password taxonomy and validation)
+- ADR 0021: Deprecate Airflow and Adopt AAP (decision to use AAP 2.6)
+- ADR 0009: Secrets Management (password storage via Ansible Vault)
+
+**Related Files**:
+- `extra_vars/rhel-subscription-secrets.yml.example`: Password architecture documentation
+- `playbooks/validate-aap-passwords.yml`: Preflight password validation
+- `docs/hardening/aap-multi-node-password-v1.0-2026-06-05.md`: Complete incident analysis
+
+---
 
 ## Development Workflow
 

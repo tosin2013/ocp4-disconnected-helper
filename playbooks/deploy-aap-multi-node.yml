@@ -1,0 +1,140 @@
+---
+# Deploy AAP 2.6 Multi-Node across Gateway, Controller, Database VMs
+# ADR Reference: ADR 0027 - RHEL Subscription Activation Keys
+#                ADR 0028 - AAP 2.6 Multi-Node Password Architecture
+#
+# ============================================================================
+# AUTHENTICATION ARCHITECTURE (ADR 0028):
+# ============================================================================
+#   WEB UI (https://aap.sandbox3377.opentlc.com)
+#     → Username: admin
+#     → Password: {{ automationgateway_admin_password }}
+#
+#   CONTROLLER API (/api/controller/*)
+#     → Authentication: Basic auth (admin:{{ admin_password }})
+#
+#   GATEWAY API (/api/gateway/*)
+#     → Authentication: Basic auth (admin:{{ automationgateway_admin_password }})
+#
+# ⚠️ CRITICAL: These are TWO DIFFERENT passwords. Do not confuse them.
+# ============================================================================
+
+# =========================================================================
+# Play 1: Register all AAP VMs with RHEL
+# =========================================================================
+- name: Register AAP VMs with RHEL Subscription
+  hosts: aap_vms
+  gather_facts: yes
+  become: yes
+
+  tasks:
+    - name: Register with Red Hat using activation key
+      community.general.redhat_subscription:
+        state: present
+        activationkey: "{{ rhsm_activationkey }}"
+        org_id: "{{ rhsm_org_id }}"
+        force_register: "{{ rhsm_force_register | default(false) }}"
+      when:
+        - rhsm_org_id is defined
+        - rhsm_activationkey is defined
+
+    - name: Display registration status
+      ansible.builtin.debug:
+        msg: "✅ {{ inventory_hostname }} registered with RHEL subscription"
+
+# =========================================================================
+# Play 2: Configure SSH between AAP nodes
+# =========================================================================
+- name: Configure SSH Keys for AAP Cluster
+  hosts: aap_vms
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: Generate SSH key on all nodes
+      ansible.builtin.user:
+        name: root
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+
+    - name: Fetch public keys from all nodes
+      ansible.builtin.slurp:
+        src: /root/.ssh/id_rsa.pub
+      register: ssh_public_keys
+
+    - name: Distribute SSH keys to all nodes
+      ansible.builtin.authorized_key:
+        user: root
+        key: "{{ hostvars[item].ssh_public_keys.content | b64decode }}"
+        state: present
+      loop: "{{ groups['aap_vms'] }}"
+      delegate_to: "{{ item }}"
+
+    - name: Add all nodes to known_hosts
+      ansible.builtin.shell: |
+        ssh-keyscan -H {{ hostvars[item].vm_static_ip }} >> /root/.ssh/known_hosts
+      loop: "{{ groups['aap_vms'] }}"
+      changed_when: false
+
+# =========================================================================
+# Play 3: Prepare AAP Installer on Gateway
+# =========================================================================
+- name: Prepare AAP Installer
+  hosts: aap-gateway
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: Install AAP installer package from RHEL repository
+      ansible.builtin.dnf:
+        name: ansible-automation-platform-installer
+        state: present
+        enablerepo: ansible-automation-platform-2.6-for-rhel-9-x86_64-rpms
+
+    - name: Create AAP inventory file
+      ansible.builtin.template:
+        src: ../templates/aap/inventory-multi-node.j2
+        dest: /opt/ansible-automation-platform/installer/inventory
+        owner: root
+        group: root
+        mode: '0600'
+
+# =========================================================================
+# Play 3: Run AAP Installer from Gateway
+# =========================================================================
+- name: Install AAP 2.6 Multi-Node
+  hosts: aap-gateway
+  gather_facts: no
+  become: yes
+
+  tasks:
+    # Preflight validation - ensures registry credentials are configured
+    # Related: ADR-0031 - AAP Installer Registry Credential Configuration
+    - name: Run preflight check for registry credentials
+      ansible.builtin.script:
+        cmd: /home/vpcuser/ocp4-disconnected-helper/scripts/preflight-aap-registry-check.sh
+      register: preflight_check
+      failed_when: preflight_check.rc > 1  # Allow warnings (rc=1), fail on errors (rc>1)
+      delegate_to: localhost
+      run_once: true
+
+    - name: Display preflight check result
+      ansible.builtin.debug:
+        var: preflight_check.stdout_lines
+
+    - name: Run AAP setup.sh installer
+      ansible.builtin.command:
+        cmd: ./setup.sh
+        chdir: /opt/ansible-automation-platform/installer
+      register: aap_install
+      async: 3600
+      poll: 30
+
+    - name: Display installation result
+      ansible.builtin.debug:
+        msg:
+          - "✅ AAP 2.6 Multi-Node Installation Complete"
+          - "   Gateway: https://{{ hostvars['aap-gateway'].vm_static_ip }}"
+          - "   Controller: https://{{ hostvars['aap-controller'].vm_static_ip }}"
+          - "   Database: {{ hostvars['aap-database'].vm_static_ip }}:5432"
