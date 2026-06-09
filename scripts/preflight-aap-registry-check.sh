@@ -2,10 +2,15 @@
 # Preflight validation for AAP installer registry credentials
 # Prevents deployment failures due to missing Control Plane EE authentication
 # Related: ADR-0031
+#
+# Usage:
+#   preflight-aap-registry-check.sh [inventory_file_path]
+#
+# If no path provided, defaults to /opt/ansible-automation-platform/installer/inventory
 
 set -euo pipefail
 
-INVENTORY_FILE="/opt/ansible-automation-platform/installer/inventory"
+INVENTORY_FILE="${1:-/opt/ansible-automation-platform/installer/inventory}"
 EXIT_CODE=0
 
 echo "════════════════════════════════════════════════════════════════"
