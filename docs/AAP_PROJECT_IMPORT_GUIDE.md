@@ -5,7 +5,31 @@
 **Prerequisites**:
 - AAP 2.6 activated with valid subscription ✅
 - Admin access to https://aap.sandbox3377.opentlc.com ✅
+- **Red Hat Container Registry credentials configured** (see below) ⚠️
 - This repository accessible via Git URL
+
+---
+
+## ⚠️ **CRITICAL: Configure Red Hat Registry Credentials First**
+
+Before importing projects, AAP needs authentication to pull execution environment container images from `registry.redhat.io`.
+
+**Quick Setup**:
+1. Log in: https://aap.sandbox3377.opentlc.com
+2. **Administration** → **Execution Environments**
+3. Edit **Control Plane Execution Environment**
+4. **Credential** → Create new **Container Registry** credential:
+   - Registry URL: `registry.redhat.io`
+   - Username: (from `extra_vars/rhel-subscription-secrets.yml`)
+   - Password: (from `extra_vars/rhel-subscription-secrets.yml`)
+5. Save and assign credential to execution environment
+
+**Why this matters**: Without this, project syncs fail with:
+```
+Error: unable to retrieve auth token: invalid username/password: unauthorized
+```
+
+See `docs/AAP_POST_INSTALLATION.md` for detailed instructions.
 
 ---
 

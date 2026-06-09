@@ -8,7 +8,10 @@
 #
 # Prerequisites:
 #   - AAP 2.6 deployed and activated
-#   - ansible.controller collection installed (pip install ansible-controller or ansible-galaxy collection install ansible.controller)
+#   - ansible.controller collection installed (run scripts/setup-automation-hub.sh)
+#   - Red Hat Container Registry credentials configured in AAP (see docs/AAP_POST_INSTALLATION.md)
+#     - Administration → Execution Environments → Control Plane → Set registry.redhat.io credential
+#     - Without this: project syncs fail with "unable to retrieve auth token" error
 
 - name: Automated AAP Project Import
   hosts: localhost
@@ -17,7 +20,7 @@
   vars:
     aap_host: "https://aap.{{ external_domain }}"
     aap_validate_certs: false
-    project_repo_path: "/opt/ansible-projects/ocp4-disconnected-helper"
+    project_repo_url: "https://github.com/tosin2013/ocp4-disconnected-helper.git"
 
   tasks:
     # =========================================================================
@@ -29,16 +32,27 @@
         description: "OpenShift 4 Disconnected Helper - Automated air-gapped deployments"
         organization: "Default"
         scm_type: "git"
-        scm_url: "{{ project_repo_path }}"
-        scm_update_on_launch: false
-        update_project: false
-        wait: false
+        scm_url: "{{ project_repo_url }}"
+        scm_branch: "main"
+        scm_update_on_launch: true
+        default_environment: "OCP4 AAP Execution Environment"
         controller_host: "{{ aap_host }}"
         controller_username: "admin"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
         state: present
+        wait: false
       register: aap_project
+
+    - name: Wait for project sync to complete
+      ansible.controller.project_update:
+        project: "ocp4-disconnected-helper"
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        wait: true
+        timeout: 120
 
     - name: Display project creation status
       ansible.builtin.debug:
@@ -132,7 +146,31 @@
         msg: "✅ Credential created: Ansible Vault Password"
 
     # =========================================================================
-    # Phase 5: Create Job Template for oc-mirror Workflow
+    # Phase 5: Create Container Registry Credential
+    # =========================================================================
+    - name: Create Red Hat Registry credential
+      ansible.controller.credential:
+        name: "Red Hat Registry Credential"
+        description: "registry.redhat.io authentication for execution environments"
+        organization: "Default"
+        credential_type: "Container Registry"
+        inputs:
+          host: "registry.redhat.io"
+          username: "{{ registry_username }}"
+          password: "{{ registry_password }}"
+          verify_ssl: true
+        controller_host: "{{ aap_host }}"
+        controller_username: "admin"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+
+    - name: Display registry credential status
+      ansible.builtin.debug:
+        msg: "✅ Credential created: Red Hat Registry Credential"
+
+    # =========================================================================
+    # Phase 9: Create Job Template for oc-mirror Workflow
     # =========================================================================
     - name: Create OCP Image Mirror job template
       ansible.controller.job_template:
@@ -169,7 +207,7 @@
         msg: "✅ Job Template created: OCP Image Mirror (oc-mirror to Disk)"
 
     # =========================================================================
-    # Phase 6: Create Job Template for Registry Deployment
+    # Phase 9: Create Job Template for Registry Deployment
     # =========================================================================
     - name: Create Deploy Registry VM job template
       ansible.controller.job_template:
@@ -197,7 +235,7 @@
         msg: "✅ Job Template created: Deploy Registry VM"
 
     # =========================================================================
-    # Phase 7: Create Job Template for HAProxy Configuration
+    # Phase 9: Create Job Template for HAProxy Configuration
     # =========================================================================
     - name: Create Configure HAProxy job template
       ansible.controller.job_template:
@@ -224,7 +262,7 @@
         msg: "✅ Job Template created: Configure HAProxy Load Balancer"
 
     # =========================================================================
-    # Phase 8: Verification Summary
+    # Phase 9: Verification Summary
     # =========================================================================
     - name: Display AAP configuration summary
       ansible.builtin.debug:
