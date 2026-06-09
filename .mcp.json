@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pmb": {
+      "command": "/usr/local/bin/pmb-mcp",
+      "env": {
+        "PMB_CWD": "/home/vpcuser/ocp4-disconnected-helper"
+      }
+    }
+  }
+}
