@@ -114,7 +114,7 @@ check_controller_api_availability() {
 
     local ping_response
     ping_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/ping/" 2>&1)
+        "$AAP_HOST/api/controller/v2/ping/" 2>&1)
 
     if [[ $? -ne 0 ]]; then
         log_fail "Controller API unreachable: $ping_response"
@@ -143,7 +143,7 @@ check_instance_health() {
 
     local instances_response
     instances_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/instances/" 2>&1)
+        "$AAP_HOST/api/controller/v2/instances/" 2>&1)
 
     if [[ $? -ne 0 ]]; then
         log_fail "Failed to retrieve instance health: $instances_response"
@@ -280,10 +280,10 @@ check_control_plane_ee_registry_auth() {
 check_database_connectivity() {
     log_check "Checking database connectivity..."
 
-    # Use /api/v2/config/ endpoint which requires database access
+    # Use /api/controller/v2/config/ endpoint which requires database access
     local config_response
     config_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/config/" 2>&1)
+        "$AAP_HOST/api/controller/v2/config/" 2>&1)
 
     if [[ $? -ne 0 ]]; then
         log_fail "Database connectivity check failed: $config_response"

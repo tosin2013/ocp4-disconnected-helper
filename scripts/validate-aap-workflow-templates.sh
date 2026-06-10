@@ -108,7 +108,7 @@ check_workflow_templates_exist() {
 
     local workflows_response
     workflows_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/workflow_job_templates/" 2>&1)
+        "$AAP_HOST/api/controller/v2/workflow_job_templates/" 2>&1)
 
     if [[ $? -ne 0 ]]; then
         log_fail "Failed to retrieve workflow templates: $workflows_response"
@@ -155,7 +155,7 @@ check_workflow_node_connectivity() {
 
     local workflows_response
     workflows_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/workflow_job_templates/" 2>&1)
+        "$AAP_HOST/api/controller/v2/workflow_job_templates/" 2>&1)
 
     local total_nodes=0
     local orphaned_nodes=0
@@ -172,7 +172,7 @@ check_workflow_node_connectivity() {
         # Get workflow nodes
         local nodes_response
         nodes_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-            "$AAP_HOST/api/v2/workflow_job_templates/$workflow_id/workflow_nodes/" 2>&1)
+            "$AAP_HOST/api/controller/v2/workflow_job_templates/$workflow_id/workflow_nodes/" 2>&1)
 
         local node_count
         node_count=$(echo "$nodes_response" | jq '.count // 0')
@@ -204,7 +204,7 @@ check_job_template_references() {
 
     local job_templates_response
     job_templates_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/job_templates/" 2>&1)
+        "$AAP_HOST/api/controller/v2/job_templates/" 2>&1)
 
     if [[ $? -ne 0 ]]; then
         log_fail "Failed to retrieve job templates: $job_templates_response"
@@ -250,7 +250,7 @@ check_workflow_ask_variables() {
 
     local workflows_response
     workflows_response=$(curl -sk -u "$AAP_USERNAME:$AAP_CONTROLLER_PASSWORD" \
-        "$AAP_HOST/api/v2/workflow_job_templates/" 2>&1)
+        "$AAP_HOST/api/controller/v2/workflow_job_templates/" 2>&1)
 
     local force_mode_count=0
 
