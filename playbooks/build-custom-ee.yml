@@ -112,7 +112,7 @@
 
     - name: Verify image was created
       ansible.builtin.command:
-        cmd: sudo podman images {{ ee_full_image }} --format "{{{{ .Repository }}}}:{{{{ .Tag }}}}"
+        cmd: sudo podman images {{ ee_full_image }}
       register: image_verify
       changed_when: false
 
