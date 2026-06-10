@@ -1,0 +1,301 @@
+---
+# Playbook: Check Cluster Upgrade Prerequisites
+# Purpose: Validate OpenShift cluster health before upgrade
+# ADR: 0006 - Lifecycle Management Strategy (AAP Workflow Integration)
+# Workflow: Upgrade OpenShift Cluster (Node 1)
+
+- name: Check OpenShift Cluster Upgrade Prerequisites
+  hosts: localhost
+  gather_facts: true
+  vars:
+    cluster_name: "{{ cluster_name | default('ocp4-prod') }}"
+    target_ocp_version: "{{ target_ocp_version }}"
+    kubeconfig_path: "{{ kubeconfig_path | default('/opt/kubeconfigs/' + cluster_name + '-kubeconfig') }}"
+    min_storage_gb: 100
+    etcd_quorum_threshold: 51
+
+  tasks:
+    - name: Display prerequisite check summary
+      ansible.builtin.debug:
+        msg: |
+          Cluster Upgrade Prerequisites Check
+          ===================================
+          Cluster: {{ cluster_name }}
+          Current Version: [To be detected]
+          Target Version: {{ target_ocp_version }}
+          Kubeconfig: {{ kubeconfig_path }}
+
+    # === Validate Kubeconfig ===
+
+    - name: Check kubeconfig file exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
+
+    - name: Fail if kubeconfig not found
+      ansible.builtin.fail:
+        msg: "Kubeconfig not found at {{ kubeconfig_path }}"
+      when: not kubeconfig_stat.stat.exists
+
+    - name: Display kubeconfig status
+      ansible.builtin.debug:
+        msg: "✓ Kubeconfig found"
+
+    # === Check Cluster Connectivity ===
+
+    - name: Test cluster connectivity
+      ansible.builtin.command:
+        cmd: oc cluster-info --kubeconfig={{ kubeconfig_path }}
+      register: cluster_info
+      failed_when: cluster_info.rc != 0
+      changed_when: false
+
+    - name: Display cluster connectivity status
+      ansible.builtin.debug:
+        msg: "✓ Cluster accessible"
+
+    # === Get Current Cluster Version ===
+
+    - name: Get current cluster version
+      ansible.builtin.command:
+        cmd: oc get clusterversion version -o jsonpath='{.status.desired.version}' --kubeconfig={{ kubeconfig_path }}
+      register: current_version
+      changed_when: false
+
+    - name: Display current version
+      ansible.builtin.debug:
+        msg: |
+          Current Version: {{ current_version.stdout }}
+          Target Version: {{ target_ocp_version }}
+
+    - name: Validate version upgrade path
+      ansible.builtin.assert:
+        that:
+          - current_version.stdout != target_ocp_version
+        fail_msg: "Cluster already at target version {{ target_ocp_version }}"
+        success_msg: "✓ Version upgrade required: {{ current_version.stdout }} → {{ target_ocp_version }}"
+
+    # === Check Cluster Version Operator Status ===
+
+    - name: Check ClusterVersion status
+      ansible.builtin.command:
+        cmd: oc get clusterversion version -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' --kubeconfig={{ kubeconfig_path }}
+      register: cv_progressing
+      changed_when: false
+
+    - name: Fail if upgrade already in progress
+      ansible.builtin.fail:
+        msg: "Cluster upgrade already in progress. Wait for completion before starting new upgrade."
+      when: cv_progressing.stdout == "True"
+
+    - name: Display ClusterVersion status
+      ansible.builtin.debug:
+        msg: "✓ No upgrade in progress"
+
+    # === Check Node Health ===
+
+    - name: Get node status
+      ansible.builtin.command:
+        cmd: oc get nodes --no-headers --kubeconfig={{ kubeconfig_path }}
+      register: nodes_status
+      changed_when: false
+
+    - name: Count total nodes
+      ansible.builtin.set_fact:
+        total_nodes: "{{ nodes_status.stdout_lines | length }}"
+
+    - name: Count Ready nodes
+      ansible.builtin.shell:
+        cmd: oc get nodes --no-headers --kubeconfig={{ kubeconfig_path }} | grep -c " Ready"
+      register: ready_nodes
+      changed_when: false
+      failed_when: false
+
+    - name: Validate all nodes Ready
+      ansible.builtin.assert:
+        that:
+          - ready_nodes.stdout | int == total_nodes | int
+        fail_msg: "{{ total_nodes | int - ready_nodes.stdout | int }} node(s) not Ready"
+        success_msg: "✓ All {{ total_nodes }} nodes Ready"
+
+    # === Check etcd Quorum ===
+
+    - name: Get etcd pod status
+      ansible.builtin.command:
+        cmd: oc get pods -n openshift-etcd -l app=etcd --no-headers --kubeconfig={{ kubeconfig_path }}
+      register: etcd_pods
+      changed_when: false
+
+    - name: Count total etcd pods
+      ansible.builtin.set_fact:
+        total_etcd: "{{ etcd_pods.stdout_lines | length }}"
+
+    - name: Count Running etcd pods
+      ansible.builtin.shell:
+        cmd: oc get pods -n openshift-etcd -l app=etcd --no-headers --kubeconfig={{ kubeconfig_path }} | grep -c "Running"
+      register: running_etcd
+      changed_when: false
+      failed_when: false
+
+    - name: Calculate etcd quorum percentage
+      ansible.builtin.set_fact:
+        etcd_quorum_pct: "{{ (running_etcd.stdout | int * 100 / total_etcd | int) | int }}"
+
+    - name: Validate etcd quorum
+      ansible.builtin.assert:
+        that:
+          - etcd_quorum_pct | int >= etcd_quorum_threshold
+        fail_msg: "etcd quorum unhealthy: {{ etcd_quorum_pct }}% ({{ running_etcd.stdout }}/{{ total_etcd }} pods Running)"
+        success_msg: "✓ etcd quorum healthy: {{ etcd_quorum_pct }}% ({{ running_etcd.stdout }}/{{ total_etcd }} pods Running)"
+
+    # === Check Cluster Operators ===
+
+    - name: Get cluster operators status
+      ansible.builtin.command:
+        cmd: oc get clusteroperators --no-headers --kubeconfig={{ kubeconfig_path }}
+      register: cluster_operators
+      changed_when: false
+
+    - name: Count degraded operators
+      ansible.builtin.shell:
+        cmd: oc get clusteroperators --no-headers --kubeconfig={{ kubeconfig_path }} | awk '{if ($5 == "True") print $1}' | wc -l
+      register: degraded_operators
+      changed_when: false
+
+    - name: Validate no degraded operators
+      ansible.builtin.assert:
+        that:
+          - degraded_operators.stdout | int == 0
+        fail_msg: "{{ degraded_operators.stdout }} cluster operator(s) degraded"
+        success_msg: "✓ All cluster operators healthy"
+
+    # === Check Storage Capacity ===
+
+    - name: Get PersistentVolume usage
+      ansible.builtin.shell:
+        cmd: oc get pv --no-headers --kubeconfig={{ kubeconfig_path }} | wc -l
+      register: pv_count
+      changed_when: false
+
+    - name: Display storage status
+      ansible.builtin.debug:
+        msg: "✓ {{ pv_count.stdout }} Persistent Volumes available"
+
+    # === Check for Blocking PodDisruptionBudgets ===
+
+    - name: Get PodDisruptionBudgets
+      ansible.builtin.command:
+        cmd: oc get pdb --all-namespaces --no-headers --kubeconfig={{ kubeconfig_path }}
+      register: pdbs
+      changed_when: false
+      failed_when: false
+
+    - name: Display PodDisruptionBudget status
+      ansible.builtin.debug:
+        msg: "{{ pdbs.stdout_lines | length > 0 | ternary('⚠ ' + (pdbs.stdout_lines | length | string) + ' PodDisruptionBudget(s) defined', '✓ No PodDisruptionBudgets blocking upgrade') }}"
+
+    # === Check Machine Config Pools ===
+
+    - name: Get MachineConfigPool status
+      ansible.builtin.command:
+        cmd: oc get mcp --no-headers --kubeconfig={{ kubeconfig_path }}
+      register: mcp_status
+      changed_when: false
+
+    - name: Validate MachineConfigPools updated
+      ansible.builtin.shell:
+        cmd: oc get mcp --no-headers --kubeconfig={{ kubeconfig_path }} | awk '{if ($3 != $4 || $5 != $6) print $1}'
+      register: updating_mcps
+      changed_when: false
+
+    - name: Fail if MachineConfigPools updating
+      ansible.builtin.fail:
+        msg: "MachineConfigPool(s) currently updating: {{ updating_mcps.stdout_lines | join(', ') }}"
+      when: updating_mcps.stdout_lines | length > 0
+
+    - name: Display MachineConfigPool status
+      ansible.builtin.debug:
+        msg: "✓ All MachineConfigPools updated and ready"
+
+    # === Check Available Updates ===
+
+    - name: Get available updates
+      ansible.builtin.command:
+        cmd: oc adm upgrade --kubeconfig={{ kubeconfig_path }}
+      register: available_updates
+      changed_when: false
+
+    - name: Validate target version available
+      ansible.builtin.assert:
+        that:
+          - target_ocp_version in available_updates.stdout
+        fail_msg: "Target version {{ target_ocp_version }} not available for upgrade"
+        success_msg: "✓ Target version {{ target_ocp_version }} available"
+
+    # === Final Prerequisite Summary ===
+
+    - name: Prerequisite check summary
+      ansible.builtin.debug:
+        msg: |
+          ======================================
+          CLUSTER UPGRADE PREREQUISITES - PASSED
+          ======================================
+          Cluster: {{ cluster_name }}
+          Current Version: {{ current_version.stdout }}
+          Target Version: {{ target_ocp_version }}
+
+          Health Checks:
+          ✓ Cluster accessible
+          ✓ All nodes Ready ({{ total_nodes }})
+          ✓ etcd quorum healthy ({{ etcd_quorum_pct }}%)
+          ✓ All cluster operators healthy
+          ✓ No upgrade in progress
+          ✓ MachineConfigPools ready
+          ✓ Target version available
+
+          Ready to proceed with upgrade workflow.
+          ======================================
+
+    # === Create Prerequisite Report ===
+
+    - name: Create prerequisite report
+      ansible.builtin.copy:
+        content: |
+          # Cluster Upgrade Prerequisite Report
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          Cluster Name: {{ cluster_name }}
+          Current Version: {{ current_version.stdout }}
+          Target Version: {{ target_ocp_version }}
+          Kubeconfig: {{ kubeconfig_path }}
+
+          Prerequisite Checks: PASSED
+
+          Node Health:
+          - Total Nodes: {{ total_nodes }}
+          - Ready Nodes: {{ ready_nodes.stdout }}
+          - Status: All Ready ✓
+
+          etcd Health:
+          - Total Pods: {{ total_etcd }}
+          - Running Pods: {{ running_etcd.stdout }}
+          - Quorum: {{ etcd_quorum_pct }}% ✓
+
+          Cluster Operators:
+          - Degraded: {{ degraded_operators.stdout }}
+          - Status: All Healthy ✓
+
+          MachineConfigPools:
+          - Updating: {{ updating_mcps.stdout_lines | length }}
+          - Status: All Ready ✓
+
+          PodDisruptionBudgets: {{ pdbs.stdout_lines | length }} defined
+
+          Available Updates:
+          {{ available_updates.stdout }}
+
+          Conclusion: Cluster is ready for upgrade to {{ target_ocp_version }}
+
+          Next Step: Proceed with image mirroring (Node 2 of upgrade workflow)
+        dest: "/tmp/cluster-upgrade-prerequisites-{{ ansible_date_time.epoch }}.txt"
+        mode: '0644'

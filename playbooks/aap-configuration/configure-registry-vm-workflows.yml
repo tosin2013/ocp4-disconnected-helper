@@ -1,0 +1,627 @@
+---
+# Configure AAP Workflows for Registry VM Lifecycle Management
+#
+# This playbook creates deployment and teardown workflows for container registry VMs
+# (Quay, Harbor, JFrog) following ADR 0032 workflow orchestration strategy.
+#
+# Created: 2026-06-10
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml \
+#     playbooks/aap-configuration/configure-registry-vm-workflows.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml \
+#     --vault-password-file ~/.vault_pass
+
+- name: Configure AAP Registry VM Workflows
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+
+    # Project and inventory references
+    project_name: "ocp4-disconnected-helper"
+    inventory_name: "Disconnected Infrastructure"
+    credential_name: "KVM Hypervisor SSH Key"
+    vault_credential_name: "Ansible Vault Password"
+    execution_environment: "OCP4 Custom EE with oc-mirror"
+
+  tasks:
+    # =========================================================================
+    # Job Template: Check Prerequisites
+    # =========================================================================
+    - name: Create job template - Check Registry VM Prerequisites
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Check Registry VM Prerequisites"
+        description: |
+          Verify prerequisites before registry VM deployment:
+          - VyOS router accessible (192.168.122.2)
+          - DNS resolution working
+          - Storage paths exist (/data/libvirt-images)
+          - Hypervisor resources available
+
+          Safety gate: Fail fast if dependencies missing.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/check-registry-prerequisites.yml"
+        credentials:
+          - "{{ credential_name }}"
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: prereq_template
+
+    - name: Display prerequisites template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Prerequisites check template created"
+          - "   ID: {{ prereq_template.id }}"
+          - "   Name: Check Registry VM Prerequisites"
+
+    # =========================================================================
+    # Job Template: Provision Registry VM
+    # =========================================================================
+    - name: Create job template - Provision Registry VM
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Provision Registry VM"
+        description: |
+          Provision KVM guest for container registry with cloud-init.
+
+          Tasks:
+          - Create VM with static IP on VLAN 1924
+          - Configure cloud-init (SSH keys, network, hostname)
+          - Wait for SSH connectivity
+          - Register VM in libvirt
+
+          Variables:
+          - registry_type: quay|harbor|jfrog (required)
+          - vm_memory: RAM in MB (default: 16384)
+          - vm_cpus: CPU count (default: 4)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/provision-registry-vm.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+          vm_memory: 16384
+          vm_cpus: 4
+          vm_disk_size: 100
+        verbosity: 1
+        state: present
+      register: provision_template
+
+    - name: Display provision template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Provision template created"
+          - "   ID: {{ provision_template.id }}"
+          - "   Name: Provision Registry VM"
+
+    # =========================================================================
+    # Job Template: Configure Registry Service
+    # =========================================================================
+    - name: Create job template - Configure Registry Service
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Configure Registry Service"
+        description: |
+          Configure container registry service on provisioned VM.
+
+          Supported registries:
+          - Quay (mirror-registry v2)
+          - Harbor (containerized deployment)
+          - JFrog Artifactory (Docker registry mode)
+
+          Tasks:
+          - Install registry packages/containers
+          - Configure storage backend
+          - Setup SSL certificates (Let's Encrypt or self-signed)
+          - Configure authentication
+          - Start registry service
+
+          Variables:
+          - registry_type: quay|harbor|jfrog (required)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/configure-registry-service.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: configure_template
+
+    - name: Display configure template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Configure template created"
+          - "   ID: {{ configure_template.id }}"
+          - "   Name: Configure Registry Service"
+
+    # =========================================================================
+    # Job Template: Verify Registry Health
+    # =========================================================================
+    - name: Create job template - Verify Registry Health
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Verify Registry Health"
+        description: |
+          Verify container registry is healthy and accessible.
+
+          Health checks:
+          - Registry HTTP health endpoint responding
+          - TLS certificate valid
+          - Authentication working (podman login test)
+          - API v2 catalog accessible
+          - DNS resolution correct
+
+          Exit code 0: All checks passed
+          Exit code 1: Health check failed
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/verify-registry-health.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: verify_template
+
+    - name: Display verify template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Verify template created"
+          - "   ID: {{ verify_template.id }}"
+          - "   Name: Verify Registry Health"
+
+    # =========================================================================
+    # Job Template: Backup Registry Configuration
+    # =========================================================================
+    - name: Create job template - Backup Registry Configuration
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Backup Registry Configuration"
+        description: |
+          Export registry configuration and credentials before teardown.
+
+          Backup includes:
+          - Registry configuration files
+          - SSL certificates
+          - Authentication credentials
+          - Database dumps (if applicable)
+
+          Backup location: /data/backups/registry-[type]-[timestamp]/
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/backup-registry-config.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: backup_template
+
+    - name: Display backup template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Backup template created"
+          - "   ID: {{ backup_template.id }}"
+          - "   Name: Backup Registry Configuration"
+
+    # =========================================================================
+    # Job Template: Remove Registry Service
+    # =========================================================================
+    - name: Create job template - Remove Registry Service
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Remove Registry Service"
+        description: |
+          Stop and remove registry service from VM.
+
+          Tasks:
+          - Stop registry containers/services
+          - Remove registry packages
+          - Clean up storage directories
+          - Remove configuration files
+
+          Variables:
+          - registry_type: quay|harbor|jfrog (required)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/remove-registry-service.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: remove_template
+
+    - name: Display remove template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Remove template created"
+          - "   ID: {{ remove_template.id }}"
+          - "   Name: Remove Registry Service"
+
+    # =========================================================================
+    # Job Template: Destroy Registry VM
+    # =========================================================================
+    - name: Create job template - Destroy Registry VM
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Destroy Registry VM"
+        description: |
+          Destroy KVM guest and remove all VM resources.
+
+          Tasks:
+          - Destroy KVM domain (virsh destroy)
+          - Undefine VM (virsh undefine)
+          - Remove disk images
+          - Remove cloud-init ISOs
+
+          Variables:
+          - registry_type: quay|harbor|jfrog (required)
+          - force: Skip confirmation (default: false)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/destroy-registry-vm.yml"
+        credentials:
+          - "{{ credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+          force: false
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: destroy_template
+
+    - name: Display destroy template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Destroy template created"
+          - "   ID: {{ destroy_template.id }}"
+          - "   Name: Destroy Registry VM"
+
+    # =========================================================================
+    # Workflow Template: Deploy Registry Infrastructure
+    # =========================================================================
+    - name: Create deployment workflow template
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Deploy Registry Infrastructure"
+        description: |
+          End-to-end deployment workflow for container registry VM.
+
+          Workflow Steps:
+          1. Check Prerequisites (VyOS, DNS, storage)
+          2. Provision VM (KVM guest with cloud-init)
+          3. Configure Registry Service (install and setup)
+          4. Verify Health (comprehensive health checks)
+
+          Variables:
+          - registry_type: quay|harbor|jfrog (required)
+          - vm_memory: RAM in MB (optional, default: 16384)
+          - vm_cpus: CPU count (optional, default: 4)
+
+          ADR: 0032 - AAP Workflow Orchestration Strategy
+        organization: "Default"
+        inventory: "{{ inventory_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+          vm_memory: 16384
+          vm_cpus: 4
+        state: present
+      register: deploy_workflow
+
+    - name: Get deployment workflow ID
+      ansible.builtin.set_fact:
+        deploy_workflow_id: "{{ deploy_workflow.id }}"
+
+    - name: Display deployment workflow info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Deployment workflow template created"
+          - "   ID: {{ deploy_workflow_id }}"
+          - "   Name: Deploy Registry Infrastructure"
+
+    # =========================================================================
+    # Workflow Nodes: Deploy Registry Infrastructure
+    # =========================================================================
+    - name: Create workflow node - Check Prerequisites
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "check_prerequisites"
+        unified_job_template: "Check Registry VM Prerequisites"
+        state: present
+      register: node_prereq
+
+    - name: Create workflow node - Provision VM
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "provision_vm"
+        unified_job_template: "Provision Registry VM"
+        state: present
+      register: node_provision
+
+    - name: Create workflow node - Configure Service
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "configure_service"
+        unified_job_template: "Configure Registry Service"
+        state: present
+      register: node_configure
+
+    - name: Create workflow node - Verify Health
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "verify_health"
+        unified_job_template: "Verify Registry Health"
+        state: present
+      register: node_verify
+
+    # Link workflow nodes (sequential execution)
+    - name: Link prerequisite check → provision VM
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "check_prerequisites"
+        success_nodes:
+          - "provision_vm"
+        state: present
+
+    - name: Link provision VM → configure service
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "provision_vm"
+        success_nodes:
+          - "configure_service"
+        state: present
+
+    - name: Link configure service → verify health
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Deploy Registry Infrastructure"
+        identifier: "configure_service"
+        success_nodes:
+          - "verify_health"
+        state: present
+
+    # =========================================================================
+    # Workflow Template: Teardown Registry Infrastructure
+    # =========================================================================
+    - name: Create teardown workflow template
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Teardown Registry Infrastructure"
+        description: |
+          Teardown workflow for container registry VM cleanup.
+
+          Workflow Steps:
+          1. Backup Configuration (export registry config)
+          2. Remove Registry Service (stop and uninstall)
+          3. Destroy VM (delete KVM guest)
+
+          Variables:
+          - registry_type: quay|harbor|jfrog (required)
+          - force: Skip confirmation prompts (default: false)
+
+          Safety: Includes backup step and confirmation gate.
+          ADR: 0032 - AAP Workflow Orchestration Strategy
+        organization: "Default"
+        inventory: "{{ inventory_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          registry_type: "quay"
+          force: false
+        state: present
+      register: teardown_workflow
+
+    - name: Get teardown workflow ID
+      ansible.builtin.set_fact:
+        teardown_workflow_id: "{{ teardown_workflow.id }}"
+
+    - name: Display teardown workflow info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Teardown workflow template created"
+          - "   ID: {{ teardown_workflow_id }}"
+          - "   Name: Teardown Registry Infrastructure"
+
+    # =========================================================================
+    # Workflow Nodes: Teardown Registry Infrastructure
+    # =========================================================================
+    - name: Create workflow node - Backup Configuration
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Teardown Registry Infrastructure"
+        identifier: "backup_config"
+        unified_job_template: "Backup Registry Configuration"
+        state: present
+
+    - name: Create workflow node - Remove Service
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Teardown Registry Infrastructure"
+        identifier: "remove_service"
+        unified_job_template: "Remove Registry Service"
+        state: present
+
+    - name: Create workflow node - Destroy VM
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Teardown Registry Infrastructure"
+        identifier: "destroy_vm"
+        unified_job_template: "Destroy Registry VM"
+        state: present
+
+    # Link teardown workflow nodes
+    - name: Link backup → remove service
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Teardown Registry Infrastructure"
+        identifier: "backup_config"
+        success_nodes:
+          - "remove_service"
+        state: present
+
+    - name: Link remove service → destroy VM
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Teardown Registry Infrastructure"
+        identifier: "remove_service"
+        success_nodes:
+          - "destroy_vm"
+        state: present
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "  AAP Registry VM Workflows Configuration Complete ✅"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "📋 Created Job Templates:"
+          - "  - Check Registry VM Prerequisites (ID: {{ prereq_template.id }})"
+          - "  - Provision Registry VM (ID: {{ provision_template.id }})"
+          - "  - Configure Registry Service (ID: {{ configure_template.id }})"
+          - "  - Verify Registry Health (ID: {{ verify_template.id }})"
+          - "  - Backup Registry Configuration (ID: {{ backup_template.id }})"
+          - "  - Remove Registry Service (ID: {{ remove_template.id }})"
+          - "  - Destroy Registry VM (ID: {{ destroy_template.id }})"
+          - ""
+          - "📋 Created Workflow Templates:"
+          - "  - Deploy Registry Infrastructure (ID: {{ deploy_workflow_id }})"
+          - "  - Teardown Registry Infrastructure (ID: {{ teardown_workflow_id }})"
+          - ""
+          - "🚀 Usage:"
+          - ""
+          - "  Deploy Quay Registry:"
+          - "    Launch 'Deploy Registry Infrastructure' with:"
+          - "      registry_type: quay"
+          - ""
+          - "  Deploy Harbor Registry:"
+          - "    Launch 'Deploy Registry Infrastructure' with:"
+          - "      registry_type: harbor"
+          - "      vm_memory: 16384"
+          - ""
+          - "  Teardown Registry:"
+          - "    Launch 'Teardown Registry Infrastructure' with:"
+          - "      registry_type: quay"
+          - "      force: false  (safe mode with confirmation)"
+          - ""
+          - "🔗 Workflow URLs:"
+          - "  Deploy:   {{ aap_host }}/#/templates/workflow_job_template/{{ deploy_workflow_id }}"
+          - "  Teardown: {{ aap_host }}/#/templates/workflow_job_template/{{ teardown_workflow_id }}"
+          - ""
+          - "📚 ADR Reference:"
+          - "  ADR 0032: AAP Workflow Orchestration for Infrastructure Lifecycle Management"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"

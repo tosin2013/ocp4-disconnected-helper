@@ -1,0 +1,637 @@
+---
+# Configure AAP Workflow for OpenShift Cluster Upgrades
+#
+# This playbook creates the upgrade workflow for OpenShift clusters in disconnected
+# environments, following ADR 0006 (Lifecycle Management Strategy) and ADR 0032
+# (AAP Workflow Orchestration).
+#
+# Created: 2026-06-10
+# ADR: 0006 - Lifecycle Management Strategy (updated 2026-06-10 for AAP workflows)
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml \
+#     playbooks/aap-configuration/configure-cluster-upgrade-workflow.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml \
+#     --vault-password-file ~/.vault_pass
+
+- name: Configure AAP OpenShift Cluster Upgrade Workflow
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+
+    # Project and inventory references
+    project_name: "ocp4-disconnected-helper"
+    inventory_name: "Disconnected Infrastructure"
+    credential_name: "KVM Hypervisor SSH Key"
+    vault_credential_name: "Ansible Vault Password"
+    execution_environment: "OCP4 Custom EE with oc-mirror"
+
+  tasks:
+    # =========================================================================
+    # Job Template: Check Cluster Upgrade Prerequisites
+    # =========================================================================
+    - name: Create job template - Check Cluster Upgrade Prerequisites
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Check Cluster Upgrade Prerequisites"
+        description: |
+          Pre-flight checks before OpenShift cluster upgrade.
+
+          Verifies:
+          - Cluster status (oc get clusterversion)
+          - Node health (all nodes Ready)
+          - etcd quorum health
+          - Available storage capacity
+          - No pending PodDisruptionBudgets blocking upgrades
+          - Current cluster version documented
+
+          Exit code 0: All prerequisites met
+          Exit code 1: Prerequisites failed (blocks upgrade)
+
+          ADR: 0006 - Lifecycle Management Strategy
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/check-cluster-upgrade-prerequisites.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: prereq_template
+
+    - name: Display prerequisites template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Prerequisites check template created"
+          - "   ID: {{ prereq_template.id }}"
+          - "   Name: Check Cluster Upgrade Prerequisites"
+
+    # =========================================================================
+    # Job Template: Mirror OpenShift Upgrade Images
+    # =========================================================================
+    - name: Create job template - Mirror OpenShift Upgrade Images
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Mirror OpenShift Upgrade Images"
+        description: |
+          Mirror new OpenShift version images to disconnected registry.
+
+          Tasks:
+          - Update imageset-config.yml with target version
+          - Run oc-mirror with incremental sync (clean_mirror_path=false)
+          - Push new images to local registry
+          - Verify image availability
+
+          Variables:
+          - target_ocp_version: Target OCP version (e.g., "4.21.0")
+          - target_ocp_channel: Release channel (e.g., "stable-4.21")
+
+          Note: Uses incremental mirroring (delta sync only).
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/mirror-cluster-upgrade-images.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          target_ocp_version: "4.21.0"
+          target_ocp_channel: "stable-4.21"
+          clean_mirror_path: false
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: mirror_template
+
+    - name: Display mirror template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Mirror template created"
+          - "   ID: {{ mirror_template.id }}"
+          - "   Name: Mirror OpenShift Upgrade Images"
+
+    # =========================================================================
+    # Job Template: Backup Cluster Configuration
+    # =========================================================================
+    - name: Create job template - Backup Cluster Configuration
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Backup Cluster Configuration"
+        description: |
+          Create cluster backup before upgrade.
+
+          Backup includes:
+          - Critical resources (ICSP/IDMS, ClusterVersion, MachineConfig)
+          - etcd snapshot (via cluster-backup.sh)
+          - Current cluster version documentation
+          - Operator states and configurations
+
+          Backup location: /data/backups/cluster-[name]-[timestamp]/
+
+          Safety: Required before any cluster upgrade.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/backup-cluster-config.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: backup_template
+
+    - name: Display backup template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Backup template created"
+          - "   ID: {{ backup_template.id }}"
+          - "   Name: Backup Cluster Configuration"
+
+    # =========================================================================
+    # Job Template: Update Image Content Source Policies
+    # =========================================================================
+    - name: Create job template - Update Image Content Source Policies
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Update Image Content Source Policies"
+        description: |
+          Apply ICSP/IDMS manifests for new OpenShift version.
+
+          Tasks:
+          - Apply new ImageContentSourcePolicy manifests
+          - Apply ImageDigestMirrorSet manifests (OCP 4.13+)
+          - Wait for MachineConfigPool updates to stabilize
+          - Verify nodes accept new image sources
+
+          Note: This may cause node reboots (MachineConfig updates).
+          Expected duration: 10-30 minutes depending on cluster size.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/update-icsp-manifests.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+          target_ocp_version: "4.21.0"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: icsp_template
+
+    - name: Display ICSP template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ ICSP update template created"
+          - "   ID: {{ icsp_template.id }}"
+          - "   Name: Update Image Content Source Policies"
+
+    # =========================================================================
+    # Job Template: Execute OpenShift Upgrade
+    # =========================================================================
+    - name: Create job template - Execute OpenShift Upgrade
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Execute OpenShift Upgrade"
+        description: |
+          Trigger OpenShift cluster upgrade to target version.
+
+          Tasks:
+          - Run: oc adm upgrade --to-image=<local_registry>/<release_image>
+          - Monitor ClusterVersion status (async task, up to 4 hours)
+          - Track upgrade progress per node
+          - Alert on upgrade failures
+
+          Variables:
+          - target_ocp_version: Target version (e.g., "4.21.0")
+          - upgrade_timeout: Max upgrade time in seconds (default: 14400 = 4h)
+
+          Expected duration: 1-4 hours depending on cluster size.
+
+          ADR: 0006 - Lifecycle Management Strategy
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/execute-cluster-upgrade.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+          target_ocp_version: "4.21.0"
+          upgrade_timeout: 14400
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: upgrade_template
+
+    - name: Display upgrade template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Upgrade execution template created"
+          - "   ID: {{ upgrade_template.id }}"
+          - "   Name: Execute OpenShift Upgrade"
+
+    # =========================================================================
+    # Job Template: Verify Cluster Upgrade Success
+    # =========================================================================
+    - name: Create job template - Verify Cluster Upgrade Success
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Verify Cluster Upgrade Success"
+        description: |
+          Post-upgrade verification and health checks.
+
+          Verifies:
+          - All nodes at target version (oc get nodes)
+          - ClusterVersion status shows target version
+          - All cluster operators healthy (oc get co)
+          - Critical workloads running
+          - No degraded conditions
+
+          Exit code 0: Upgrade successful
+          Exit code 1: Upgrade verification failed
+
+          On success: Updates cluster inventory with new version.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/verify-cluster-upgrade.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+          target_ocp_version: "4.21.0"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: verify_template
+
+    - name: Display verify template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Verification template created"
+          - "   ID: {{ verify_template.id }}"
+          - "   Name: Verify Cluster Upgrade Success"
+
+    # =========================================================================
+    # Job Template: Cluster Upgrade Rollback Notification
+    # =========================================================================
+    - name: Create job template - Cluster Upgrade Rollback Notification
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Cluster Upgrade Rollback Notification"
+        description: |
+          Alert administrators of upgrade failure and provide rollback guidance.
+
+          Actions:
+          - Send notification (email, Slack, webhook)
+          - Provide backup location for rollback
+          - Generate rollback instructions
+          - Create incident tracking ticket
+          - Document failure reason
+
+          Note: This does NOT perform automatic rollback.
+          Cluster rollback requires manual intervention.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/cluster-upgrade-rollback-alert.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        state: present
+      register: rollback_template
+
+    - name: Display rollback template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Rollback notification template created"
+          - "   ID: {{ rollback_template.id }}"
+          - "   Name: Cluster Upgrade Rollback Notification"
+
+    # =========================================================================
+    # Workflow Template: Upgrade OpenShift Cluster
+    # =========================================================================
+    - name: Create upgrade workflow template
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Upgrade OpenShift Cluster"
+        description: |
+          End-to-end OpenShift cluster upgrade workflow for disconnected environments.
+
+          Workflow Steps:
+          1. Pre-Upgrade Health Check
+          2. Mirror New Version Images (oc-mirror incremental)
+          3. Backup Cluster State (etcd + manifests)
+          4. Approval Gate (production clusters only)
+          5. Update ICSP/IDMS Manifests
+          6. Execute Cluster Upgrade (async, up to 4 hours)
+          7. Verify Upgrade Success
+          8. (Failure Path) Rollback Notification
+
+          Variables:
+          - cluster_name: Cluster identifier (required)
+          - target_ocp_version: Target version (e.g., "4.21.0")
+          - target_ocp_channel: Release channel (e.g., "stable-4.21")
+          - require_approval: Enable approval gate (default: true)
+          - upgrade_timeout: Max upgrade time in seconds (default: 14400)
+
+          Safety Features:
+          - Pre-flight health checks
+          - Automated cluster backup
+          - Approval gate for production
+          - Post-upgrade verification
+          - Rollback notification on failure
+
+          ADR: 0006 - Lifecycle Management Strategy
+          ADR: 0032 - AAP Workflow Orchestration Strategy
+        organization: "Default"
+        inventory: "{{ inventory_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cluster_name: "ocp4-prod"
+          target_ocp_version: "4.21.0"
+          target_ocp_channel: "stable-4.21"
+          require_approval: true
+          upgrade_timeout: 14400
+        state: present
+      register: upgrade_workflow
+
+    - name: Get upgrade workflow ID
+      ansible.builtin.set_fact:
+        upgrade_workflow_id: "{{ upgrade_workflow.id }}"
+
+    - name: Display upgrade workflow info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Upgrade workflow template created"
+          - "   ID: {{ upgrade_workflow_id }}"
+          - "   Name: Upgrade OpenShift Cluster"
+
+    # =========================================================================
+    # Workflow Nodes: Upgrade OpenShift Cluster
+    # =========================================================================
+    - name: Create workflow node - Check Prerequisites
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "check_prerequisites"
+        unified_job_template: "Check Cluster Upgrade Prerequisites"
+        state: present
+
+    - name: Create workflow node - Mirror Images
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "mirror_images"
+        unified_job_template: "Mirror OpenShift Upgrade Images"
+        state: present
+
+    - name: Create workflow node - Backup Cluster
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "backup_cluster"
+        unified_job_template: "Backup Cluster Configuration"
+        state: present
+
+    - name: Create workflow node - Approval Gate
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "approval_gate"
+        approval_node:
+          name: "Production Cluster Upgrade Approval"
+          description: "Manual approval required before upgrading production cluster"
+          timeout: 0
+        state: present
+
+    - name: Create workflow node - Update ICSP
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "update_icsp"
+        unified_job_template: "Update Image Content Source Policies"
+        state: present
+
+    - name: Create workflow node - Execute Upgrade
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "execute_upgrade"
+        unified_job_template: "Execute OpenShift Upgrade"
+        state: present
+
+    - name: Create workflow node - Verify Success
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "verify_success"
+        unified_job_template: "Verify Cluster Upgrade Success"
+        state: present
+
+    - name: Create workflow node - Rollback Notification
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "rollback_notification"
+        unified_job_template: "Cluster Upgrade Rollback Notification"
+        state: present
+
+    # Link workflow nodes (sequential execution with failure path)
+    - name: Link prerequisites → mirror images
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "check_prerequisites"
+        success_nodes:
+          - "mirror_images"
+        state: present
+
+    - name: Link mirror images → backup cluster
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "mirror_images"
+        success_nodes:
+          - "backup_cluster"
+        state: present
+
+    - name: Link backup cluster → approval gate
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "backup_cluster"
+        success_nodes:
+          - "approval_gate"
+        state: present
+
+    - name: Link approval gate → update ICSP
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "approval_gate"
+        success_nodes:
+          - "update_icsp"
+        state: present
+
+    - name: Link update ICSP → execute upgrade
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "update_icsp"
+        success_nodes:
+          - "execute_upgrade"
+        state: present
+
+    - name: Link execute upgrade → verify success (success path)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Upgrade OpenShift Cluster"
+        identifier: "execute_upgrade"
+        success_nodes:
+          - "verify_success"
+        failure_nodes:
+          - "rollback_notification"
+        state: present
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "  AAP OpenShift Cluster Upgrade Workflow Complete ✅"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "📋 Created Job Templates:"
+          - "  1. Check Cluster Upgrade Prerequisites (ID: {{ prereq_template.id }})"
+          - "  2. Mirror OpenShift Upgrade Images (ID: {{ mirror_template.id }})"
+          - "  3. Backup Cluster Configuration (ID: {{ backup_template.id }})"
+          - "  4. Update Image Content Source Policies (ID: {{ icsp_template.id }})"
+          - "  5. Execute OpenShift Upgrade (ID: {{ upgrade_template.id }})"
+          - "  6. Verify Cluster Upgrade Success (ID: {{ verify_template.id }})"
+          - "  7. Cluster Upgrade Rollback Notification (ID: {{ rollback_template.id }})"
+          - ""
+          - "📋 Created Workflow Template:"
+          - "  - Upgrade OpenShift Cluster (ID: {{ upgrade_workflow_id }})"
+          - ""
+          - "🔗 Workflow URL:"
+          - "  {{ aap_host }}/#/templates/workflow_job_template/{{ upgrade_workflow_id }}"
+          - ""
+          - "🚀 Usage:"
+          - ""
+          - "  Upgrade to OCP 4.21:"
+          - "    Launch 'Upgrade OpenShift Cluster' with:"
+          - "      cluster_name: ocp4-prod"
+          - "      target_ocp_version: 4.21.0"
+          - "      target_ocp_channel: stable-4.21"
+          - "      require_approval: true"
+          - ""
+          - "📚 ADR References:"
+          - "  - ADR 0006: Lifecycle Management Strategy (updated 2026-06-10)"
+          - "  - ADR 0032: AAP Workflow Orchestration Strategy"
+          - ""
+          - "⚠️  Safety Features:"
+          - "  ✅ Pre-flight health checks"
+          - "  ✅ Automated cluster backup (etcd + manifests)"
+          - "  ✅ Approval gate for production clusters"
+          - "  ✅ Incremental image mirroring (delta sync)"
+          - "  ✅ Post-upgrade verification"
+          - "  ✅ Rollback notification on failure"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"

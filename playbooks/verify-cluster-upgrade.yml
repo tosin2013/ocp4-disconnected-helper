@@ -1,0 +1,12 @@
+---
+# Playbook: verify-cluster-upgrade
+# ADR: 0006 - Lifecycle Management Strategy
+# Workflow: Upgrade OpenShift Cluster
+# TODO: Full implementation needed
+
+- name: verify cluster upgrade
+  hosts: localhost
+  tasks:
+    - name: TODO - Implement playbook
+      ansible.builtin.debug:
+        msg: "TODO: Complete verify-cluster-upgrade.yml implementation"

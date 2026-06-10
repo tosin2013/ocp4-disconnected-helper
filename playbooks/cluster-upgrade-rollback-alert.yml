@@ -1,0 +1,12 @@
+---
+# Playbook: cluster-upgrade-rollback-alert
+# ADR: 0006 - Lifecycle Management Strategy
+# Workflow: Upgrade OpenShift Cluster
+# TODO: Full implementation needed
+
+- name: cluster upgrade rollback alert
+  hosts: localhost
+  tasks:
+    - name: TODO - Implement playbook
+      ansible.builtin.debug:
+        msg: "TODO: Complete cluster-upgrade-rollback-alert.yml implementation"

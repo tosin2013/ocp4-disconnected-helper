@@ -1,0 +1,329 @@
+---
+# Playbook: Backup Registry Configuration
+# Purpose: Export registry configuration and persistent data
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+# Workflow: Teardown Registry Infrastructure (Node 1)
+
+- name: Backup Registry Configuration
+  hosts: registry
+  gather_facts: true
+  vars:
+    registry_type: "{{ registry_type | default('quay') }}"
+    backup_base_path: "/data/backups/registry"
+    backup_timestamp: "{{ ansible_date_time.epoch }}"
+    backup_name: "{{ registry_type }}-{{ ansible_hostname }}-{{ backup_timestamp }}"
+    backup_path: "{{ backup_base_path }}/{{ backup_name }}"
+
+  tasks:
+    - name: Display backup summary
+      ansible.builtin.debug:
+        msg: |
+          Creating Registry Backup
+          ========================
+          Type: {{ registry_type }}
+          Host: {{ ansible_hostname }}
+          Backup: {{ backup_name }}
+          Path: {{ backup_path }}
+
+    # === Create Backup Directory ===
+
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_path }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+
+    # === Export Configuration Files ===
+
+    - name: Backup Quay configuration
+      block:
+        - name: Export Quay config bundle
+          ansible.builtin.fetch:
+            src: /opt/mirror-registry/quay-config-bundle.tar.gz
+            dest: "{{ backup_path }}/quay-config-bundle.tar.gz"
+            flat: yes
+          ignore_errors: true
+
+        - name: Export Quay credentials
+          ansible.builtin.fetch:
+            src: /opt/mirror-registry/credentials.txt
+            dest: "{{ backup_path }}/credentials.txt"
+            flat: yes
+
+        - name: Export Quay systemd service
+          ansible.builtin.fetch:
+            src: /etc/systemd/system/quay-pod.service
+            dest: "{{ backup_path }}/quay-pod.service"
+            flat: yes
+
+        - name: Export Quay SSL certificates
+          ansible.builtin.fetch:
+            src: "{{ item }}"
+            dest: "{{ backup_path }}/certs/"
+            flat: yes
+          loop:
+            - /opt/mirror-registry/quay-rootCA/rootCA.pem
+            - /opt/mirror-registry/ssl.cert
+            - /opt/mirror-registry/ssl.key
+          ignore_errors: true
+
+      when: registry_type == 'quay'
+
+    - name: Backup Harbor configuration
+      block:
+        - name: Export Harbor config
+          ansible.builtin.fetch:
+            src: /opt/harbor/harbor.yml
+            dest: "{{ backup_path }}/harbor.yml"
+            flat: yes
+
+        - name: Export Harbor docker-compose
+          ansible.builtin.fetch:
+            src: /opt/harbor/docker-compose.yml
+            dest: "{{ backup_path }}/docker-compose.yml"
+            flat: yes
+
+        - name: Export Harbor certificates
+          ansible.builtin.fetch:
+            src: "{{ item }}"
+            dest: "{{ backup_path }}/certs/"
+            flat: yes
+          loop:
+            - /opt/harbor/certs/ca.crt
+            - /opt/harbor/certs/server.crt
+            - /opt/harbor/certs/server.key
+          ignore_errors: true
+
+      when: registry_type == 'harbor'
+
+    - name: Backup JFrog configuration
+      block:
+        - name: Export Artifactory system config
+          ansible.builtin.fetch:
+            src: /opt/artifactory/etc/system.yaml
+            dest: "{{ backup_path }}/system.yaml"
+            flat: yes
+
+        - name: Export Artifactory security config
+          ansible.builtin.fetch:
+            src: /opt/artifactory/etc/security/
+            dest: "{{ backup_path }}/security/"
+
+      when: registry_type == 'jfrog'
+
+    # === Export Database ===
+
+    - name: Backup Quay database
+      block:
+        - name: Export PostgreSQL database dump
+          ansible.builtin.command:
+            cmd: podman exec quay-postgres pg_dump -U postgres -d quay -F c -f /tmp/quay-db-backup.dump
+          register: db_dump
+          changed_when: db_dump.rc == 0
+
+        - name: Fetch database dump
+          ansible.builtin.fetch:
+            src: /tmp/quay-db-backup.dump
+            dest: "{{ backup_path }}/quay-db-backup.dump"
+            flat: yes
+
+        - name: Remove temporary database dump
+          ansible.builtin.file:
+            path: /tmp/quay-db-backup.dump
+            state: absent
+
+      when: registry_type == 'quay'
+
+    # === Export Storage Metadata ===
+
+    - name: Get storage directory size
+      ansible.builtin.shell:
+        cmd: du -sh {{ item }} | awk '{print $1}'
+      loop:
+        - "/opt/{{ registry_type == 'quay' | ternary('mirror-registry/quay-storage', registry_type) }}"
+      register: storage_sizes
+      changed_when: false
+
+    - name: Create storage metadata
+      ansible.builtin.copy:
+        content: |
+          # Registry Storage Metadata
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          Registry Type: {{ registry_type }}
+          Hostname: {{ ansible_hostname }}
+          Backup Date: {{ ansible_date_time.date }}
+          Backup Time: {{ ansible_date_time.time }}
+
+          Storage Locations:
+          {% for result in storage_sizes.results %}  - {{ result.item }}: {{ result.stdout }}
+          {% endfor %}
+
+          Total Images: {{ image_count.stdout | default('N/A') }}
+
+          Backup Contents:
+          - Configuration files
+          - SSL certificates
+          - Database dump ({{ registry_type == 'quay' | ternary('PostgreSQL', 'N/A') }})
+          - Service definitions
+          - Credentials (encrypted)
+
+          Restore Instructions:
+          See {{ backup_path }}/RESTORE.md
+        dest: "{{ backup_path }}/METADATA.txt"
+        mode: '0600'
+      delegate_to: localhost
+
+    # === Count Images ===
+
+    - name: Count images in registry (Quay)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:8443/api/v1/repository"
+        method: GET
+        validate_certs: false
+        status_code: 200
+        timeout: 30
+      register: quay_repos
+      when: registry_type == 'quay'
+      ignore_errors: true
+
+    - name: Set image count
+      ansible.builtin.set_fact:
+        image_count:
+          stdout: "{{ quay_repos.json.repositories | length if quay_repos.json is defined else 'Unknown' }}"
+      when: registry_type == 'quay'
+
+    # === Create Restore Documentation ===
+
+    - name: Create restore documentation
+      ansible.builtin.copy:
+        content: |
+          # Registry Restore Guide
+          # Backup: {{ backup_name }}
+          # Date: {{ ansible_date_time.iso8601 }}
+
+          ## Prerequisites
+          - Clean VM or existing registry VM stopped
+          - Same OS version (CentOS Stream 9)
+          - Same registry type ({{ registry_type }})
+
+          ## Restore Steps
+
+          ### 1. Restore Configuration Files
+          ```bash
+          # Copy backup to target VM
+          scp -r {{ backup_path }} root@<registry-vm>:/tmp/
+
+          {% if registry_type == 'quay' %}# Restore Quay configuration
+          cp /tmp/{{ backup_name }}/quay-config-bundle.tar.gz /opt/mirror-registry/
+          cp /tmp/{{ backup_name }}/credentials.txt /opt/mirror-registry/
+          cp /tmp/{{ backup_name }}/quay-pod.service /etc/systemd/system/
+
+          # Restore certificates
+          mkdir -p /opt/mirror-registry/quay-rootCA
+          cp /tmp/{{ backup_name }}/certs/rootCA.pem /opt/mirror-registry/quay-rootCA/
+          cp /tmp/{{ backup_name }}/certs/ssl.cert /opt/mirror-registry/
+          cp /tmp/{{ backup_name }}/certs/ssl.key /opt/mirror-registry/
+          {% endif %}
+          ```
+
+          ### 2. Restore Database
+          {% if registry_type == 'quay' %}```bash
+          # Restore PostgreSQL database
+          podman exec -i quay-postgres pg_restore -U postgres -d quay -c /tmp/{{ backup_name }}/quay-db-backup.dump
+          ```{% else %}(Not applicable for {{ registry_type }}){% endif %}
+
+          ### 3. Restart Services
+          ```bash
+          {% if registry_type == 'quay' %}systemctl daemon-reload
+          systemctl restart quay-pod{% elif registry_type == 'harbor' %}cd /opt/harbor
+          docker-compose down
+          docker-compose up -d{% elif registry_type == 'jfrog' %}systemctl restart artifactory{% endif %}
+          ```
+
+          ### 4. Verify Health
+          ```bash
+          ansible-playbook -i inventory/ibm-cloud.yml playbooks/verify-registry-health.yml \
+            -e "registry_type={{ registry_type }}"
+          ```
+
+          ## Rollback Plan
+          If restore fails:
+          1. Stop registry service
+          2. Remove /opt/{{ registry_type }} directory
+          3. Re-run provision playbook:
+             ```
+             ansible-playbook -i inventory/ibm-cloud.yml playbooks/provision-registry-vm.yml
+             ansible-playbook -i inventory/ibm-cloud.yml playbooks/setup-{{ registry_type }}-registry.yml
+             ```
+
+          ## Notes
+          - Backup does NOT include image blobs (large storage files)
+          - To restore images: re-run oc-mirror push workflow
+          - Database restore recreates repository metadata only
+          - SSL certificates must match registry FQDN
+
+          ## Support
+          - Backup location: {{ backup_path }}
+          - Backup size: {{ ansible_facts.backup_size | default('Unknown') }}
+          - Contact: Platform Team
+        dest: "{{ backup_path }}/RESTORE.md"
+        mode: '0600'
+      delegate_to: localhost
+
+    # === Compress Backup ===
+
+    - name: Create backup tarball
+      ansible.builtin.archive:
+        path: "{{ backup_path }}"
+        dest: "{{ backup_base_path }}/{{ backup_name }}.tar.gz"
+        format: gz
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Get backup size
+      ansible.builtin.stat:
+        path: "{{ backup_base_path }}/{{ backup_name }}.tar.gz"
+      register: backup_archive
+      delegate_to: localhost
+
+    # === Cleanup Temporary Backup Directory ===
+
+    - name: Remove temporary backup directory
+      ansible.builtin.file:
+        path: "{{ backup_path }}"
+        state: absent
+      delegate_to: localhost
+
+    # === Final Summary ===
+
+    - name: Backup summary
+      ansible.builtin.debug:
+        msg: |
+          ======================================
+          REGISTRY BACKUP COMPLETED
+          ======================================
+          Registry: {{ registry_type }} ({{ ansible_hostname }})
+          Backup Archive: {{ backup_name }}.tar.gz
+          Location: {{ backup_base_path }}/
+          Size: {{ (backup_archive.stat.size / 1024 / 1024) | round(2) }} MB
+          Timestamp: {{ ansible_date_time.iso8601 }}
+
+          Backup Contents:
+          ✓ Configuration files
+          ✓ SSL certificates
+          {% if registry_type == 'quay' %}✓ PostgreSQL database dump{% endif %}
+          ✓ Service definitions
+          ✓ Restore documentation
+
+          Restore Guide: {{ backup_base_path }}/{{ backup_name }}.tar.gz (extract and see RESTORE.md)
+          ======================================
+
+    - name: Save backup metadata to database
+      ansible.builtin.copy:
+        content: |
+          {{ backup_name }}.tar.gz|{{ ansible_date_time.iso8601 }}|{{ (backup_archive.stat.size / 1024 / 1024) | round(2) }}MB|{{ registry_type }}|{{ ansible_hostname }}
+        dest: "{{ backup_base_path }}/backup-history.log"
+        mode: '0644'
+      delegate_to: localhost

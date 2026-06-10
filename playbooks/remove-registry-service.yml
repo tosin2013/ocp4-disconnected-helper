@@ -1,0 +1,301 @@
+---
+# Playbook: Remove Registry Service
+# Purpose: Stop and remove registry service and packages
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+# Workflow: Teardown Registry Infrastructure (Node 2)
+
+- name: Remove Registry Service
+  hosts: registry
+  gather_facts: true
+  become: true
+  vars:
+    registry_type: "{{ registry_type | default('quay') }}"
+    force_removal: "{{ force | default(false) }}"
+    preserve_data: "{{ preserve_data | default(true) }}"
+
+  tasks:
+    - name: Display removal summary
+      ansible.builtin.debug:
+        msg: |
+          Removing Registry Service
+          ==========================
+          Type: {{ registry_type }}
+          Host: {{ ansible_hostname }}
+          Force: {{ force_removal }}
+          Preserve Data: {{ preserve_data }}
+
+    # === Safety Check ===
+
+    - name: Safety confirmation (unless force=true)
+      ansible.builtin.pause:
+        prompt: |
+          ⚠️  WARNING: This will REMOVE the {{ registry_type }} registry service!
+
+          Action: Stop service, remove packages, clean configuration
+          Preserve Data: {{ preserve_data }}
+
+          Press ENTER to continue or Ctrl+C to abort
+      when: not force_removal
+
+    # === Stop Services ===
+
+    - name: Stop Quay registry service
+      block:
+        - name: Stop quay-pod service
+          ansible.builtin.systemd:
+            name: quay-pod
+            state: stopped
+          ignore_errors: true
+
+        - name: Disable quay-pod service
+          ansible.builtin.systemd:
+            name: quay-pod
+            enabled: false
+          ignore_errors: true
+
+        - name: Stop Quay containers
+          ansible.builtin.command:
+            cmd: podman pod stop quay-pod
+          ignore_errors: true
+          changed_when: false
+
+        - name: Remove Quay containers
+          ansible.builtin.command:
+            cmd: podman pod rm quay-pod
+          ignore_errors: true
+          changed_when: false
+
+      when: registry_type == 'quay'
+
+    - name: Stop Harbor registry service
+      block:
+        - name: Stop Harbor containers
+          ansible.builtin.command:
+            cmd: docker-compose down
+          args:
+            chdir: /opt/harbor
+          ignore_errors: true
+          changed_when: false
+
+      when: registry_type == 'harbor'
+
+    - name: Stop JFrog registry service
+      block:
+        - name: Stop Artifactory service
+          ansible.builtin.systemd:
+            name: artifactory
+            state: stopped
+          ignore_errors: true
+
+        - name: Disable Artifactory service
+          ansible.builtin.systemd:
+            name: artifactory
+            enabled: false
+          ignore_errors: true
+
+      when: registry_type == 'jfrog'
+
+    - name: Display service stop status
+      ansible.builtin.debug:
+        msg: "✓ Registry service stopped"
+
+    # === Remove Configuration Files ===
+
+    - name: Remove Quay configuration
+      block:
+        - name: Remove Quay systemd service
+          ansible.builtin.file:
+            path: /etc/systemd/system/quay-pod.service
+            state: absent
+
+        - name: Reload systemd daemon
+          ansible.builtin.systemd:
+            daemon_reload: true
+
+        - name: Remove Quay configuration (preserve data)
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /opt/mirror-registry/quay-config-bundle.tar.gz
+            - /opt/mirror-registry/credentials.txt
+            - /opt/mirror-registry/quay-rootCA
+            - /opt/mirror-registry/ssl.cert
+            - /opt/mirror-registry/ssl.key
+          when: not preserve_data
+
+        - name: Remove all Quay files (force removal)
+          ansible.builtin.file:
+            path: /opt/mirror-registry
+            state: absent
+          when: not preserve_data
+
+      when: registry_type == 'quay'
+
+    - name: Remove Harbor configuration
+      block:
+        - name: Remove Harbor installation
+          ansible.builtin.file:
+            path: /opt/harbor
+            state: absent
+          when: not preserve_data
+
+      when: registry_type == 'harbor'
+
+    - name: Remove JFrog configuration
+      block:
+        - name: Remove Artifactory installation
+          ansible.builtin.file:
+            path: /opt/artifactory
+            state: absent
+          when: not preserve_data
+
+      when: registry_type == 'jfrog'
+
+    - name: Display configuration removal status
+      ansible.builtin.debug:
+        msg: "{{ preserve_data | ternary('✓ Service removed (data preserved)', '✓ Service and data removed') }}"
+
+    # === Remove Packages ===
+
+    - name: Remove Podman containers and images (Quay)
+      block:
+        - name: Remove all Quay-related containers
+          ansible.builtin.shell:
+            cmd: podman ps -a --filter "name=quay" -q | xargs -r podman rm -f
+          ignore_errors: true
+          changed_when: false
+
+        - name: Remove Quay images
+          ansible.builtin.shell:
+            cmd: podman images --filter "reference=*quay*" -q | xargs -r podman rmi -f
+          ignore_errors: true
+          changed_when: false
+
+      when: registry_type == 'quay'
+
+    - name: Remove Docker containers and images (Harbor)
+      block:
+        - name: Remove Harbor containers
+          ansible.builtin.shell:
+            cmd: docker ps -a --filter "name=harbor" -q | xargs -r docker rm -f
+          ignore_errors: true
+          changed_when: false
+
+        - name: Remove Harbor images
+          ansible.builtin.shell:
+            cmd: docker images --filter "reference=*harbor*" -q | xargs -r docker rmi -f
+          ignore_errors: true
+          changed_when: false
+
+      when: registry_type == 'harbor'
+
+    # === Close Firewall Ports ===
+
+    - name: Remove firewall rules
+      ansible.builtin.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: disabled
+        immediate: true
+      loop:
+        - 8443/tcp
+        - 443/tcp
+        - 80/tcp
+      ignore_errors: true
+
+    - name: Display firewall status
+      ansible.builtin.debug:
+        msg: "✓ Firewall rules removed"
+
+    # === Verify Removal ===
+
+    - name: Verify no registry processes running
+      ansible.builtin.shell:
+        cmd: ps aux | grep -E '(quay|harbor|artifactory)' | grep -v grep
+      register: process_check
+      failed_when: false
+      changed_when: false
+
+    - name: Verify service stopped
+      ansible.builtin.assert:
+        that:
+          - process_check.stdout_lines | length == 0
+        fail_msg: "Registry processes still running"
+        success_msg: "✓ No registry processes running"
+
+    - name: Verify ports not listening
+      ansible.builtin.wait_for:
+        port: "{{ item }}"
+        host: "{{ ansible_host }}"
+        state: stopped
+        timeout: 60
+      loop:
+        - 8443
+        - 443
+      ignore_errors: true
+
+    # === Create Removal Report ===
+
+    - name: Create removal report
+      ansible.builtin.copy:
+        content: |
+          # Registry Service Removal Report
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          Registry Type: {{ registry_type }}
+          Hostname: {{ ansible_hostname }}
+          IP Address: {{ ansible_default_ipv4.address }}
+          Removal Date: {{ ansible_date_time.date }}
+          Removal Time: {{ ansible_date_time.time }}
+
+          Actions Performed:
+          ✓ Service stopped ({{ registry_type }})
+          ✓ Service disabled
+          ✓ Containers removed
+          ✓ Configuration files {{ preserve_data | ternary('preserved', 'removed') }}
+          ✓ Firewall rules removed
+          ✓ Processes verified stopped
+
+          Data Preservation:
+          {% if preserve_data %}- Configuration: PRESERVED
+          - Storage: PRESERVED
+          - Database: PRESERVED
+          Location: /opt/{{ registry_type == 'quay' | ternary('mirror-registry', registry_type) }}
+          {% else %}- All data: REMOVED{% endif %}
+
+          Next Steps:
+          {% if preserve_data %}1. Data preserved at /opt/{{ registry_type == 'quay' | ternary('mirror-registry', registry_type) }}
+          2. To fully remove: ansible-playbook remove-registry-service.yml -e "preserve_data=false"
+          {% else %}1. VM ready for decommissioning
+          2. Run destroy-registry-vm.yml to remove VM
+          {% endif %}
+        dest: "/tmp/registry-removal-{{ ansible_date_time.epoch }}.txt"
+        mode: '0644'
+      delegate_to: localhost
+
+    # === Final Summary ===
+
+    - name: Removal summary
+      ansible.builtin.debug:
+        msg: |
+          ======================================
+          REGISTRY SERVICE REMOVED
+          ======================================
+          Registry: {{ registry_type }}
+          Host: {{ ansible_hostname }}
+          Status: Service stopped and removed
+          Data: {{ preserve_data | ternary('Preserved', 'Removed') }}
+
+          Verification:
+          ✓ No processes running
+          ✓ Ports closed
+          ✓ Firewall rules removed
+          {% if preserve_data %}
+          ⚠️  Data preserved at /opt/{{ registry_type == 'quay' | ternary('mirror-registry', registry_type) }}
+          {% endif %}
+
+          Removal Report: /tmp/registry-removal-{{ ansible_date_time.epoch }}.txt
+          ======================================
+
+          Next: Run destroy-registry-vm.yml to remove VM

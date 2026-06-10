@@ -1,0 +1,12 @@
+---
+# Playbook: backup-cluster-config
+# ADR: 0006 - Lifecycle Management Strategy
+# Workflow: Upgrade OpenShift Cluster
+# TODO: Full implementation needed
+
+- name: backup cluster config
+  hosts: localhost
+  tasks:
+    - name: TODO - Implement playbook
+      ansible.builtin.debug:
+        msg: "TODO: Complete backup-cluster-config.yml implementation"

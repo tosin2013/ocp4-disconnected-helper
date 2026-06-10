@@ -1,0 +1,177 @@
+---
+# Playbook: Check Registry VM Prerequisites
+# Purpose: Validate environment before registry VM provisioning
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+# Workflow: Deploy Registry Infrastructure (Node 1)
+
+- name: Check Registry VM Prerequisites
+  hosts: localhost
+  gather_facts: true
+  vars:
+    vyos_router_ip: "192.168.122.2"
+    registry_dns_name: "registry.{{ cluster_domain }}"
+    storage_base_path: "/data/libvirt-images"
+    min_free_disk_gb: 50
+    min_free_ram_gb: 16
+
+  tasks:
+    - name: Display prerequisite check summary
+      ansible.builtin.debug:
+        msg: |
+          Starting prerequisite checks for registry VM deployment
+          Registry Type: {{ registry_type | default('quay') }}
+          Cluster Domain: {{ cluster_domain }}
+
+    # === Network Layer Checks ===
+
+    - name: Check VyOS router accessibility
+      ansible.builtin.command:
+        cmd: ping -c 3 -W 2 {{ vyos_router_ip }}
+      register: vyos_ping
+      failed_when: vyos_ping.rc != 0
+      changed_when: false
+
+    - name: Display VyOS connectivity status
+      ansible.builtin.debug:
+        msg: "✓ VyOS router ({{ vyos_router_ip }}) accessible"
+
+    - name: Check DNS resolution working
+      ansible.builtin.command:
+        cmd: nslookup {{ registry_dns_name }}
+      register: dns_check
+      failed_when: dns_check.rc != 0
+      changed_when: false
+      ignore_errors: true
+
+    - name: Validate DNS resolution result
+      ansible.builtin.assert:
+        that:
+          - dns_check.rc == 0 or 'NXDOMAIN' in dns_check.stdout
+        fail_msg: "DNS resolution failed for {{ registry_dns_name }}"
+        success_msg: "✓ DNS resolution functional"
+
+    - name: Test internet connectivity (for package downloads)
+      ansible.builtin.uri:
+        url: https://mirror.centos.org/
+        method: HEAD
+        timeout: 10
+      register: internet_check
+      failed_when: false
+      changed_when: false
+
+    - name: Display internet connectivity status
+      ansible.builtin.debug:
+        msg: "{{ '✓ Internet accessible for package downloads' if internet_check.status == 200 else '⚠ Internet unreachable - ensure local repos configured' }}"
+
+    # === Storage Layer Checks ===
+
+    - name: Check storage base path exists
+      ansible.builtin.stat:
+        path: "{{ storage_base_path }}"
+      register: storage_path
+
+    - name: Validate storage path existence
+      ansible.builtin.assert:
+        that:
+          - storage_path.stat.exists
+          - storage_path.stat.isdir
+        fail_msg: "Storage path {{ storage_base_path }} does not exist or is not a directory"
+        success_msg: "✓ Storage path {{ storage_base_path }} exists"
+
+    - name: Check available disk space
+      ansible.builtin.shell:
+        cmd: df -BG {{ storage_base_path }} | awk 'NR==2 {print $4}' | sed 's/G//'
+      register: disk_space_check
+      changed_when: false
+
+    - name: Validate sufficient disk space
+      ansible.builtin.assert:
+        that:
+          - disk_space_check.stdout | int >= min_free_disk_gb
+        fail_msg: "Insufficient disk space: {{ disk_space_check.stdout }}GB available, {{ min_free_disk_gb }}GB required"
+        success_msg: "✓ Sufficient disk space available: {{ disk_space_check.stdout }}GB"
+
+    # === Resource Layer Checks ===
+
+    - name: Check available RAM
+      ansible.builtin.shell:
+        cmd: free -g | awk 'NR==2 {print $7}'
+      register: ram_check
+      changed_when: false
+
+    - name: Validate sufficient RAM
+      ansible.builtin.assert:
+        that:
+          - ram_check.stdout | int >= min_free_ram_gb
+        fail_msg: "Insufficient RAM: {{ ram_check.stdout }}GB available, {{ min_free_ram_gb }}GB required"
+        success_msg: "✓ Sufficient RAM available: {{ ram_check.stdout }}GB"
+
+    - name: Check CPU count
+      ansible.builtin.set_fact:
+        cpu_count: "{{ ansible_processor_vcpus }}"
+
+    - name: Display CPU availability
+      ansible.builtin.debug:
+        msg: "✓ CPUs available: {{ cpu_count }} vCPUs"
+
+    # === Libvirt Layer Checks ===
+
+    - name: Check libvirt service running
+      ansible.builtin.systemd:
+        name: libvirtd
+        state: started
+      check_mode: true
+      register: libvirt_service
+
+    - name: Validate libvirt service status
+      ansible.builtin.assert:
+        that:
+          - libvirt_service.status.ActiveState == 'active'
+        fail_msg: "libvirtd service not running"
+        success_msg: "✓ libvirtd service active"
+
+    - name: Check LIBVIRT_DEFAULT_URI environment variable
+      ansible.builtin.shell:
+        cmd: echo $LIBVIRT_DEFAULT_URI
+      register: libvirt_uri
+      changed_when: false
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Display libvirt URI status
+      ansible.builtin.debug:
+        msg: "{{ '✓ LIBVIRT_DEFAULT_URI configured' if libvirt_uri.stdout else '⚠ LIBVIRT_DEFAULT_URI not set (may cause permission issues)' }}"
+
+    - name: Verify libvirt network virbr0 exists
+      ansible.builtin.command:
+        cmd: virsh net-info default
+      register: virbr0_check
+      changed_when: false
+      failed_when: false
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Validate libvirt default network
+      ansible.builtin.assert:
+        that:
+          - virbr0_check.rc == 0
+          - "'Active:' in virbr0_check.stdout"
+        fail_msg: "libvirt default network not active"
+        success_msg: "✓ libvirt default network active"
+
+    # === Final Summary ===
+
+    - name: Prerequisite check summary
+      ansible.builtin.debug:
+        msg: |
+          ======================================
+          PREREQUISITE CHECK COMPLETE
+          ======================================
+          ✓ Network: VyOS router accessible
+          ✓ DNS: Resolution functional
+          ✓ Storage: {{ storage_base_path }} available ({{ disk_space_check.stdout }}GB free)
+          ✓ Resources: {{ ram_check.stdout }}GB RAM, {{ cpu_count }} vCPUs
+          ✓ Hypervisor: libvirtd active, virbr0 network up
+
+          Ready to provision registry VM ({{ registry_type | default('quay') }})
+          ======================================

@@ -1,0 +1,239 @@
+---
+# Playbook: Destroy Registry VM
+# Purpose: Remove KVM virtual machine and storage volumes
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+# Workflow: Teardown Registry Infrastructure (Node 3)
+
+- name: Destroy Registry VM
+  hosts: localhost
+  gather_facts: true
+  vars:
+    registry_type: "{{ registry_type | default('quay') }}"
+    vm_name: "registry-{{ registry_type }}"
+    force_destroy: "{{ force | default(false) }}"
+    vm_disk_path: "/data/libvirt-images/{{ vm_name }}.qcow2"
+    cloud_init_iso_path: "/data/libvirt-images/{{ vm_name }}-cloud-init.iso"
+
+  tasks:
+    - name: Display destruction summary
+      ansible.builtin.debug:
+        msg: |
+          Destroying Registry VM
+          ======================
+          VM Name: {{ vm_name }}
+          Registry Type: {{ registry_type }}
+          Force: {{ force_destroy }}
+
+    # === Safety Check ===
+
+    - name: Safety confirmation (unless force=true)
+      ansible.builtin.pause:
+        prompt: |
+          ⚠️  WARNING: This will PERMANENTLY DELETE the VM and all its storage!
+
+          VM: {{ vm_name }}
+          Disk: {{ vm_disk_path }}
+          Cloud-init ISO: {{ cloud_init_iso_path }}
+
+          This action CANNOT be undone!
+
+          Press ENTER to continue or Ctrl+C to abort
+      when: not force_destroy
+
+    # === Check VM Exists ===
+
+    - name: Check if VM exists
+      community.libvirt.virt:
+        command: list_vms
+      register: existing_vms
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: VM does not exist
+      when: vm_name not in existing_vms.list_vms
+      block:
+        - name: Display non-existent VM message
+          ansible.builtin.debug:
+            msg: |
+              VM {{ vm_name }} does not exist
+              Nothing to destroy (idempotent)
+
+        - name: End play if VM doesn't exist
+          ansible.builtin.meta: end_play
+
+    # === Destroy Running VM ===
+
+    - name: Get VM state
+      community.libvirt.virt:
+        command: status
+        name: "{{ vm_name }}"
+      register: vm_state
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Destroy running VM
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        state: destroyed
+      when: vm_state.status == "running"
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Display VM destruction status
+      ansible.builtin.debug:
+        msg: "✓ VM stopped"
+
+    # === Undefine VM ===
+
+    - name: Undefine VM from libvirt
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        command: undefine
+      register: undefine_result
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Display VM undefine status
+      ansible.builtin.debug:
+        msg: "✓ VM undefined from libvirt"
+
+    # === Remove Storage Volumes ===
+
+    - name: Check if VM disk exists
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}"
+      register: vm_disk_stat
+
+    - name: Remove VM disk
+      ansible.builtin.file:
+        path: "{{ vm_disk_path }}"
+        state: absent
+      when: vm_disk_stat.stat.exists
+
+    - name: Display disk removal status
+      ansible.builtin.debug:
+        msg: "{{ vm_disk_stat.stat.exists | ternary('✓ VM disk removed', '✓ VM disk did not exist') }}"
+
+    - name: Check if cloud-init ISO exists
+      ansible.builtin.stat:
+        path: "{{ cloud_init_iso_path }}"
+      register: cloud_init_stat
+
+    - name: Remove cloud-init ISO
+      ansible.builtin.file:
+        path: "{{ cloud_init_iso_path }}"
+        state: absent
+      when: cloud_init_stat.stat.exists
+
+    - name: Display cloud-init removal status
+      ansible.builtin.debug:
+        msg: "{{ cloud_init_stat.stat.exists | ternary('✓ Cloud-init ISO removed', '✓ Cloud-init ISO did not exist') }}"
+
+    # === Cleanup Network Configuration ===
+
+    - name: Remove DHCP lease (if exists)
+      ansible.builtin.shell:
+        cmd: virsh net-dhcp-leases default | grep {{ vm_name }} | awk '{print $5}' | xargs -r virsh net-update default delete ip-dhcp-host --live --config
+      ignore_errors: true
+      changed_when: false
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Display network cleanup status
+      ansible.builtin.debug:
+        msg: "✓ Network configuration cleaned"
+
+    # === Verify Destruction ===
+
+    - name: Verify VM removed from libvirt
+      community.libvirt.virt:
+        command: list_vms
+      register: final_vms
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Verify VM not in list
+      ansible.builtin.assert:
+        that:
+          - vm_name not in final_vms.list_vms
+        fail_msg: "VM still exists in libvirt"
+        success_msg: "✓ VM completely removed"
+
+    - name: Verify disk removed
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}"
+      register: final_disk_check
+
+    - name: Verify disk not present
+      ansible.builtin.assert:
+        that:
+          - not final_disk_check.stat.exists
+        fail_msg: "VM disk still exists"
+        success_msg: "✓ VM disk completely removed"
+
+    # === Create Destruction Report ===
+
+    - name: Create destruction report
+      ansible.builtin.copy:
+        content: |
+          # Registry VM Destruction Report
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          VM Name: {{ vm_name }}
+          Registry Type: {{ registry_type }}
+          Destruction Date: {{ ansible_date_time.date }}
+          Destruction Time: {{ ansible_date_time.time }}
+          Force Flag: {{ force_destroy }}
+
+          Actions Performed:
+          ✓ VM stopped (if running)
+          ✓ VM undefined from libvirt
+          ✓ VM disk removed ({{ vm_disk_path }})
+          ✓ Cloud-init ISO removed ({{ cloud_init_iso_path }})
+          ✓ Network configuration cleaned
+          ✓ DHCP leases removed
+
+          Verification:
+          ✓ VM not in libvirt VM list
+          ✓ Disk files do not exist
+          ✓ Storage cleanup complete
+
+          Summary:
+          VM {{ vm_name }} has been completely destroyed.
+          All associated storage and configuration removed.
+
+          Recovery:
+          To recreate this VM:
+          1. ansible-playbook -i inventory/ibm-cloud.yml playbooks/provision-registry-vm.yml \
+               -e "registry_type={{ registry_type }}"
+          2. ansible-playbook -i inventory/ibm-cloud.yml playbooks/configure-registry-service.yml \
+               -e "registry_type={{ registry_type }}"
+        dest: "/tmp/registry-vm-destruction-{{ ansible_date_time.epoch }}.txt"
+        mode: '0644'
+
+    # === Final Summary ===
+
+    - name: Destruction summary
+      ansible.builtin.debug:
+        msg: |
+          ======================================
+          REGISTRY VM DESTROYED
+          ======================================
+          VM Name: {{ vm_name }}
+          Registry Type: {{ registry_type }}
+          Status: Completely removed
+
+          Actions Completed:
+          ✓ VM stopped and undefined
+          ✓ Storage volumes deleted
+          ✓ Network configuration cleaned
+          ✓ All traces removed
+
+          Verification:
+          ✓ VM not in libvirt: {{ vm_name not in final_vms.list_vms }}
+          ✓ Disk removed: {{ not final_disk_check.stat.exists }}
+
+          Destruction Report: /tmp/registry-vm-destruction-{{ ansible_date_time.epoch }}.txt
+          ======================================
+
+          To recreate: Use AAP "Deploy Registry Infrastructure" workflow

@@ -1,0 +1,326 @@
+---
+# Playbook: Verify Registry Health
+# Purpose: Validate registry service health and readiness
+# ADR: 0032 - AAP Workflow Orchestration for Infrastructure Lifecycle Management
+# Workflow: Deploy Registry Infrastructure (Node 4)
+
+- name: Verify Registry Health
+  hosts: registry
+  gather_facts: true
+  vars:
+    registry_type: "{{ registry_type | default('quay') }}"
+    registry_port: "{{ registry_port | default('8443') }}"
+    registry_url: "https://{{ ansible_host }}:{{ registry_port }}"
+    max_retries: 10
+    retry_delay: 30
+
+  tasks:
+    - name: Display verification summary
+      ansible.builtin.debug:
+        msg: |
+          Verifying Registry Health
+          =========================
+          Type: {{ registry_type }}
+          Host: {{ ansible_host }}
+          URL: {{ registry_url }}
+
+    # === Service Status Checks ===
+
+    - name: Check if registry service is running (Quay)
+      ansible.builtin.systemd:
+        name: quay-pod
+        state: started
+      check_mode: true
+      register: quay_service
+      when: registry_type == 'quay'
+      failed_when: false
+
+    - name: Check if registry service is running (Harbor)
+      ansible.builtin.command:
+        cmd: docker-compose ps
+      args:
+        chdir: /opt/harbor
+      register: harbor_service
+      when: registry_type == 'harbor'
+      changed_when: false
+      failed_when: false
+
+    - name: Check if registry service is running (JFrog)
+      ansible.builtin.systemd:
+        name: artifactory
+        state: started
+      check_mode: true
+      register: jfrog_service
+      when: registry_type == 'jfrog'
+      failed_when: false
+
+    - name: Validate service is running
+      ansible.builtin.assert:
+        that:
+          - (registry_type == 'quay' and quay_service.status.ActiveState == 'active') or
+            (registry_type == 'harbor' and 'Up' in harbor_service.stdout) or
+            (registry_type == 'jfrog' and jfrog_service.status.ActiveState == 'active')
+        fail_msg: "Registry service not running"
+        success_msg: "✓ Registry service active"
+
+    # === Network Connectivity Checks ===
+
+    - name: Check registry port is listening
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ registry_port }}"
+        timeout: 60
+        state: started
+
+    - name: Display port status
+      ansible.builtin.debug:
+        msg: "✓ Registry port {{ registry_port }} listening"
+
+    # === HTTP Health Endpoint Checks ===
+
+    - name: Test registry health endpoint (Quay)
+      ansible.builtin.uri:
+        url: "{{ registry_url }}/health/instance"
+        method: GET
+        validate_certs: false
+        status_code: 200
+        timeout: 30
+      register: quay_health
+      retries: "{{ max_retries }}"
+      delay: "{{ retry_delay }}"
+      until: quay_health.status == 200
+      when: registry_type == 'quay'
+
+    - name: Test registry health endpoint (Harbor)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}/api/v2.0/health"
+        method: GET
+        validate_certs: false
+        status_code: 200
+        timeout: 30
+      register: harbor_health
+      retries: "{{ max_retries }}"
+      delay: "{{ retry_delay }}"
+      until: harbor_health.status == 200
+      when: registry_type == 'harbor'
+
+    - name: Test registry health endpoint (JFrog)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:{{ registry_port }}/artifactory/api/system/ping"
+        method: GET
+        validate_certs: false
+        status_code: 200
+        timeout: 30
+      register: jfrog_health
+      retries: "{{ max_retries }}"
+      delay: "{{ retry_delay }}"
+      until: jfrog_health.status == 200
+      when: registry_type == 'jfrog'
+
+    - name: Display health check status
+      ansible.builtin.debug:
+        msg: "✓ Health endpoint responding"
+
+    # === Authentication Validation ===
+
+    - name: Test registry authentication (Quay)
+      ansible.builtin.uri:
+        url: "{{ registry_url }}/api/v1/user/"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401]
+        timeout: 30
+      register: quay_auth
+      when: registry_type == 'quay'
+
+    - name: Validate authentication endpoint
+      ansible.builtin.assert:
+        that:
+          - quay_auth.status in [200, 401]
+        fail_msg: "Authentication endpoint not responding"
+        success_msg: "✓ Authentication endpoint available"
+      when: registry_type == 'quay'
+
+    # === Storage Backend Checks ===
+
+    - name: Check storage directory exists (Quay)
+      ansible.builtin.stat:
+        path: /opt/mirror-registry/quay-storage
+      register: quay_storage
+      when: registry_type == 'quay'
+
+    - name: Validate storage directory
+      ansible.builtin.assert:
+        that:
+          - quay_storage.stat.exists
+          - quay_storage.stat.isdir
+        fail_msg: "Storage directory not found"
+        success_msg: "✓ Storage directory accessible"
+      when: registry_type == 'quay'
+
+    - name: Check storage space available
+      ansible.builtin.shell:
+        cmd: df -h /opt/{{ registry_type == 'quay' | ternary('mirror-registry', registry_type) }} | awk 'NR==2 {print $5}' | sed 's/%//'
+      register: storage_usage
+      changed_when: false
+
+    - name: Validate storage space
+      ansible.builtin.assert:
+        that:
+          - storage_usage.stdout | int < 90
+        fail_msg: "Storage usage critical: {{ storage_usage.stdout }}%"
+        success_msg: "✓ Storage usage healthy: {{ storage_usage.stdout }}%"
+
+    # === Database Connectivity (Quay) ===
+
+    - name: Check PostgreSQL database (Quay)
+      ansible.builtin.command:
+        cmd: podman exec quay-postgres pg_isready -U postgres
+      register: postgres_check
+      when: registry_type == 'quay'
+      changed_when: false
+      failed_when: false
+
+    - name: Validate database connectivity
+      ansible.builtin.assert:
+        that:
+          - postgres_check.rc == 0
+        fail_msg: "Database not ready"
+        success_msg: "✓ Database connection healthy"
+      when: registry_type == 'quay'
+
+    # === Redis Cache (Quay) ===
+
+    - name: Check Redis cache (Quay)
+      ansible.builtin.command:
+        cmd: podman exec quay-redis redis-cli ping
+      register: redis_check
+      when: registry_type == 'quay'
+      changed_when: false
+      failed_when: false
+
+    - name: Validate Redis cache
+      ansible.builtin.assert:
+        that:
+          - "'PONG' in redis_check.stdout"
+        fail_msg: "Redis cache not responding"
+        success_msg: "✓ Redis cache healthy"
+      when: registry_type == 'quay'
+
+    # === Container Image Test Push ===
+
+    - name: Test image push capability
+      block:
+        - name: Pull hello-world test image
+          ansible.builtin.command:
+            cmd: podman pull hello-world:latest
+          register: test_pull
+          changed_when: test_pull.rc == 0
+
+        - name: Tag test image for registry
+          ansible.builtin.command:
+            cmd: podman tag hello-world:latest {{ ansible_host }}:{{ registry_port }}/test/hello-world:latest
+          changed_when: false
+
+        - name: Login to registry
+          ansible.builtin.command:
+            cmd: podman login --tls-verify=false {{ ansible_host }}:{{ registry_port }} -u init -p "{{ lookup('file', '/opt/mirror-registry/credentials.txt') | regex_search('password: (.+)', '\\1') | first }}"
+          when: registry_type == 'quay'
+          no_log: true
+          changed_when: false
+
+        - name: Push test image to registry
+          ansible.builtin.command:
+            cmd: podman push --tls-verify=false {{ ansible_host }}:{{ registry_port }}/test/hello-world:latest
+          register: test_push
+          changed_when: test_push.rc == 0
+
+        - name: Display push test result
+          ansible.builtin.debug:
+            msg: "✓ Test image push successful"
+
+        - name: Cleanup test image from registry
+          ansible.builtin.uri:
+            url: "{{ registry_url }}/api/v1/repository/test/hello-world"
+            method: DELETE
+            validate_certs: false
+            status_code: [204, 404]
+            headers:
+              Authorization: "Bearer {{ registry_token | default('') }}"
+          when: registry_type == 'quay'
+          ignore_errors: true
+
+        - name: Remove local test images
+          ansible.builtin.command:
+            cmd: podman rmi {{ item }}
+          loop:
+            - hello-world:latest
+            - "{{ ansible_host }}:{{ registry_port }}/test/hello-world:latest"
+          ignore_errors: true
+          changed_when: false
+
+      when: test_push_enabled | default(true) | bool
+
+    # === Final Health Summary ===
+
+    - name: Gather registry metrics (Quay)
+      ansible.builtin.uri:
+        url: "{{ registry_url }}/api/v1/superuser/registrystatus"
+        method: GET
+        validate_certs: false
+        status_code: 200
+        timeout: 30
+      register: quay_metrics
+      when: registry_type == 'quay'
+      ignore_errors: true
+
+    - name: Health verification summary
+      ansible.builtin.debug:
+        msg: |
+          ======================================
+          REGISTRY HEALTH VERIFICATION COMPLETE
+          ======================================
+          Registry Type: {{ registry_type }}
+          Service Status: ✓ Active
+          Health Endpoint: ✓ Responding
+          Authentication: ✓ Available
+          Storage Usage: {{ storage_usage.stdout }}%
+          {% if registry_type == 'quay' %}Database: ✓ Connected
+          Cache: ✓ Healthy{% endif %}
+          Network Port: ✓ Listening ({{ registry_port }})
+          {% if test_push_enabled | default(true) %}Image Push: ✓ Successful{% endif %}
+
+          Registry is healthy and ready for production use.
+          ======================================
+
+    # === Create Health Report ===
+
+    - name: Create health report file
+      ansible.builtin.copy:
+        content: |
+          # Registry Health Report
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          Registry Type: {{ registry_type }}
+          Registry URL: {{ registry_url }}
+          Service Status: Active
+          Health Check: PASSED
+
+          Component Status:
+          - Service: ✓ Running
+          - Health Endpoint: ✓ Responding (HTTP 200)
+          - Authentication: ✓ Available
+          - Storage: ✓ {{ storage_usage.stdout }}% used
+          {% if registry_type == 'quay' %}- Database: ✓ Connected
+          - Redis Cache: ✓ Healthy{% endif %}
+          - Network: ✓ Port {{ registry_port }} listening
+          {% if test_push_enabled | default(true) %}- Image Push: ✓ Test successful{% endif %}
+
+          Overall Health: HEALTHY
+        dest: "/tmp/registry-health-{{ ansible_date_time.epoch }}.txt"
+        mode: '0644'
+      delegate_to: localhost
+
+    - name: Display health report location
+      ansible.builtin.debug:
+        msg: "Health report saved: /tmp/registry-health-{{ ansible_date_time.epoch }}.txt"

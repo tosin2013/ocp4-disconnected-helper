@@ -1,0 +1,31 @@
+---
+# Playbook: Mirror Cluster Upgrade Images
+# Purpose: Download and push new OpenShift version images
+# ADR: 0006 - Lifecycle Management Strategy
+# Workflow: Upgrade OpenShift Cluster (Node 2)
+# TODO: Implement full oc-mirror workflow for cluster upgrades
+
+- name: Mirror OpenShift Upgrade Images
+  hosts: localhost
+  gather_facts: true
+  vars:
+    target_ocp_version: "{{ target_ocp_version }}"
+    target_ocp_channel: "{{ target_ocp_channel | default('stable-4.21') }}"
+    clean_mirror_path: false  # Incremental mirroring
+    
+  tasks:
+    - name: TODO - Update imageset-config.yml with target version
+      ansible.builtin.debug:
+        msg: "TODO: Update platform.channels to include {{ target_ocp_version }}"
+        
+    - name: TODO - Run oc-mirror (incremental)
+      ansible.builtin.debug:
+        msg: "TODO: Execute oc-mirror with clean_mirror_path=false"
+        
+    - name: TODO - Push images to disconnected registry
+      ansible.builtin.debug:
+        msg: "TODO: Push mirrored images to registry"
+        
+    - name: TODO - Verify image availability
+      ansible.builtin.debug:
+        msg: "TODO: Verify all required images available in local registry"
