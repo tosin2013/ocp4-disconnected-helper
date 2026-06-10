@@ -25,7 +25,7 @@
 #   oc_mirror_version: "v2" or "latest" (default: latest)
 
 - name: Download OpenShift images using oc-mirror v2
-  hosts: localhost
+  hosts: all  # Will resolve to kvm-host when AAP job template sets limit
   gather_facts: true
   become: true
 
