@@ -215,7 +215,7 @@
         msg:
           - "⚠️  WARNING: Stale Ansible async cache detected"
           - "   Location: {{ '~/.ansible_async/' if stale_async_cache.matched > 0 else '/root/.ansible_async/' }}"
-          - "   Files: {{ stale_async_cache.matched + stale_async_cache_root.matched }} files older than 1 day"
+          - "   Files: {{ stale_async_cache.matched + (stale_async_cache_root.matched | default(0)) }} files older than 1 day"
           - ""
           - "   This may cause the playbook to return cached failures instead of executing fresh."
           - "   If the playbook fails immediately (<5 seconds), clear the cache:"
