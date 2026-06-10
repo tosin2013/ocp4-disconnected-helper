@@ -87,6 +87,13 @@
           Expected location: {{ workspace_path | dirname }}/imageset-config-v2.yml
       when: not imageset_stat.stat.exists
 
+    - name: Debug pull-secret path resolution
+      ansible.builtin.debug:
+        msg:
+          - "HOME environment variable: {{ lookup('env', 'HOME') }}"
+          - "Resolved path: {{ combined_pull_secret }}"
+          - "Current user: {{ ansible_user_id }}"
+
     - name: Validate combined pull-secret exists
       ansible.builtin.stat:
         path: "{{ combined_pull_secret }}"
