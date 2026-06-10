@@ -52,15 +52,10 @@
     # Prerequisites Validation
     # =========================================================================
     - name: Validate oc-mirror is installed
-      ansible.builtin.command: which oc-mirror
-      register: oc_mirror_check
-      changed_when: false
-      failed_when: oc_mirror_check.rc != 0
-
-    - name: Check oc-mirror version
       ansible.builtin.command: oc-mirror version
       register: oc_mirror_version
       changed_when: false
+      failed_when: oc_mirror_version.rc != 0
 
     - name: Display oc-mirror version
       ansible.builtin.debug:
