@@ -1,0 +1,167 @@
+---
+# Complete AAP Configuration Playbook
+# Configures AAP for OpenShift Disconnected Helper project
+#
+# This playbook:
+# - Adds kvm-host to inventory
+# - Configures SSH credentials
+# - Registers custom execution environment
+# - Creates job templates (Phase 1 & 2)
+# - Updates workflow
+# - Enables auto-sync
+#
+# Usage:
+#   ansible-playbook playbooks/aap-configuration/configure-complete-aap-setup.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
+
+- name: Complete AAP Configuration
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+    organization_name: "Default"
+    inventory_name: "Disconnected Infrastructure"
+    project_name: "ocp4-disconnected-helper"
+    
+  tasks:
+    # =========================================================================
+    # Phase 1: Inventory & Host Configuration
+    # =========================================================================
+    - name: Add kvm-host to inventory
+      ansible.controller.host:
+        name: kvm-host
+        inventory: "{{ inventory_name }}"
+        variables:
+          ansible_host: 10.241.64.9
+          ansible_user: vpcuser
+          ansible_python_interpreter: /usr/bin/python3
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+    
+    # =========================================================================
+    # Phase 2: Credentials
+    # =========================================================================
+    - name: Read SSH private key
+      ansible.builtin.slurp:
+        src: /home/vpcuser/.ssh/id_rsa
+      register: ssh_private_key
+    
+    - name: Update KVM Hypervisor SSH Key credential
+      ansible.controller.credential:
+        name: "KVM Hypervisor SSH Key"
+        organization: "{{ organization_name }}"
+        credential_type: "Machine"
+        inputs:
+          username: vpcuser
+          ssh_key_data: "{{ ssh_private_key.content | b64decode }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+    
+    # =========================================================================
+    # Phase 3: Custom Execution Environment
+    # =========================================================================
+    - name: Create custom execution environment
+      ansible.controller.execution_environment:
+        name: "OCP4 Custom EE with oc-mirror"
+        description: "Custom execution environment with oc-mirror, oc, kubectl, and registry credentials"
+        image: "quay.io/takinosh/ocp4-aap-execution-environment:latest"
+        organization: "{{ organization_name }}"
+        credential: "Quay Robot Account - OCP4 EE"
+        pull: "always"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+    
+    # =========================================================================
+    # Phase 4: Job Templates
+    # =========================================================================
+    - name: Create job template - Download Images (Phase 1)
+      ansible.controller.job_template:
+        name: "Download OpenShift Images to Disk (Phase 1)"
+        description: "Download OpenShift images with oc-mirror to /data/ocp-mirror/oc-mirror-workspace/"
+        organization: "{{ organization_name }}"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/download-to-disk-v2.yml"
+        job_type: "run"
+        limit: "kvm-host"
+        execution_environment: "OCP4 Custom EE with oc-mirror"
+        credentials:
+          - "KVM Hypervisor SSH Key"
+          - "Ansible Vault Password"
+        become_enabled: yes
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: phase1_template
+    
+    - name: Create job template - Push to Registry (Phase 2)
+      ansible.controller.job_template:
+        name: "Mirror OpenShift Images to Registry"
+        description: "Push images from workspace to registry"
+        organization: "{{ organization_name }}"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/push-to-registry-v2.yml"
+        job_type: "run"
+        limit: "kvm-host"
+        execution_environment: "OCP4 Custom EE with oc-mirror"
+        credentials:
+          - "KVM Hypervisor SSH Key"
+          - "Ansible Vault Password"
+        become_enabled: yes
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: phase2_template
+    
+    # =========================================================================
+    # Phase 5: Project Auto-Sync
+    # =========================================================================
+    - name: Enable auto-sync on project launch
+      ansible.controller.project:
+        name: "{{ project_name }}"
+        scm_update_on_launch: true
+        scm_update_cache_timeout: 0
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+    
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - "  AAP Configuration Complete"
+          - "════════════════════════════════════════════════════════════════"
+          - ""
+          - "✅ Inventory: kvm-host added (10.241.64.9)"
+          - "✅ Credentials: KVM Hypervisor SSH Key configured"
+          - "✅ Execution Environment: OCP4 Custom EE with oc-mirror"
+          - "✅ Job Template (Phase 1): {{ phase1_template.id }}"
+          - "✅ Job Template (Phase 2): {{ phase2_template.id }}"
+          - "✅ Project Auto-Sync: Enabled"
+          - ""
+          - "Launch Workflow:"
+          - "  {{ aap_host }}/#/templates/workflow_job_template/18"
+          - ""
+          - "════════════════════════════════════════════════════════════════"
