@@ -37,7 +37,7 @@
     workspace_path: "/data/ocp-mirror/oc-mirror-workspace"
     target_registry: "{{ quay_url }}:{{ quay_vm_port }}"  # From inventory
     target_namespace: "openshift4"
-    combined_pull_secret: "{{ lookup('env', 'HOME') }}/pull-secret-combined.json"
+    combined_pull_secret: "/opt/registry-credentials/pull-secret-combined.json"
     imageset_config: "{{ workspace_path | dirname }}/imageset-config-v2.yml"
     skip_tls_verify: false
     dry_run: false
