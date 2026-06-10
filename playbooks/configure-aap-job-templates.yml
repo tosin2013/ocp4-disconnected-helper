@@ -154,12 +154,13 @@
     - name: Create job template - Mirror OpenShift Images
       ansible.controller.job_template:
         name: "Mirror OpenShift Images to Registry"
-        description: "Download OpenShift images with oc-mirror and push to registry"
+        description: "Download OpenShift images with oc-mirror and push to registry (SSH delegates to hypervisor)"
         organization: "{{ organization_name }}"
         inventory: "{{ inventory_name }}"
         project: "{{ project_name }}"
         playbook: "playbooks/push-to-registry-v2.yml"
         job_type: "run"
+        limit: "kvm-host"  # CRITICAL: Run on hypervisor (1TB /data storage), not AAP controller (60GB)
         credentials:
           - "KVM Hypervisor SSH Key"
           - "Ansible Vault Password"

@@ -6,6 +6,9 @@
 ## Status
 Accepted
 
+## Revision History
+- **2026-06-10**: Enhanced with oc-mirror binary for image mirroring job templates (see § oc-mirror Enhancement)
+
 ## Context
 
 Ansible Automation Platform (AAP) 2.6 uses execution environments (containerized Ansible runtimes) to run automation jobs. When importing the ocp4-disconnected-helper project into AAP, project syncs fail with:
@@ -56,6 +59,7 @@ Create a **custom execution environment** by forking `https://github.com/tosin20
 3. **Credential Rotation**: Must rebuild and republish EE when `registry.redhat.io` credentials rotate
 4. **Upstream Dependency**: Relies on `tosin2013/ansible-execution-environment` for base configuration updates
 5. **Storage Overhead**: Custom EE images consume Quay storage quota
+6. **Image Size**: With oc-mirror binary (~300MB), total EE image size increases to ~3GB
 
 ### Security Considerations
 
@@ -208,8 +212,91 @@ awx job_templates launch --name="Deploy Registry VM"
 - [Quay.io Container Registry](https://quay.io/)
 - [Upstream EE Repository](https://github.com/tosin2013/ansible-execution-environment)
 
+## oc-mirror Enhancement
+
+### Context (2026-06-10)
+
+AAP job template "Mirror OpenShift Images to Registry" fails with:
+```
+fatal: [localhost]: FAILED! => {"msg": "[Errno 2] No such file or directory: b'oc-mirror'"}
+```
+
+**Root Cause**: Custom EE includes `oc` and `kubectl` binaries but not `oc-mirror`, which is required for OpenShift image mirroring operations (ADR 0003).
+
+**Storage Architecture Issue**: AAP controller VM (192.168.10.21) has only 60GB disk, insufficient for 50GB mirror operations. Hypervisor has 1TB at `/data` but AAP jobs run locally on controller by default.
+
+### Decision Enhancement
+
+**Add oc-mirror binary** to custom execution environment (similar to oc/kubectl installation pattern).
+
+**Execution Model**: AAP job templates for mirroring will use **SSH delegation** to run on hypervisor (kvm-host) instead of AAP controller, ensuring downloads write to `/data/ocp-mirror/` with adequate storage.
+
+### Implementation Changes
+
+#### 1. execution-environment.yml
+Add oc-mirror installation in `prepend_galaxy` section (after oc/kubectl installation):
+```yaml
+# Install oc-mirror from tarball (required for image mirroring job templates)
+- >
+  RUN OC_MIRROR_ENV="/_extras/optional/oc-mirror-install.env" ; \
+      if [ -f "$OC_MIRROR_ENV" ]; then set -a; . "$OC_MIRROR_ENV"; set +a; fi ; \
+      if [ -n "$OC_MIRROR_URL" ] || [ -n "$OC_MIRROR_VERSION" ]; then \
+        echo "==> Installing oc-mirror from tarball" && \
+        URL="${OC_MIRROR_URL:-https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_MIRROR_VERSION}/oc-mirror.tar.gz}" && \
+        curl -L --fail --retry 3 --max-time 300 -o /tmp/oc-mirror.tgz "$URL" && \
+        tar -C /usr/local/bin -xzf /tmp/oc-mirror.tgz && \
+        chmod +x /usr/local/bin/oc-mirror && \
+        ln -sf /usr/local/bin/oc-mirror /usr/bin/oc-mirror && \
+        /usr/local/bin/oc-mirror version && \
+        rm -f /tmp/oc-mirror.tgz ; \
+      fi
+```
+
+Add in `append_final` section (after kubectl):
+```yaml
+- COPY --from=galaxy /usr/local/bin/oc-mirror /usr/local/bin/oc-mirror
+- RUN ln -sf /usr/local/bin/oc-mirror /usr/bin/oc-mirror
+```
+
+#### 2. AAP Job Template Configuration
+Update `playbooks/configure-aap-job-templates.yml`:
+- Change mirror job template to target `kvm-host` via limit
+- Add "KVM Hypervisor SSH Key" credential requirement
+- Ensures execution on hypervisor with `/data` storage
+
+#### 3. Inventory Update
+Modify `kvm-host` in AAP inventory:
+```yaml
+kvm-host:
+  ansible_host: "10.241.64.9"  # Internal IP
+  ansible_user: "vpcuser"
+  ansible_connection: "ssh"  # Changed from "local"
+```
+
+### Storage Flow
+
+```
+AAP Web UI (user clicks Launch)
+    ↓
+AAP Controller (spawns EE container)
+    ↓
+EE Container SSH → Hypervisor (10.241.64.9)
+    ↓
+oc-mirror executes on Hypervisor
+    ↓
+Downloads to /data/ocp-mirror/ (1TB storage ✅)
+```
+
+### Impact
+
+- **EE Image Size**: +300MB (oc-mirror binary)
+- **Build Time**: +2-3 minutes (download + extract)
+- **Enables**: AAP job templates for `push-to-registry-v2.yml` playbook
+- **Storage**: Mirroring uses hypervisor `/data` (1TB), not controller (60GB)
+
 ## Approval
 
 **Approved By**: Project Architecture Team  
 **Date**: 2026-06-05  
-**Implementation Target**: Immediate (blocks Task #22 - AAP project import)
+**Implementation Target**: Immediate (blocks Task #22 - AAP project import)  
+**Enhancement Approved**: 2026-06-10 (oc-mirror + SSH delegation)

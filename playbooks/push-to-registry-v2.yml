@@ -28,7 +28,7 @@
 #   dry_run: Validation only (default: false)
 
 - name: Push mirrored images to registry using oc-mirror v2
-  hosts: localhost
+  hosts: all  # Will resolve to kvm-host when AAP job template sets limit
   gather_facts: true
   become: false
 
