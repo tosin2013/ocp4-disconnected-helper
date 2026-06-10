@@ -325,7 +325,7 @@
         ask_variables_on_launch: true
         extra_vars:
           registry_type: "quay"
-          force: false
+          force: true  # AAP workflows must skip interactive prompts
         limit: "kvm-host"
         execution_environment: "{{ execution_environment }}"
         verbosity: 1
@@ -502,7 +502,7 @@
         ask_variables_on_launch: true
         extra_vars:
           registry_type: "quay"
-          force: false
+          force: true  # AAP workflows must skip interactive prompts
         state: present
       register: teardown_workflow
 

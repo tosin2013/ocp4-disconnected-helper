@@ -55,7 +55,7 @@
         extra_vars:
           dry_run: false
           clean_all: false
-          force: false
+          force: true  # AAP workflows must skip interactive prompts
         verbosity: 1
         state: present
       register: teardown_template
@@ -99,7 +99,7 @@
         extra_vars:
           dry_run: false
           clean_all: false
-          force: false
+          force: true  # AAP workflows must skip interactive prompts
         state: present
       register: teardown_workflow
 
