@@ -1,0 +1,177 @@
+---
+# Configure AAP Teardown Workflow for oc-mirror Infrastructure
+#
+# Creates AAP workflow template that tears down oc-mirror workspace
+# Provides both dry-run and production cleanup options
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml \
+#     playbooks/aap-configuration/configure-teardown-workflow.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml \
+#     --vault-password-file ~/.vault_pass
+
+- name: Configure AAP Teardown Workflow
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_host: "https://aap.{{ external_domain }}"
+    aap_username: "admin"
+    aap_password: "{{ aap_admin_password }}"
+    aap_validate_certs: false
+
+    # Project and inventory references
+    project_name: "ocp4-disconnected-helper"
+    inventory_name: "Disconnected Infrastructure"
+    credential_name: "KVM Hypervisor SSH Key"
+
+  tasks:
+    # =========================================================================
+    # Create Teardown Job Template
+    # =========================================================================
+    - name: Create teardown job template
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Teardown oc-mirror Workspace"
+        description: |
+          Cleans up oc-mirror workspace and artifacts.
+
+          Options:
+          - dry_run=true: Preview what would be deleted
+          - clean_all=true: Also remove TAR archives
+          - force=true: Skip confirmation prompts
+
+          Safe to run - includes confirmation by default.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/teardown-oc-mirror-workspace.yml"
+        credentials:
+          - "{{ credential_name }}"
+        limit: "kvm-host"
+        ask_variables_on_launch: true
+        extra_vars:
+          dry_run: false
+          clean_all: false
+          force: false
+        verbosity: 1
+        state: present
+      register: teardown_template
+
+    - name: Display teardown template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Teardown job template created"
+          - "   ID: {{ teardown_template.id }}"
+          - "   Name: Teardown oc-mirror Workspace"
+          - "   URL: {{ aap_host }}/#/templates/job_template/{{ teardown_template.id }}"
+
+    # =========================================================================
+    # Create Teardown Workflow Template
+    # =========================================================================
+    - name: Create teardown workflow template
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Teardown Disconnected OpenShift Infrastructure"
+        description: |
+          Teardown workflow for oc-mirror workspace cleanup.
+
+          Workflow Steps:
+          1. Clean oc-mirror workspace at /data/ocp-mirror/
+          2. Remove ImageSetConfiguration files
+          3. Clear async cache
+
+          Use Cases:
+          - Restart failed download jobs (clears stale workspace)
+          - Free disk space (removes 50GB+ workspace)
+          - Prepare for new mirror operation
+
+          Safe Mode (default): Prompts for confirmation
+          Force Mode: Set force=true to skip prompts
+        organization: "Default"
+        inventory: "{{ inventory_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          dry_run: false
+          clean_all: false
+          force: false
+        state: present
+      register: teardown_workflow
+
+    - name: Get teardown workflow ID
+      ansible.builtin.set_fact:
+        teardown_workflow_id: "{{ teardown_workflow.id }}"
+
+    - name: Display teardown workflow info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Teardown workflow template created"
+          - "   ID: {{ teardown_workflow_id }}"
+          - "   Name: Teardown Disconnected OpenShift Infrastructure"
+          - "   URL: {{ aap_host }}/#/templates/workflow_job_template/{{ teardown_workflow_id }}"
+
+    # =========================================================================
+    # Create Workflow Nodes
+    # =========================================================================
+    - name: Create teardown workflow node
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Teardown Disconnected OpenShift Infrastructure"
+        identifier: "teardown"
+        unified_job_template: "Teardown oc-mirror Workspace"
+        state: present
+      register: teardown_node
+
+    - name: Display workflow node info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow node created"
+          - "   Node ID: {{ teardown_node.id }}"
+          - "   Identifier: teardown"
+          - "   Job: Teardown oc-mirror Workspace"
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "  AAP Teardown Workflow Configuration Complete ✅"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "📋 Created Resources:"
+          - ""
+          - "  Job Template:"
+          - "    - Teardown oc-mirror Workspace (ID: {{ teardown_template.id }})"
+          - ""
+          - "  Workflow Template:"
+          - "    - Teardown Disconnected OpenShift Infrastructure (ID: {{ teardown_workflow_id }})"
+          - ""
+          - "🚀 Usage:"
+          - ""
+          - "  Dry-Run Mode (preview):"
+          - "    Launch workflow with: dry_run=true"
+          - ""
+          - "  Production Teardown (with confirmation):"
+          - "    Launch workflow with default settings"
+          - ""
+          - "  Force Mode (no confirmation):"
+          - "    Launch workflow with: force=true"
+          - ""
+          - "  Clean Everything (including TAR files):"
+          - "    Launch workflow with: clean_all=true"
+          - ""
+          - "🔗 Workflow URL:"
+          - "  {{ aap_host }}/#/templates/workflow_job_template/{{ teardown_workflow_id }}"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"

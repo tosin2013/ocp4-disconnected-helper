@@ -1,0 +1,199 @@
+---
+# Teardown oc-mirror Workspace
+#
+# Cleans up oc-mirror workspace and artifacts created by download-to-disk-v2.yml
+# Safe to run - includes dry-run mode and confirmation prompts
+#
+# Usage:
+#   # Dry-run mode (show what would be deleted)
+#   ansible-playbook -i inventory teardown-oc-mirror-workspace.yml -e "dry_run=true"
+#
+#   # Production cleanup
+#   ansible-playbook -i inventory teardown-oc-mirror-workspace.yml
+#
+# Variables:
+#   workspace_path: Base path for oc-mirror workspace (default: /data/ocp-mirror)
+#   dry_run: Preview mode - show what would be deleted (default: false)
+#   clean_all: Remove all oc-mirror artifacts including TAR files (default: false)
+#   force: Skip confirmation prompts (default: false)
+
+- name: Teardown oc-mirror workspace and artifacts
+  hosts: all  # Will resolve to kvm-host when AAP job template sets limit
+  gather_facts: true
+  become: false
+
+  vars:
+    # Default values (override in inventory or CLI)
+    workspace_path: "/data/ocp-mirror"
+    dry_run: false
+    clean_all: false
+    force: false
+
+  tasks:
+    # =========================================================================
+    # Preflight: Workspace Discovery
+    # =========================================================================
+    - name: Check if workspace exists
+      ansible.builtin.stat:
+        path: "{{ workspace_path }}/oc-mirror-workspace"
+      register: workspace_stat
+
+    - name: Check if ImageSetConfiguration exists
+      ansible.builtin.stat:
+        path: "{{ workspace_path }}/imageset-config-v2.yml"
+      register: imageset_stat
+
+    - name: Find TAR archives in workspace
+      ansible.builtin.find:
+        paths: "{{ workspace_path }}"
+        patterns: "*.tar,*.tar.gz"
+        file_type: file
+      register: tar_files
+      when: clean_all | bool
+
+    - name: Calculate workspace size
+      ansible.builtin.shell: |
+        du -sh {{ workspace_path }}/oc-mirror-workspace 2>/dev/null || echo "0B"
+      register: workspace_size
+      changed_when: false
+      when: workspace_stat.stat.exists
+
+    - name: Display teardown plan
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "oc-mirror Workspace Teardown Plan"
+          - "=============================================="
+          - ""
+          - "Mode: {{ 'DRY-RUN (no changes)' if dry_run else 'PRODUCTION (will delete)' }}"
+          - ""
+          - "📁 Workspace:"
+          - "   Path: {{ workspace_path }}/oc-mirror-workspace"
+          - "   Exists: {{ 'Yes' if workspace_stat.stat.exists else 'No' }}"
+          - "   Size: {{ workspace_size.stdout if workspace_stat.stat.exists else 'N/A' }}"
+          - ""
+          - "📄 ImageSetConfiguration:"
+          - "   Path: {{ workspace_path }}/imageset-config-v2.yml"
+          - "   Exists: {{ 'Yes' if imageset_stat.stat.exists else 'No' }}"
+          - ""
+          - "{{ '📦 TAR Archives:' if clean_all else '' }}"
+          - "{{ '   Count: ' ~ tar_files.matched if clean_all else '' }}"
+          - "{{ '   Files: ' ~ (tar_files.files | map(attribute=\"path\") | list | join(\", \")) if clean_all and tar_files.matched > 0 else '' }}"
+          - ""
+          - "⚠️  WARNING: This will delete all oc-mirror workspace data!"
+          - "{{ '   Including ' ~ tar_files.matched ~ ' TAR archive(s)' if clean_all and tar_files.matched > 0 else '' }}"
+          - ""
+          - "=============================================="
+
+    - name: End play if nothing to clean
+      ansible.builtin.meta: end_play
+      when: not workspace_stat.stat.exists and not imageset_stat.stat.exists
+
+    # =========================================================================
+    # Dry-Run Mode
+    # =========================================================================
+    - name: Dry-run teardown summary
+      when: dry_run | bool
+      block:
+        - name: Display dry-run results
+          ansible.builtin.debug:
+            msg:
+              - "=============================================="
+              - "Dry-Run Complete"
+              - "=============================================="
+              - ""
+              - "Would delete:"
+              - "{{ '  ✓ Workspace: ' ~ workspace_path ~ '/oc-mirror-workspace (' ~ workspace_size.stdout ~ ')' if workspace_stat.stat.exists else '  - Workspace: Not found' }}"
+              - "{{ '  ✓ ImageSetConfiguration: ' ~ workspace_path ~ '/imageset-config-v2.yml' if imageset_stat.stat.exists else '  - ImageSetConfiguration: Not found' }}"
+              - "{{ '  ✓ TAR archives: ' ~ tar_files.matched ~ ' files' if clean_all and tar_files.matched > 0 else '' }}"
+              - ""
+              - "To execute teardown, remove -e \"dry_run=true\""
+              - ""
+              - "=============================================="
+
+        - name: End play after dry-run
+          ansible.builtin.meta: end_play
+
+    # =========================================================================
+    # Production Teardown
+    # =========================================================================
+    - name: Confirmation check
+      ansible.builtin.pause:
+        prompt: |
+
+          ⚠️  WARNING: About to DELETE oc-mirror workspace data!
+
+          This will remove:
+          - {{ workspace_path }}/oc-mirror-workspace ({{ workspace_size.stdout if workspace_stat.stat.exists else 'N/A' }})
+          - {{ workspace_path }}/imageset-config-v2.yml
+          {{ '- ' ~ tar_files.matched ~ ' TAR archive(s)' if clean_all and tar_files.matched > 0 else '' }}
+
+          Type 'yes' to continue:
+      register: confirmation
+      when: not force and (workspace_stat.stat.exists or imageset_stat.stat.exists)
+
+    - name: Validate confirmation
+      ansible.builtin.fail:
+        msg: "Teardown cancelled by user"
+      when:
+        - not force
+        - confirmation.user_input | default('') != 'yes'
+        - workspace_stat.stat.exists or imageset_stat.stat.exists
+
+    - name: Remove oc-mirror workspace
+      ansible.builtin.file:
+        path: "{{ workspace_path }}/oc-mirror-workspace"
+        state: absent
+      when: workspace_stat.stat.exists
+      register: workspace_removed
+
+    - name: Remove ImageSetConfiguration
+      ansible.builtin.file:
+        path: "{{ workspace_path }}/imageset-config-v2.yml"
+        state: absent
+      when: imageset_stat.stat.exists
+      register: imageset_removed
+
+    - name: Remove TAR archives
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ tar_files.files }}"
+      when: clean_all and tar_files.matched > 0
+      register: tar_removed
+
+    - name: Clear stale async cache (user)
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.ansible_async/"
+        state: absent
+      failed_when: false
+
+    - name: Clear stale async cache (root)
+      ansible.builtin.file:
+        path: "/root/.ansible_async/"
+        state: absent
+      become: true
+      failed_when: false
+
+    # =========================================================================
+    # Teardown Summary
+    # =========================================================================
+    - name: Display teardown results
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "oc-mirror Workspace Teardown Complete"
+          - "=============================================="
+          - ""
+          - "Removed:"
+          - "{{ '  ✓ Workspace: ' ~ workspace_path ~ '/oc-mirror-workspace' if workspace_removed.changed else '  - Workspace: Not found' }}"
+          - "{{ '  ✓ ImageSetConfiguration: ' ~ workspace_path ~ '/imageset-config-v2.yml' if imageset_removed.changed else '  - ImageSetConfiguration: Not found' }}"
+          - "{{ '  ✓ TAR archives: ' ~ (tar_removed.results | selectattr(\"changed\") | list | length) ~ ' files' if clean_all and tar_removed.changed else '' }}"
+          - "  ✓ Ansible async cache cleared"
+          - ""
+          - "Workspace Path: {{ workspace_path }}"
+          - "Status: Clean"
+          - ""
+          - "Ready for new oc-mirror download operation"
+          - ""
+          - "=============================================="
