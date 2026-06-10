@@ -81,8 +81,7 @@
     # =========================================================================
     - name: Authenticate to registry.redhat.io for base image pull
       ansible.builtin.shell:
-        cmd: echo "{{ registry_password }}" | podman login registry.redhat.io --username "{{ registry_username | trim }}" --password-stdin
-      become: false  # Run as vpcuser for rootless podman
+        cmd: echo "{{ registry_password }}" | sudo podman login registry.redhat.io --username "{{ registry_username | trim }}" --password-stdin
       no_log: true
       register: rh_registry_login
 
@@ -96,14 +95,13 @@
     - name: Build execution environment with ansible-builder
       ansible.builtin.command:
         cmd: >
-          /home/vpcuser/.local/bin/ansible-builder build
+          sudo /home/vpcuser/.local/bin/ansible-builder build
           --tag {{ ee_full_image }}
           --container-runtime podman
           --build-arg REGISTRY_USERNAME={{ registry_username }}
           --build-arg REGISTRY_PASSWORD={{ registry_password }}
           -v 3
         chdir: "{{ ee_repo_path }}"
-      become: false  # Run as vpcuser for rootless podman
       register: ee_build
       async: 1800  # 30 minute timeout
       poll: 10
@@ -114,15 +112,13 @@
 
     - name: Verify image was created
       ansible.builtin.command:
-        cmd: podman images {{ ee_full_image }} --format "{{{{ .Repository }}}}:{{{{ .Tag }}}}"
-      become: false  # Run as vpcuser for rootless podman
+        cmd: sudo podman images {{ ee_full_image }} --format "{{{{ .Repository }}}}:{{{{ .Tag }}}}"
       register: image_verify
       changed_when: false
 
     - name: Display image details
       ansible.builtin.command:
-        cmd: podman inspect {{ ee_full_image }} --format json
-      become: false  # Run as vpcuser for rootless podman
+        cmd: sudo podman inspect {{ ee_full_image }} --format json
       register: image_inspect
       changed_when: false
 
@@ -143,10 +139,8 @@
     # Phase 5: Authenticate to Quay Registry
     # =========================================================================
     - name: Authenticate to Quay registry
-      ansible.builtin.command:
-        cmd: podman login quay.io --username {{ quay_username }} --password-stdin
-        stdin: "{{ quay_password }}"
-      become: false  # Run as vpcuser for rootless podman
+      ansible.builtin.shell:
+        cmd: echo "{{ quay_password }}" | sudo podman login quay.io --username {{ quay_username }} --password-stdin
       no_log: true
       register: quay_login
 
@@ -159,8 +153,7 @@
     # =========================================================================
     - name: Push execution environment to Quay
       ansible.builtin.command:
-        cmd: podman push {{ ee_full_image }}
-      become: false  # Run as vpcuser for rootless podman
+        cmd: sudo podman push {{ ee_full_image }}
       register: ee_push
       async: 1800  # 30 minute timeout
       poll: 10
