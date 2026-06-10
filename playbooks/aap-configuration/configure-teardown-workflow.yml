@@ -15,9 +15,8 @@
   gather_facts: false
 
   vars:
-    aap_host: "https://aap.{{ external_domain }}"
+    aap_host: "https://aap.sandbox3377.opentlc.com"
     aap_username: "admin"
-    aap_password: "{{ aap_admin_password }}"
     aap_validate_certs: false
 
     # Project and inventory references
@@ -33,7 +32,7 @@
       ansible.controller.job_template:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
-        controller_password: "{{ aap_password }}"
+        controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
         name: "Teardown oc-mirror Workspace"
         description: |
@@ -76,7 +75,7 @@
       ansible.controller.workflow_job_template:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
-        controller_password: "{{ aap_password }}"
+        controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
         name: "Teardown Disconnected OpenShift Infrastructure"
         description: |
@@ -123,7 +122,7 @@
       ansible.controller.workflow_job_template_node:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
-        controller_password: "{{ aap_password }}"
+        controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
         workflow_job_template: "Teardown Disconnected OpenShift Infrastructure"
         identifier: "teardown"
