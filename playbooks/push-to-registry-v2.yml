@@ -262,6 +262,7 @@
       async: 14400  # 4 hours timeout
       poll: 30      # Check every 30 seconds
       register: push_output
+      become: true
 
     - name: Display push results
       ansible.builtin.debug:
