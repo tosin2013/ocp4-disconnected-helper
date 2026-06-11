@@ -1,0 +1,96 @@
+---
+# Validate operator selections against cached catalog metadata
+# Provides actionable error messages with suggestions
+
+- name: Check cache exists before validation
+  ansible.builtin.find:
+    paths: "{{ operator_catalog_cache_dir }}"
+    patterns: "*-v{{ openshift_version }}.json"
+  register: cache_check
+
+- name: Fail if cache missing
+  ansible.builtin.fail:
+    msg: |
+      ❌ ERROR: Operator catalog cache not found
+
+      Run cache refresh first:
+        ansible-playbook validate-operator-selection.yml -e "force_refresh=true"
+  when: cache_check.matched | int == 0
+
+- name: Initialize validation results
+  ansible.builtin.set_fact:
+    validation_results:
+      valid_operators: []
+      invalid_operators: []
+      invalid_channels: []
+      suggestions: []
+      total_checked: 0
+      total_valid: 0
+      total_invalid: 0
+
+- name: Validate operators against catalog cache
+  when: operators_to_validate is defined and operators_to_validate | length > 0
+  block:
+    - name: Load catalog cache files
+      ansible.builtin.set_fact:
+        catalog_cache: "{{ catalog_cache | default({}) | combine({item.path | basename | regex_replace('.json$', ''): lookup('file', item.path) | from_json}) }}"
+      loop: "{{ cache_check.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Validate each operator catalog
+      ansible.builtin.include_tasks: validate-operator-catalog.yml
+      loop: "{{ operators_to_validate }}"
+      loop_control:
+        loop_var: operator_catalog
+        label: "{{ operator_catalog.catalog }}"
+
+- name: Display validation summary
+  ansible.builtin.debug:
+    msg: |
+      ============================================
+      Operator Validation Results
+      ============================================
+
+      Total Operators Checked: {{ validation_results.total_checked }}
+      ✅ Valid: {{ validation_results.total_valid }}
+      ❌ Invalid: {{ validation_results.total_invalid }}
+
+      {% if validation_results.invalid_operators | length > 0 %}
+      Invalid Operators:
+      {% for invalid in validation_results.invalid_operators %}
+        • {{ invalid.name }} (catalog: {{ invalid.catalog }})
+      {% if invalid.suggestion %}
+          → Did you mean: {{ invalid.suggestion }}?
+      {% else %}
+          → Not found in catalog. Search: oc mirror list operators --catalog={{ invalid.catalog }} | grep {{ invalid.name }}
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+
+      {% if validation_results.invalid_channels | length > 0 %}
+      Invalid Channels:
+      {% for invalid in validation_results.invalid_channels %}
+        • {{ invalid.operator }}:{{ invalid.channel }} (catalog: {{ invalid.catalog }})
+          → Available channels: {{ invalid.available_channels | join(', ') }}
+      {% endfor %}
+      {% endif %}
+
+      {% if validation_results.valid_operators | length > 0 %}
+      ✅ Valid Operators ({{ validation_results.total_valid }}):
+      {% for valid in validation_results.valid_operators %}
+        • {{ valid.name }}{% if valid.channel %}:{{ valid.channel }}{% endif %}
+      {% endfor %}
+      {% endif %}
+
+      ============================================
+
+- name: Fail if validation errors found
+  ansible.builtin.fail:
+    msg: |
+      ❌ Operator validation failed
+
+      Fix the errors above and re-run validation.
+  when:
+    - operator_validation_strict
+    - validation_results.total_invalid | int > 0

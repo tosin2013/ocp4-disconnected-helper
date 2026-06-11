@@ -386,6 +386,34 @@ ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags registry
 ansible-playbook -i inventory/ibm-cloud.yml playbooks/site.yml --tags aap
 ```
 
+### Operator Validation Workflow (ADR 0034)
+```bash
+# 1. Discover operators using CLI tool
+./scripts/discover-operators.sh --search storage
+
+# 2. Create extra_vars with operators
+# (Use preset from extra_vars/operators/ or create custom)
+
+# 3. Validate operator selection BEFORE mirroring
+ansible-playbook playbooks/validate-operator-selection.yml \
+  -e @extra_vars/operators/storage-operators.yml
+
+# 4. Mirror operators (after successful validation)
+ansible-playbook playbooks/download-to-disk-v2.yml \
+  -e @extra_vars/operators/storage-operators.yml
+
+ansible-playbook playbooks/push-to-registry-v2.yml \
+  -e @extra_vars/operators/storage-operators.yml
+```
+
+**Key Features**:
+- ✅ Pre-flight validation catches typos before expensive mirroring
+- ✅ Fuzzy matching suggests correct operator names
+- ✅ Catalog cache (24h TTL) for fast validation
+- ✅ Discovery tool for operator browsing
+- ✅ Curated presets for common use cases (storage, observability, networking)
+- ✅ AAP workflow integration as preflight node
+
 ### Deployment Structure
 ```
 site.yml

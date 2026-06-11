@@ -1,0 +1,41 @@
+---
+# operator_catalog role defaults
+# Cache configuration and validation settings
+
+# Cache directory for operator catalog metadata
+operator_catalog_cache_dir: "/var/cache/oc-mirror/catalogs"
+
+# Cache TTL in hours (24 hours = 1 day)
+operator_catalog_cache_ttl_hours: 24
+
+# Validation strictness
+operator_validation_strict: true  # Fail on invalid operators
+operator_validation_suggest_typos: true  # Fuzzy matching for suggestions
+operator_validation_check_channels: true  # Validate channel availability
+
+# Force cache refresh (set to true to ignore TTL)
+force_refresh: false
+
+# OpenShift version for catalog selection
+# Used to determine which operator catalog index to query
+# Examples: "4.21", "4.20", "4.19"
+openshift_version: "4.21"
+
+# Operator catalog URLs (Red Hat defaults)
+# Override these for custom/mirror registries
+operator_catalog_registry: "registry.redhat.io/redhat"
+
+# Catalog types to cache
+operator_catalog_types:
+  - name: "redhat-operator-index"
+    url: "{{ operator_catalog_registry }}/redhat-operator-index:v{{ openshift_version }}"
+  - name: "certified-operator-index"
+    url: "{{ operator_catalog_registry }}/certified-operator-index:v{{ openshift_version }}"
+  - name: "community-operator-index"
+    url: "{{ operator_catalog_registry }}/community-operator-index:v{{ openshift_version }}"
+
+# oc-mirror binary path
+oc_mirror_bin: "/usr/local/bin/oc-mirror"
+
+# Pull secret for catalog downloads
+pull_secret_path: "{{ lookup('env', 'HOME') }}/pull-secret.json"

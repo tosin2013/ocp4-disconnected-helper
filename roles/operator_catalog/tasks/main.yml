@@ -1,0 +1,15 @@
+---
+# operator_catalog role main tasks
+# Entry point for operator catalog management
+
+- name: Include cache management tasks
+  ansible.builtin.import_tasks: cache-catalog-metadata.yml
+  tags:
+    - operator-cache
+    - operator-refresh
+
+- name: Include validation tasks
+  ansible.builtin.import_tasks: validate-operators.yml
+  tags:
+    - operator-validate
+  when: operators_to_validate is defined

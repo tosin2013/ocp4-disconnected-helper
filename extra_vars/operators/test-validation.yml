@@ -1,0 +1,55 @@
+---
+# Test Validation Configuration
+# Intentionally includes valid and invalid operators to demonstrate validation
+
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+operators:
+  # Red Hat Catalog - Mix of valid and invalid
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # ✅ VALID - Exists in catalog
+      - name: local-storage-operator
+        channels:
+          - name: stable
+
+      # ❌ INVALID - Typo (should be "local-storage-operator")
+      - name: local-storage
+        channels:
+          - name: stable
+
+      # ✅ VALID - Exists in catalog
+      - name: loki-operator
+        channels:
+          - name: stable-6.1
+
+      # ❌ INVALID - Typo (should be "openshift-gitops-operator")
+      - name: gitops
+        channels:
+          - name: stable
+
+      # ✅ VALID - Exists in catalog
+      - name: cluster-logging
+        channels:
+          - name: stable-6.1
+
+      # ❌ INVALID - Channel doesn't exist (should be stable-4.21)
+      - name: ocs-operator
+        channels:
+          - name: stable-4.22
+
+target_mirror_path: "/data/ocp-mirror"
+clean_mirror_path: false
+
+target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
+target_namespace: "openshift4"
+skip_tls_verify: false

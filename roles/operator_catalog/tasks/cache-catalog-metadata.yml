@@ -1,0 +1,110 @@
+---
+# Cache operator catalog metadata for fast validation
+# Downloads catalog listings using oc-mirror and stores locally
+
+- name: Ensure cache directory exists
+  ansible.builtin.file:
+    path: "{{ operator_catalog_cache_dir }}"
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Check oc-mirror is installed
+  ansible.builtin.command: which oc-mirror
+  register: oc_mirror_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if oc-mirror not found
+  ansible.builtin.fail:
+    msg: |
+      ❌ ERROR: oc-mirror binary not found
+
+      Install oc-mirror first:
+        ansible-playbook playbooks/download-to-disk-v2.yml --tags install
+  when: oc_mirror_check.rc != 0
+
+- name: Check if pull-secret exists
+  ansible.builtin.stat:
+    path: "{{ pull_secret_path }}"
+  register: pull_secret_stat
+
+- name: Fail if pull-secret not found
+  ansible.builtin.fail:
+    msg: |
+      ❌ ERROR: Pull secret not found at {{ pull_secret_path }}
+
+      Download from: https://console.redhat.com/openshift/install/pull-secret
+      Save to: {{ pull_secret_path }}
+  when: not pull_secret_stat.stat.exists
+
+- name: Check existing cache files
+  ansible.builtin.find:
+    paths: "{{ operator_catalog_cache_dir }}"
+    patterns: "*.json"
+    age: "{{ operator_catalog_cache_ttl_hours }}h"
+    age_stamp: mtime
+  register: existing_cache
+
+- name: Determine if cache refresh needed
+  ansible.builtin.set_fact:
+    cache_needs_refresh: "{{ force_refresh or (existing_cache.matched | int == 0) }}"
+
+- name: Display cache status
+  ansible.builtin.debug:
+    msg: |
+      Cache Status:
+        Directory: {{ operator_catalog_cache_dir }}
+        Existing files: {{ existing_cache.matched }}
+        TTL: {{ operator_catalog_cache_ttl_hours }} hours
+        Force refresh: {{ force_refresh }}
+        Action: {{ 'REFRESH' if cache_needs_refresh else 'USE EXISTING' }}
+
+- name: Download operator catalog listings
+  when: cache_needs_refresh
+  block:
+    - name: Download catalog for {{ item.name }}
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ oc_mirror_bin }} list operators \
+          --catalog={{ item.url }} \
+          --authfile={{ pull_secret_path }} \
+          2>/dev/null | tee {{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json
+      args:
+        creates: "{{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json"
+      loop: "{{ operator_catalog_types }}"
+      register: catalog_download
+      failed_when: false
+      become: true
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+
+    - name: Check download results
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }}: {{ 'SUCCESS' if item.rc == 0 else 'FAILED - ' + (item.stderr | default('Unknown error')) }}"
+      loop: "{{ catalog_download.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Verify cache files exist
+      ansible.builtin.find:
+        paths: "{{ operator_catalog_cache_dir }}"
+        patterns: "*-v{{ openshift_version }}.json"
+      register: cache_verification
+
+    - name: Display cache summary
+      ansible.builtin.debug:
+        msg: |
+          ✅ Cache refreshed successfully
+
+          Catalogs cached: {{ cache_verification.matched }}
+          Location: {{ operator_catalog_cache_dir }}
+          Valid until: {{ lookup('pipe', 'date -d "+' + (operator_catalog_cache_ttl_hours | string) + ' hours" "+%Y-%m-%d %H:%M:%S"') }}
+
+- name: Cache already fresh
+  ansible.builtin.debug:
+    msg: |
+      ℹ️  Using existing cache (TTL not expired)
+
+      To force refresh: -e "force_refresh=true"
+  when: not cache_needs_refresh

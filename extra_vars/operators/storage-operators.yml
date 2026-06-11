@@ -1,0 +1,66 @@
+---
+# Storage Operators Preset
+# Operators for persistent storage management in disconnected OpenShift
+
+# =========================================================================
+# OpenShift Releases (Required)
+# =========================================================================
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+# =========================================================================
+# Storage Operators
+# =========================================================================
+operators:
+  # Red Hat Operator Catalog - Storage
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # Local Storage Operator - Local disk management
+      - name: local-storage-operator
+        channels:
+          - name: stable
+
+      # OpenShift Data Foundation (ODF) - Ceph-based storage
+      - name: odf-operator
+        channels:
+          - name: stable-4.21
+
+      # Logical Volume Manager Storage (LVMS) - LVM-based storage
+      - name: lvms-operator
+        channels:
+          - name: stable-4.21
+
+      # OpenShift Container Storage (OCS) - Legacy name for ODF
+      - name: ocs-operator
+        channels:
+          - name: stable-4.21
+
+  # Certified Operator Catalog - Storage
+  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.21
+    packages:
+      # Portworx - Enterprise storage platform
+      - name: portworx-certified
+        channels:
+          - name: stable
+
+# =========================================================================
+# Mirroring Configuration
+# =========================================================================
+target_mirror_path: "/data/ocp-mirror"
+clean_mirror_path: false
+
+target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
+target_namespace: "openshift4"
+skip_tls_verify: false
+
+parallel_images: 4
+parallel_layers: 5
+max_retries: 5

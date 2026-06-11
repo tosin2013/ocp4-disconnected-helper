@@ -1,0 +1,58 @@
+---
+# Observability Operators Preset
+# Operators for monitoring, logging, and alerting in disconnected OpenShift
+
+# =========================================================================
+# OpenShift Releases (Required)
+# =========================================================================
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+# =========================================================================
+# Observability Operators
+# =========================================================================
+operators:
+  # Red Hat Operator Catalog - Observability
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # OpenShift Logging - Log collection and forwarding
+      - name: cluster-logging
+        channels:
+          - name: stable-6.1
+
+      # Loki Operator - Log aggregation
+      - name: loki-operator
+        channels:
+          - name: stable-6.1
+
+      # OpenShift Monitoring (included in platform, but operator available)
+      - name: cluster-observability-operator
+        channels:
+          - name: development
+
+      # Network Observability - Flow monitoring
+      - name: netobserv-operator
+        channels:
+          - name: stable
+
+# =========================================================================
+# Mirroring Configuration
+# =========================================================================
+target_mirror_path: "/data/ocp-mirror"
+clean_mirror_path: false
+
+target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
+target_namespace: "openshift4"
+skip_tls_verify: false
+
+parallel_images: 4
+parallel_layers: 5
+max_retries: 5

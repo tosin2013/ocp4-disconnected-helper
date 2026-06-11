@@ -1,0 +1,104 @@
+---
+# Operator Selection Validation Playbook
+#
+# Validates operator selections against Red Hat operator catalogs before
+# expensive oc-mirror operations. Catches typos and invalid configurations early.
+#
+# Usage:
+#   # Validate operators from extra_vars file
+#   ansible-playbook validate-operator-selection.yml \
+#     -e @extra_vars/mirror-operators.yml
+#
+#   # Force cache refresh before validation
+#   ansible-playbook validate-operator-selection.yml \
+#     -e @extra_vars/mirror-operators.yml \
+#     -e "force_refresh=true"
+#
+#   # Validate with custom OpenShift version
+#   ansible-playbook validate-operator-selection.yml \
+#     -e @extra_vars/mirror-operators.yml \
+#     -e "openshift_version=4.20"
+#
+# Variables:
+#   operators: List of operator catalogs with packages (from extra_vars)
+#   openshift_version: OCP version for catalog selection (default: 4.21)
+#   force_refresh: Force catalog cache refresh (default: false)
+#   operator_validation_strict: Fail on validation errors (default: true)
+
+- name: Validate Operator Selection Against Catalog Cache
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    openshift_version: "4.21"
+    force_refresh: false
+    operator_validation_strict: true
+
+  pre_tasks:
+    - name: Check if operators variable is defined
+      ansible.builtin.assert:
+        that:
+          - operators is defined
+          - operators | length > 0
+        fail_msg: |
+          ❌ ERROR: No operators defined for validation
+
+          Define operators in extra_vars file:
+            operators:
+              - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+                packages:
+                  - name: local-storage-operator
+                  - name: ocs-operator
+                    channels:
+                      - name: stable-4.21
+
+          Then run:
+            ansible-playbook validate-operator-selection.yml -e @extra_vars/operators.yml
+
+    - name: Display validation parameters
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          Operator Validation Configuration
+          ============================================
+
+          OpenShift Version: {{ openshift_version }}
+          Operator Catalogs: {{ operators | length }}
+          Total Packages: {{ operators | map(attribute='packages') | flatten | length }}
+          Force Cache Refresh: {{ force_refresh }}
+          Strict Mode: {{ operator_validation_strict }}
+
+          ============================================
+
+  roles:
+    - role: operator_catalog
+      vars:
+        operators_to_validate: "{{ operators }}"
+
+  post_tasks:
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          Next Steps
+          ============================================
+
+          {% if validation_results.total_invalid | int == 0 %}
+          ✅ All operators validated successfully!
+
+          Proceed with mirroring:
+            ansible-playbook download-to-disk-v2.yml \
+              -e @extra_vars/mirror-operators.yml
+
+          Or launch AAP workflow:
+            Workflow: "Deploy Disconnected OpenShift Infrastructure"
+          {% else %}
+          ❌ Validation failed. Fix errors above and re-run.
+
+          Tips:
+            • Check operator names at: https://catalog.redhat.com/software/operators/search
+            • List available operators: oc mirror list operators --catalog=<url>
+            • Use discovery tool: ./scripts/discover-operators.sh --search <keyword>
+          {% endif %}
+
+          ============================================
