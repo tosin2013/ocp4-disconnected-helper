@@ -1,58 +1,73 @@
 ---
-# Observability Operators Preset
-# Operators for monitoring, logging, and alerting in disconnected OpenShift
+# Observability Stack Operators
+#
+# Description:
+#   Complete operator bundle for cluster observability with logging (Loki),
+#   distributed tracing (Tempo), and cluster metrics/monitoring.
+#
+# Use Case:
+#   - Centralized logging for application and platform logs
+#   - Long-term log retention and search (Loki)
+#   - Distributed tracing for microservices debugging
+#   - Cluster-wide observability and monitoring
+#   - Node-level performance profiling
+#
+# Operators Included:
+#   1. cluster-logging (Log collection and forwarding to Loki)
+#   2. loki-operator (Log aggregation and storage backend)
+#   3. tempo-product (Distributed tracing backend)
+#   4. cluster-observability-operator (Unified observability platform)
+#   5. openshift-gitops-operator (GitOps for observability config as code)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+
+#   - 16 GB RAM minimum per worker node
+#   - Persistent storage for Loki (100 GB+ depending on log retention)
+#   - Persistent storage for Tempo (50 GB+ depending on trace retention)
+#   - S3-compatible object storage recommended for long-term retention
+#
+# Documentation:
+#   https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/observability/index
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
 
-# =========================================================================
-# OpenShift Releases (Required)
-# =========================================================================
+operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # Cluster Logging - collects and forwards application and platform logs
+      - name: cluster-logging
+        channels:
+          - name: stable-6.5
+
+      # Loki - log aggregation backend for efficient log storage and query
+      - name: loki-operator
+        channels:
+          - name: stable-6.5
+
+      # Tempo - distributed tracing backend for trace storage
+      - name: tempo-product
+        channels:
+          - name: stable
+
+      # Cluster Observability - unified observability platform (metrics + logs + traces)
+      - name: cluster-observability-operator
+        channels:
+          - name: stable
+
+      # GitOps - manage observability configuration as code
+      - name: openshift-gitops-operator
+        channels:
+          - name: latest
+
+# OpenShift Release (required for image mirroring)
 openshift_releases:
   - name: stable-4.21
     minVersion: 4.21.0
     maxVersion: 4.21.0
     shortestPath: true
 
-architectures:
-  - amd64
-
-enable_graph: true
-
-# =========================================================================
-# Observability Operators
-# =========================================================================
-operators:
-  # Red Hat Operator Catalog - Observability
-  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
-    packages:
-      # OpenShift Logging - Log collection and forwarding
-      - name: cluster-logging
-        channels:
-          - name: stable-6.1
-
-      # Loki Operator - Log aggregation
-      - name: loki-operator
-        channels:
-          - name: stable-6.1
-
-      # OpenShift Monitoring (included in platform, but operator available)
-      - name: cluster-observability-operator
-        channels:
-          - name: development
-
-      # Network Observability - Flow monitoring
-      - name: netobserv-operator
-        channels:
-          - name: stable
-
-# =========================================================================
-# Mirroring Configuration
-# =========================================================================
+# Mirror Configuration
 target_mirror_path: "/data/ocp-mirror"
-clean_mirror_path: false
-
-target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
 target_namespace: "openshift4"
 skip_tls_verify: false
-
-parallel_images: 4
-parallel_layers: 5
-max_retries: 5

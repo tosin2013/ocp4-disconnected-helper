@@ -1,0 +1,65 @@
+---
+# Red Hat Advanced Cluster Management (RHACM) Operators
+#
+# Description:
+#   Complete operator bundle for RHACM deployment with multi-cluster management,
+#   GitOps integration, and cross-cluster networking.
+#
+# Use Case:
+#   - Multi-cluster management (hub-spoke architecture)
+#   - Policy-based governance and compliance
+#   - Application lifecycle management across clusters
+#   - Multi-cluster networking with Submariner
+#   - GitOps-based continuous delivery
+#
+# Operators Included:
+#   1. advanced-cluster-management (RHACM core platform)
+#   2. multicluster-engine (cluster lifecycle management)
+#   3. submariner (cross-cluster networking and service discovery)
+#   4. openshift-gitops-operator (ArgoCD for GitOps workflows)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+ (hub cluster)
+#   - 16 GB RAM minimum for hub cluster
+#   - Managed clusters: OpenShift 4.10+ or Kubernetes 1.19+
+#
+# Documentation:
+#   https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/2.16
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
+
+operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # Core RHACM platform - provides web console, policies, governance
+      - name: advanced-cluster-management
+        channels:
+          - name: release-2.16
+
+      # Multi-cluster engine - manages cluster lifecycle (create, import, upgrade)
+      - name: multicluster-engine
+        channels:
+          - name: stable-2.11
+
+      # Submariner - enables direct networking between pods and services across clusters
+      - name: submariner
+        channels:
+          - name: stable-0.24
+
+      # OpenShift GitOps - ArgoCD for continuous delivery across clusters
+      - name: openshift-gitops-operator
+        channels:
+          - name: latest
+
+# OpenShift Release (required for image mirroring)
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+# Mirror Configuration
+target_mirror_path: "/data/ocp-mirror"
+target_namespace: "openshift4"
+skip_tls_verify: false

@@ -1,0 +1,66 @@
+---
+# Security & Compliance Operators
+#
+# Description:
+#   Complete operator bundle for security hardening, compliance scanning,
+#   file integrity monitoring, and secure container registry.
+#
+# Use Case:
+#   - CIS/NIST/PCI compliance scanning and remediation
+#   - File integrity monitoring (FIM) for security auditing
+#   - Secure container registry with vulnerability scanning
+#   - Security policy enforcement and governance
+#
+# Operators Included:
+#   1. compliance-operator (CIS, NIST, PCI-DSS compliance scans)
+#   2. file-integrity-operator (File integrity monitoring with AIDE)
+#   3. quay-operator (Secure container registry with Clair scanning)
+#   4. quay-bridge-operator (Quay<->OpenShift integration)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+
+#   - 16 GB RAM minimum per worker node
+#   - Persistent storage for Quay registry (500 GB+ for production)
+#   - S3-compatible object storage for Quay (recommended)
+#
+# Documentation:
+#   - Compliance: https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/security_and_compliance/compliance-operator
+#   - Quay: https://access.redhat.com/documentation/en-us/red_hat_quay/3.16
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
+
+operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # Compliance Operator - CIS, NIST, PCI-DSS compliance scans
+      - name: compliance-operator
+        channels:
+          - name: stable
+
+      # File Integrity Operator - monitors file changes with AIDE
+      - name: file-integrity-operator
+        channels:
+          - name: stable
+
+      # Quay Operator - secure container registry with vulnerability scanning
+      - name: quay-operator
+        channels:
+          - name: stable-3.16
+
+      # Quay Bridge - integrates Quay with OpenShift image streams
+      - name: quay-bridge-operator
+        channels:
+          - name: stable-3.16
+
+# OpenShift Release (required for image mirroring)
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+# Mirror Configuration
+target_mirror_path: "/data/ocp-mirror"
+target_namespace: "openshift4"
+skip_tls_verify: false

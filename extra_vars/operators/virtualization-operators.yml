@@ -1,0 +1,67 @@
+---
+# OpenShift Virtualization Operators
+#
+# Description:
+#   Complete operator bundle for OpenShift Virtualization deployment with VM
+#   lifecycle management, storage, networking, and load balancing.
+#
+# Use Case:
+#   - Run virtual machines alongside containers on OpenShift
+#   - Migrate VMs from VMware/KVM to OpenShift
+#   - Hybrid workloads (VMs + containers in same cluster)
+#   - Windows workloads on OpenShift
+#   - Legacy application modernization
+#
+# Operators Included:
+#   1. kubevirt-hyperconverged (VM lifecycle, templates, console access)
+#   2. odf-operator (Storage for VM persistent volumes and live migration)
+#   3. kubernetes-nmstate-operator (Advanced network configuration for VMs)
+#   4. metallb-operator (Load balancing for VM services)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+ (bare metal or nested virtualization support)
+#   - CPU with Intel VT-x or AMD-V (hardware virtualization)
+#   - 32 GB RAM minimum per worker node
+#   - 250 GB+ storage per worker (for VM disks)
+#   - Multiple network interfaces (for VM network isolation)
+#
+# Documentation:
+#   https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/virtualization/index
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
+
+operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # KubeVirt hyperconverged - core virtualization stack (VMs, templates, console)
+      - name: kubevirt-hyperconverged
+        channels:
+          - name: stable
+
+      # OpenShift Data Foundation - storage for VM disks and live migration
+      - name: odf-operator
+        channels:
+          - name: stable-4.21
+
+      # NMState - advanced network state management for VM networking
+      - name: kubernetes-nmstate-operator
+        channels:
+          - name: stable
+
+      # MetalLB - load balancer for exposing VM services (bare metal clusters)
+      - name: metallb-operator
+        channels:
+          - name: stable
+
+# OpenShift Release (required for image mirroring)
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+# Mirror Configuration
+target_mirror_path: "/data/ocp-mirror"
+target_namespace: "openshift4"
+skip_tls_verify: false

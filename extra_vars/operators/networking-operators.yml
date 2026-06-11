@@ -1,0 +1,65 @@
+---
+# Advanced Networking Operators
+#
+# Description:
+#   Complete operator bundle for advanced networking capabilities including
+#   load balancing, network state management, and multi-network support.
+#
+# Use Case:
+#   - Bare metal load balancing (MetalLB for on-premise clusters)
+#   - Advanced network configuration and state management
+#   - Multi-network interfaces for VMs and pods
+#   - Service mesh networking (included via servicemesh operator)
+#
+# Operators Included:
+#   1. metallb-operator (L2/BGP load balancing for bare metal)
+#   2. kubernetes-nmstate-operator (Declarative network state management)
+#   3. submariner (Multi-cluster networking - cross-cluster connectivity)
+#   4. servicemeshoperator (Istio service mesh networking)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+ (bare metal or on-premise recommended)
+#   - Multiple network interfaces per node (for advanced configurations)
+#   - BGP router (optional, for MetalLB BGP mode)
+#
+# Documentation:
+#   - MetalLB: https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/networking/load-balancing-with-metallb
+#   - NMState: https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/networking/kubernetes-nmstate
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
+
+operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # MetalLB - load balancer for bare metal clusters (L2/BGP modes)
+      - name: metallb-operator
+        channels:
+          - name: stable
+
+      # NMState - declarative network interface configuration
+      - name: kubernetes-nmstate-operator
+        channels:
+          - name: stable
+
+      # Submariner - multi-cluster networking and service discovery
+      - name: submariner
+        channels:
+          - name: stable-0.24
+
+      # Service Mesh - Istio networking and traffic management
+      - name: servicemeshoperator
+        channels:
+          - name: stable
+
+# OpenShift Release (required for image mirroring)
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+# Mirror Configuration
+target_mirror_path: "/data/ocp-mirror"
+target_namespace: "openshift4"
+skip_tls_verify: false

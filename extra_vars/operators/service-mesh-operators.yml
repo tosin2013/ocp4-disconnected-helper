@@ -1,0 +1,59 @@
+---
+# OpenShift Service Mesh Operators
+#
+# Description:
+#   Complete operator bundle for OpenShift Service Mesh deployment with Istio,
+#   observability (Kiali), and distributed tracing (Tempo).
+#
+# Use Case:
+#   - Microservices traffic management and routing
+#   - Service-to-service mTLS encryption
+#   - Observability (topology, metrics, traces)
+#   - Canary deployments and A/B testing
+#   - Circuit breaking and fault injection
+#
+# Operators Included:
+#   1. servicemeshoperator (Istio service mesh - traffic management, security)
+#   2. kiali-ossm (Service mesh observability console - topology visualization)
+#   3. tempo-product (Distributed tracing backend - trace storage and query)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+
+#   - 16 GB RAM minimum per worker node
+#   - Persistent storage for Tempo traces (10 GB+ depending on retention)
+#
+# Documentation:
+#   https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/service_mesh/index
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
+
+operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # Service Mesh (Istio) - traffic management, mTLS, policy enforcement
+      - name: servicemeshoperator
+        channels:
+          - name: stable
+
+      # Kiali - service mesh observability console (topology, health, config)
+      - name: kiali-ossm
+        channels:
+          - name: stable
+
+      # Tempo - distributed tracing backend for traces storage
+      - name: tempo-product
+        channels:
+          - name: stable
+
+# OpenShift Release (required for image mirroring)
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+# Mirror Configuration
+target_mirror_path: "/data/ocp-mirror"
+target_namespace: "openshift4"
+skip_tls_verify: false

@@ -1,0 +1,76 @@
+---
+# OpenShift AI (RHODS) Operators
+#
+# Description:
+#   Complete operator bundle for OpenShift AI deployment with ML/AI workloads,
+#   model serving, GPU support, and service mesh integration.
+#
+# Use Case:
+#   - Machine learning model development and training
+#   - AI model serving and inference at scale
+#   - Data science workbenches (Jupyter, VS Code)
+#   - GPU-accelerated workloads (NVIDIA/AMD)
+#   - Serverless model deployment (Knative)
+#
+# Operators Included:
+#   1. rhods-operator (OpenShift AI platform - Jupyter, model serving)
+#   2. authorino-operator (API security and authentication for AI services)
+#   3. servicemeshoperator (Istio service mesh for AI app traffic management)
+#   4. serverless-operator (Knative for auto-scaling model serving)
+#   5. gpu-operator-certified (NVIDIA GPU support for training/inference)
+#
+# Deployment Requirements:
+#   - OpenShift 4.21+
+#   - 32 GB RAM minimum (64 GB+ recommended for GPU workloads)
+#   - GPU nodes with NVIDIA drivers (for gpu-operator)
+#   - Object storage (S3-compatible) for model artifacts
+#
+# Documentation:
+#   https://access.redhat.com/documentation/en-us/red_hat_openshift_ai_self-managed/2.15
+#
+# Created: 2026-06-11
+# ADR: 0034 (Operator Validation Framework)
+
+operators:
+  # Red Hat Operators
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # OpenShift AI core platform - provides Jupyter, model serving, data connections
+      - name: rhods-operator
+        channels:
+          - name: stable
+
+      # Authorino - API security and authentication for AI service endpoints
+      - name: authorino-operator
+        channels:
+          - name: stable
+
+      # Service Mesh - traffic management, observability for AI applications
+      - name: servicemeshoperator
+        channels:
+          - name: stable
+
+      # Serverless - Knative for auto-scaling model serving endpoints
+      - name: serverless-operator
+        channels:
+          - name: stable
+
+  # Certified Operators
+  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.21
+    packages:
+      # NVIDIA GPU Operator - enables GPU acceleration for training and inference
+      - name: gpu-operator-certified
+        channels:
+          - name: v26.3
+
+# OpenShift Release (required for image mirroring)
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+# Mirror Configuration
+target_mirror_path: "/data/ocp-mirror"
+target_namespace: "openshift4"
+skip_tls_verify: false
