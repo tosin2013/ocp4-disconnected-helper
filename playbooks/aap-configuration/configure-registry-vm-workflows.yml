@@ -146,7 +146,7 @@
         job_type: "run"
         inventory: "{{ inventory_name }}"
         project: "{{ project_name }}"
-        playbook: "playbooks/configure-registry-service.yml"
+        playbook: "playbooks/deploy-registry.yml"
         credentials:
           - "{{ credential_name }}"
           - "{{ vault_credential_name }}"
