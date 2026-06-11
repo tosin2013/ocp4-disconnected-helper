@@ -65,7 +65,7 @@
         playbook: "playbooks/validate-operator-selection.yml"
         credentials:
           - "{{ credential_name }}"
-        limit: "kvm-host"
+        # No limit - playbook runs on localhost
         execution_environment: "{{ execution_environment }}"
         verbosity: 1
         ask_variables_on_launch: true
