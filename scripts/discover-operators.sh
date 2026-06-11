@@ -170,6 +170,7 @@ if [[ "$CACHE_EXPIRED" == "true" ]]; then
     if ! $OC_MIRROR_BIN list operators \
         --catalog="$CATALOG_URL" \
         --authfile="$PULL_SECRET" \
+        --v2 \
         2>/dev/null | tee "$CACHE_FILE" > /dev/null; then
         echo -e "${RED}ERROR: Failed to download catalog${NC}" >&2
         exit 1

@@ -10,19 +10,18 @@
   become: true
 
 - name: Check oc-mirror is installed
-  ansible.builtin.command: which oc-mirror
+  ansible.builtin.stat:
+    path: "{{ oc_mirror_bin }}"
   register: oc_mirror_check
-  changed_when: false
-  failed_when: false
 
 - name: Fail if oc-mirror not found
   ansible.builtin.fail:
     msg: |
-      ❌ ERROR: oc-mirror binary not found
+      ❌ ERROR: oc-mirror binary not found at {{ oc_mirror_bin }}
 
       Install oc-mirror first:
         ansible-playbook playbooks/download-to-disk-v2.yml --tags install
-  when: oc_mirror_check.rc != 0
+  when: not oc_mirror_check.stat.exists
 
 - name: Check if pull-secret exists
   ansible.builtin.stat:
@@ -69,6 +68,7 @@
         {{ oc_mirror_bin }} list operators \
           --catalog={{ item.url }} \
           --authfile={{ pull_secret_path }} \
+          --v2 \
           2>/dev/null | tee {{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json
       args:
         creates: "{{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json"
