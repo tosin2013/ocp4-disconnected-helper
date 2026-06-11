@@ -1,0 +1,348 @@
+---
+# Configure AAP Workflow for Disconnected OpenShift Image Mirroring
+#
+# This playbook creates an end-to-end workflow for mirroring OpenShift images
+# and operators to a disconnected registry with operator validation (ADR-0034).
+#
+# Created: 2026-06-11
+# ADRs:
+#   - ADR-0032: AAP Workflow Orchestration
+#   - ADR-0033: Workflow Validation Framework
+#   - ADR-0034: Operator Catalog Validation
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml \
+#     playbooks/aap-configuration/configure-oc-mirror-workflow.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml \
+#     --vault-password-file ~/.vault_pass
+
+- name: Configure AAP Disconnected OCP Mirroring Workflow
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+
+    # Project and inventory references
+    organization_name: "Default"
+    project_name: "ocp4-disconnected-helper"
+    inventory_name: "Disconnected Infrastructure"
+    credential_name: "KVM Hypervisor SSH Key"
+    vault_credential_name: "Ansible Vault Password"
+    execution_environment: "OCP4 Custom EE with oc-mirror"
+
+  tasks:
+    # =========================================================================
+    # Job Template: Validate Operator Selection (NEW - ADR-0034)
+    # =========================================================================
+    - name: Create job template - Validate Operator Selection
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Validate Operator Selection"
+        organization: "{{ organization_name }}"
+        description: |
+          Pre-flight validation of operator selections against Red Hat catalogs.
+
+          Validates:
+          - Operator names exist in catalog
+          - Channels are valid for operators
+          - Catches typos with fuzzy-match suggestions
+
+          Benefits (ADR-0034):
+          - Fails fast (<5 sec vs 10+ min with oc-mirror)
+          - Saves bandwidth (no partial downloads)
+          - Clear error messages with actionable suggestions
+
+          Cache: ~/.cache/oc-mirror/catalogs/ (24h TTL)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/validate-operator-selection.yml"
+        credentials:
+          - "{{ credential_name }}"
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        ask_variables_on_launch: true
+        extra_vars:
+          operator_validation_strict: true
+          operator_validation_suggest_typos: true
+          operator_validation_check_channels: true
+        state: present
+      register: validate_operators_template
+
+    - name: Display validate operators template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Operator validation template created (ADR-0034)"
+          - "   ID: {{ validate_operators_template.id }}"
+          - "   Name: Validate Operator Selection"
+          - "   Purpose: Pre-flight check before mirroring"
+
+    # =========================================================================
+    # Job Template: Download to Disk (Phase 1)
+    # =========================================================================
+    - name: Create job template - Download OpenShift Images to Disk
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Download OpenShift Images to Disk (Phase 1)"
+        organization: "{{ organization_name }}"
+        description: |
+          Download OpenShift releases and operators to local workspace.
+
+          Phase 1 of oc-mirror v2 workflow (mirrorToDisk).
+
+          Tasks:
+          - Generate ImageSetConfiguration v2alpha1
+          - Download images to /data/ocp-mirror/oc-mirror-workspace/
+          - Verify workspace integrity
+
+          Variables (ask on launch):
+          - openshift_releases: List of OCP versions
+          - operators: List of operator catalogs with packages
+          - target_mirror_path: Workspace location (default: /data/ocp-mirror)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/download-to-disk-v2.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        become_enabled: yes
+        ask_variables_on_launch: true
+        extra_vars:
+          target_mirror_path: "/data/ocp-mirror"
+          clean_mirror_path: false
+          parallel_images: 4
+          parallel_layers: 5
+          max_retries: 5
+        state: present
+      register: download_template
+
+    - name: Display download template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Download template created"
+          - "   ID: {{ download_template.id }}"
+          - "   Name: Download OpenShift Images to Disk (Phase 1)"
+
+    # =========================================================================
+    # Job Template: Push to Registry (Phase 2)
+    # =========================================================================
+    - name: Create job template - Mirror Images to Registry
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Mirror Images to Registry (Phase 2)"
+        organization: "{{ organization_name }}"
+        description: |
+          Push mirrored images from workspace to container registry.
+
+          Phase 2 of oc-mirror v2 workflow (diskToMirror).
+
+          Tasks:
+          - Verify workspace exists
+          - Authenticate to target registry
+          - Push images to registry
+          - Generate IDMS/ITMS manifests
+
+          Variables (ask on launch):
+          - target_registry: Registry URL (e.g., registry.example.com:8443)
+          - target_namespace: Namespace (default: openshift4)
+          - skip_tls_verify: Skip cert validation (default: false)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/push-to-registry-v2.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "kvm-host"
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        become_enabled: yes
+        ask_variables_on_launch: true
+        extra_vars:
+          target_namespace: "openshift4"
+          skip_tls_verify: false
+          parallel_images: 4
+          parallel_layers: 5
+          max_retries: 5
+        state: present
+      register: push_template
+
+    - name: Display push template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Push template created"
+          - "   ID: {{ push_template.id }}"
+          - "   Name: Mirror Images to Registry (Phase 2)"
+
+    # =========================================================================
+    # Workflow Template: Disconnected OpenShift Image Mirroring
+    # =========================================================================
+    - name: Create workflow template - Disconnected OpenShift Image Mirroring
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Disconnected OpenShift Image Mirroring"
+        organization: "{{ organization_name }}"
+        description: |
+          End-to-end workflow for mirroring OpenShift images to disconnected registry.
+
+          Workflow Steps:
+          1. [NEW] Validate Operator Selection (ADR-0034)
+             - Pre-flight validation of operator names/channels
+             - Fails fast if invalid configuration (<5 sec)
+             - Saves bandwidth by catching errors early
+
+          2. Download OpenShift Images (Phase 1)
+             - oc-mirror mirrorToDisk workflow
+             - Downloads to /data/ocp-mirror/oc-mirror-workspace/
+
+          3. Mirror Images to Registry (Phase 2)
+             - oc-mirror diskToMirror workflow
+             - Pushes to target registry
+             - Generates IDMS/ITMS manifests
+
+          Benefits:
+          - Operator validation prevents wasted time/bandwidth
+          - Two-phase workflow enables air-gapped transfers
+          - Automatic manifest generation for cluster config
+
+          Variables (provide via survey or extra_vars):
+          - openshift_releases: [{name: stable-4.21, minVersion: 4.21.0, ...}]
+          - operators: [{catalog: registry.redhat.io/..., packages: [...]}]
+          - target_registry: registry.example.com:8443
+          - target_namespace: openshift4
+        inventory: "{{ inventory_name }}"
+        ask_variables_on_launch: true
+        state: present
+      register: workflow_template
+
+    - name: Display workflow template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow template created"
+          - "   ID: {{ workflow_template.id }}"
+          - "   Name: Disconnected OpenShift Image Mirroring"
+
+    # =========================================================================
+    # Workflow Nodes: Build the workflow graph
+    # =========================================================================
+    - name: Create workflow node - Validate Operators (Preflight)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        identifier: "validate_operators"
+        unified_job_template: "Validate Operator Selection"
+        state: present
+      register: node_validate
+
+    - name: Create workflow node - Download Images (Phase 1)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        identifier: "download_images"
+        unified_job_template: "Download OpenShift Images to Disk (Phase 1)"
+        state: present
+      register: node_download
+
+    - name: Create workflow node - Push to Registry (Phase 2)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        identifier: "push_to_registry"
+        unified_job_template: "Mirror Images to Registry (Phase 2)"
+        state: present
+      register: node_push
+
+    # =========================================================================
+    # Workflow Links: Connect nodes with success/failure paths
+    # =========================================================================
+    - name: Link validate_operators → download_images (on success)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        identifier: "validate_operators"
+        success_nodes:
+          - "download_images"
+        state: present
+
+    - name: Link download_images → push_to_registry (on success)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        identifier: "download_images"
+        success_nodes:
+          - "push_to_registry"
+        state: present
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    - name: Display workflow summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "AAP Workflow Configuration Complete"
+          - "============================================"
+          - ""
+          - "Workflow: Disconnected OpenShift Image Mirroring"
+          - "  ID: {{ workflow_template.id }}"
+          - ""
+          - "Workflow Graph:"
+          - "  1. Validate Operator Selection (NEW - ADR-0034)"
+          - "     └─► ON SUCCESS → 2"
+          - "     └─► ON FAILURE → STOP (prevents wasted bandwidth)"
+          - ""
+          - "  2. Download OpenShift Images (Phase 1)"
+          - "     └─► ON SUCCESS → 3"
+          - "     └─► ON FAILURE → STOP"
+          - ""
+          - "  3. Mirror Images to Registry (Phase 2)"
+          - "     └─► ON SUCCESS → Complete"
+          - "     └─► ON FAILURE → Manual intervention required"
+          - ""
+          - "Benefits:"
+          - "  ✅ Fast failure on invalid operators (<5 sec)"
+          - "  ✅ Bandwidth savings (no partial downloads)"
+          - "  ✅ Clear error messages with suggestions"
+          - "  ✅ Two-phase workflow for air-gapped transfers"
+          - ""
+          - "Next Steps:"
+          - "  1. Test workflow with storage-operators.yml preset"
+          - "  2. Monitor validation node performance"
+          - "  3. Adjust cache TTL if needed (default: 24h)"
+          - ""
+          - "============================================"
