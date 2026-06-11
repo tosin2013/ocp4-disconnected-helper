@@ -4,7 +4,14 @@
 2026-06-10
 
 ## Status
-Proposed
+Accepted → **Validated in Production (v1.2)**
+
+**Production Validation**: 2026-06-11 (Release v1.2)  
+**Validation Framework Components Deployed**:
+- Shell health check scripts: `validate-aap-health.sh`, `validate-aap-workflow-templates.sh`
+- E2E test playbooks: `test-registry-vm-workflow.yml`, `test-oc-mirror-workflow.yml`
+- GitHub Actions workflow: `validate-aap-workflows.yml`
+- Testing documentation: `docs/TESTING.md`
 
 ## Context
 

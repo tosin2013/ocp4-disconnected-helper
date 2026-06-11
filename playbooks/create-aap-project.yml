@@ -1,0 +1,84 @@
+---
+# Create and sync ocp4-disconnected-helper project in AAP
+# Must be run before configure-aap-job-templates.yml
+
+- name: Create AAP Project
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+
+    organization_name: "Default"
+    project_name: "ocp4-disconnected-helper"
+    project_scm_url: "https://github.com/tosin2013/ocp4-disconnected-helper.git"
+    project_scm_branch: "main"
+
+  tasks:
+    - name: Create ocp4-disconnected-helper project
+      ansible.controller.project:
+        name: "{{ project_name }}"
+        description: "OpenShift Disconnected Helper - Registry and Mirror Automation"
+        organization: "{{ organization_name }}"
+        scm_type: git
+        scm_url: "{{ project_scm_url }}"
+        scm_branch: "{{ project_scm_branch }}"
+        scm_clean: yes
+        scm_delete_on_update: yes
+        scm_update_on_launch: yes
+        scm_update_cache_timeout: 86400
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        state: present
+      register: project_result
+
+    - name: Display project details
+      ansible.builtin.debug:
+        msg: |
+          ✅ Project Created: {{ project_name }}
+
+          ID: {{ project_result.id }}
+          SCM URL: {{ project_scm_url }}
+          Branch: {{ project_scm_branch }}
+
+          View at: {{ aap_host }}/#/projects/{{ project_result.id }}
+
+    - name: Wait for initial project sync
+      ansible.builtin.pause:
+        seconds: 5
+        prompt: "Waiting for project sync to start..."
+
+    - name: Check project sync status
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/{{ project_result.id }}/"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ aap_validate_certs }}"
+      register: project_status
+      until: project_status.json.status in ['successful', 'failed']
+      retries: 12
+      delay: 5
+
+    - name: Display sync result
+      ansible.builtin.debug:
+        msg: |
+          Project Sync Status: {{ project_status.json.status }}
+
+          {% if project_status.json.status == 'successful' %}
+          ✅ Project synced successfully!
+          Playbooks available: {{ project_status.json.summary_fields.last_job.description | default('Check project details') }}
+          {% else %}
+          ❌ Project sync failed!
+          Error: {{ project_status.json.summary_fields.last_job.result_traceback | default('Unknown error') }}
+          {% endif %}
+
+    - name: Fail if sync failed
+      ansible.builtin.fail:
+        msg: "Project sync failed. Check AAP project sync job for details."
+      when: project_status.json.status != 'successful'

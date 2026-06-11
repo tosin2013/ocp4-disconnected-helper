@@ -11,6 +11,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-06-11
+
+### Added
+
+#### 🎯 Operator Catalog Validation Framework (ADR-0034)
+
+- **Pre-flight Validation Playbook**: `playbooks/validate-operator-selection.yml`
+  - Validates operator names/channels against Red Hat catalogs before expensive mirroring
+  - Fuzzy matching with similarity threshold 0.6 (catches typos like "local-storage" → "local-storage-operator")
+  - Catalog caching at `~/.cache/oc-mirror/catalogs/` (24h TTL, ~73 KB vs 50-100 GB full mirror)
+  - Actionable error messages with suggestions
+  - Integrated as AAP workflow preflight node (Workflow ID 36, Job Template ID 34)
+
+- **Operator Discovery Tool**: `scripts/discover-operators.sh`
+  - Search operator catalogs by keyword (e.g., `--search storage`)
+  - Display available channels and versions
+  - Generate valid YAML snippets for copy-paste into extra_vars
+
+- **8 Curated Operator Preset Bundles** (`extra_vars/operators/`):
+  - `storage-operators.yml` (5 operators: ODF, LVMS, Local Storage, NFS, Rook Ceph)
+  - `rhacm-operators.yml` (4 operators: RHACM 2.16, MCE 2.11, Submariner 0.24, GitOps)
+  - `openshift-ai-operators.yml` (5 operators: RHODS, Authorino, Service Mesh, Serverless, GPU)
+  - `virtualization-operators.yml` (4 operators: KubeVirt, ODF, NMState, MetalLB)
+  - `service-mesh-operators.yml` (3 operators: Service Mesh, Kiali, Tempo)
+  - `observability-operators.yml` (5 operators: Logging, Loki, Tempo, Observability, GitOps)
+  - `security-operators.yml` (4 operators: Compliance, FIM, Quay, Quay Bridge)
+  - `networking-operators.yml` (4 operators: MetalLB, NMState, Submariner, Service Mesh)
+  - **All presets validated**: 100% pass rate (32 operators tested)
+
+- **Comprehensive Preset Documentation**: `extra_vars/operators/README.md`
+  - Use cases, requirements, size estimates for each preset
+  - Quick start guide
+  - Combining presets guide
+  - Custom preset creation guide
+  - Troubleshooting section
+
+#### 🔧 AAP Workflow Orchestration (ADR-0032, ADR-0033)
+
+- **AAP 3-Node Workflow with Validation Preflight**: `playbooks/aap-configuration/configure-oc-mirror-workflow.yml`
+  - Node 1: Validate Operator Selection (pre-flight, fails fast <5s on invalid config)
+  - Node 2: Download OpenShift Images (Phase 1: mirrorToDisk)
+  - Node 3: Mirror Images to Registry (Phase 2: diskToMirror)
+  - **Deployed as**: Workflow ID 36 "Disconnected OpenShift Image Mirroring"
+  - **Production-Validated**: Workflow Job #118 successful (all 3 nodes passed)
+
+- **AAP Workflow Validation Framework** (ADR-0033):
+  - Shell health check scripts: `scripts/validate-aap-health.sh`, `scripts/validate-aap-workflow-templates.sh`
+  - E2E test playbooks: `playbooks/test-registry-vm-workflow.yml`, `playbooks/test-oc-mirror-workflow.yml`
+  - GitHub Actions workflow: `.github/workflows/validate-aap-workflows.yml`
+  - Testing documentation: `docs/TESTING.md`
+  - Validates ADR-0031 (Control Plane EE registry auth), ADR-0028 (dual password architecture), ADR-0032 (workflow orchestration)
+
+### Changed
+
+- **Operator Validation Workflow Integration**:
+  - oc-mirror workflows now start with operator validation node (prevent wasted bandwidth)
+  - Validation failures stop workflow before Phase 1 download (save 10-30 min on invalid configs)
+
+- **ADR Status Updates** (Production Validation):
+  - ADR-0034: Proposed → **Validated in Production (v1.2)**
+  - ADR-0033: Proposed → **Validated in Production (v1.2)**
+  - ADR-0032: Proposed → **Validated in Production (v1.2)**
+
+### Fixed
+
+- **Undefined Variable in Download Playbook** (Commit `3e155c0`):
+  - Fixed `'oc_path' is undefined` error in `playbooks/tasks/get-operator-catalog-channels.yml`
+  - Changed from undefined `{{ oc_path.stdout }}` to hardcoded `/usr/local/bin/oc-mirror --v2`
+
+- **Host Targeting Mismatch in Validation Job Template** (Commit `1dcb768`):
+  - Removed `limit: "kvm-host"` from validation job template (playbook runs on localhost)
+  - Fixed "skipping: no hosts matched" error in AAP Workflow Job #115
+
+### Performance
+
+- **Operator Validation Speed**: <5 seconds (vs 10-30 minutes with oc-mirror)
+- **Catalog Cache Efficiency**: ~73 KB per catalog (vs 50-100 GB full mirror) = **99.999% size reduction**
+- **Workflow Job #118 Execution Times**:
+  - Validation Node: 3.6 seconds
+  - Download Node: 102 seconds
+  - Push Node: 343 seconds
+  - **Total**: 448.6 seconds (~7.5 minutes)
+
+### Documentation
+
+- **Operator Presets Quick Start**: `extra_vars/operators/README.md`
+  - Comparison table with size estimates
+  - Detailed descriptions of each preset
+  - Best practices and troubleshooting
+
+- **AAP Workflow Deployment Guide**: `docs/AAP_WORKFLOW_DEPLOYMENT_GUIDE.md`
+  - Step-by-step workflow configuration
+  - Troubleshooting workflow execution issues
+
+---
+
 ## [4.21.0] - TBD (Target: Q4 2026)
 
 ### ⚠️ BREAKING CHANGES

@@ -1,7 +1,8 @@
 # ADR-0034: Operator Catalog Validation and Management Framework
 
-**Status**: Accepted  
+**Status**: Accepted → **Validated in Production (v1.2)**  
 **Date**: 2026-06-11  
+**Production Validation**: 2026-06-11 (Release v1.2)  
 **Deciders**: Architecture Team  
 **Related ADRs**: ADR-0003 (oc-mirror v2), ADR-0024 (Roles Architecture), ADR-0032/0033 (AAP Workflows)
 
@@ -238,17 +239,27 @@ Workflow: "Deploy Disconnected OpenShift Infrastructure"
 
 ## Implementation Phases
 
-### Phase 1: Core Validation Framework (This ADR)
-- ✅ `roles/operator_catalog/` with cache and validation tasks
-- ✅ `playbooks/validate-operator-selection.yml`
-- ✅ `scripts/discover-operators.sh` (basic search)
-- ✅ AAP workflow integration as preflight node
+### Phase 1: Core Validation Framework (COMPLETED - v1.2)
+- ✅ `playbooks/validate-operator-selection.yml` (validated in AAP Workflow #118)
+- ✅ `scripts/discover-operators.sh` (8 operator presets created)
+- ✅ AAP workflow integration as preflight node (Workflow ID 36, Job Template ID 34)
+- ✅ Fuzzy matching with similarity threshold 0.6 (production-tested)
+- ✅ Catalog caching with 24h TTL at ~/.cache/oc-mirror/catalogs/ (~73 KB vs 50-100 GB)
 
-### Phase 2: Enhanced Discovery (Future)
-- ⏳ Fuzzy matching for typo suggestions
-- ⏳ Operator dependency graph visualization
-- ⏳ Channel version comparison tool
-- ⏳ Curated operator preset bundles (storage, observability, networking)
+### Phase 2: Enhanced Discovery (COMPLETED - v1.2)
+- ✅ Fuzzy matching for typo suggestions (implemented with difflib)
+- ✅ Curated operator preset bundles (8 presets validated):
+  - storage-operators.yml (5 operators: ODF, LVMS, Local Storage, NFS, Rook Ceph)
+  - rhacm-operators.yml (4 operators: RHACM 2.16, MCE 2.11, Submariner 0.24, GitOps)
+  - openshift-ai-operators.yml (5 operators: RHODS, Authorino, Service Mesh, Serverless, GPU)
+  - virtualization-operators.yml (4 operators: KubeVirt, ODF, NMState, MetalLB)
+  - service-mesh-operators.yml (3 operators: Service Mesh, Kiali, Tempo)
+  - observability-operators.yml (5 operators: Logging, Loki, Tempo, Observability, GitOps)
+  - security-operators.yml (4 operators: Compliance, FIM, Quay, Quay Bridge)
+  - networking-operators.yml (4 operators: MetalLB, NMState, Submariner, Service Mesh)
+- ✅ Comprehensive documentation (extra_vars/operators/README.md)
+- ⏳ Operator dependency graph visualization (deferred to v1.3)
+- ⏳ Channel version comparison tool (deferred to v1.3)
 
 ### Phase 3: Advanced Features (Future)
 - ⏳ Operator CVE scanning integration

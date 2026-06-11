@@ -4,7 +4,12 @@
 2026-06-10
 
 ## Status
-Proposed
+Accepted → **Validated in Production (v1.2)**
+
+**Production Validation**: 2026-06-11 (Release v1.2)  
+**Workflows Deployed**: 
+- Workflow ID 36: "Disconnected OpenShift Image Mirroring" (3-node with operator validation)
+- Validation successful in Workflow Job #118 (all 3 nodes passed)
 
 ## Context
 

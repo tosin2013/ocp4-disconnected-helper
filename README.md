@@ -1,6 +1,25 @@
 # OpenShift 4 Disconnected Helper
 
-This repository provides some automation and other utilities to deploy OpenShift in a disconnected environment.
+[![Release](https://img.shields.io/badge/release-v1.2.0-blue.svg)](https://github.com/tosin2013/ocp4-disconnected-helper/releases/tag/v1.2.0)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![OpenShift](https://img.shields.io/badge/OpenShift-4.21-red.svg)](https://docs.openshift.com/container-platform/4.21/)
+
+This repository provides automation and utilities for deploying OpenShift in disconnected (air-gapped) environments with comprehensive operator validation and AAP workflow orchestration.
+
+## ✨ What's New in v1.2.0 (June 11, 2026)
+
+**Operator Catalog Validation Framework** (ADR-0034):
+- ✅ Pre-flight validation catches typos before expensive mirroring (<5s vs 10-30 min)
+- ✅ 8 curated operator presets (storage, RHACM, AI, virtualization, service mesh, observability, security, networking)
+- ✅ Fuzzy matching suggests correct operator names
+- ✅ Catalog caching (73 KB vs 50-100 GB) with 24h TTL
+
+**AAP Workflow Orchestration** (ADR-0032, ADR-0033):
+- ✅ 3-node workflow with operator validation preflight (Workflow ID 36)
+- ✅ Production-validated in AAP 2.6 (Workflow Job #118)
+- ✅ Comprehensive validation framework with health checks
+
+See [CHANGELOG.md](CHANGELOG.md) for full release notes.
 
 ## ⚠️ First-Time Setup - Install Git Hooks
 

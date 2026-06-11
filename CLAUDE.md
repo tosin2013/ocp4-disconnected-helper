@@ -159,7 +159,34 @@ https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd6
 
 Old deprecated URL: `https://developers.redhat.com/content-gateway/...` (404 error)
 
-## Known Failure Patterns — v1.0
+## Known Failure Patterns — v1.0-v1.2
+
+### ⚡ NEW IN v1.2: Operator Validation Issues
+
+#### Invalid Operator Name Not Caught Until oc-mirror Runs
+**Pattern**: Playbook fails 10-30 minutes into oc-mirror execution with "package X not found in catalog"
+
+**Root Cause**: Typos in operator names (e.g., "local-storage" instead of "local-storage-operator") were only validated by oc-mirror at runtime, not during playbook execution.
+
+**Solution** (v1.2):
+1. **Always run operator validation BEFORE mirroring**:
+   ```bash
+   ansible-playbook playbooks/validate-operator-selection.yml \
+     -e @extra_vars/operators/storage-operators.yml
+   ```
+
+2. **Use curated operator presets** (8 validated bundles in `extra_vars/operators/`):
+   - storage-operators.yml, rhacm-operators.yml, openshift-ai-operators.yml
+   - virtualization-operators.yml, service-mesh-operators.yml
+   - observability-operators.yml, security-operators.yml, networking-operators.yml
+
+3. **AAP workflows auto-validate** (Workflow ID 36):
+   - Operator validation runs as Node 1 (preflight)
+   - Invalid configs stop before download (saves bandwidth)
+
+**Production Evidence**: ADR-0034, Workflow Job #118 (validation 3.6s, 100% success rate on 32 operators)
+
+---
 
 ### AAP 2.6 Project Sync Failure - Control Plane EE Registry Authentication
 **Pattern**: AAP project sync fails with "Project update failed" or "unable to retrieve auth token: unauthorized"
