@@ -15,45 +15,14 @@
   ansible.builtin.debug:
     msg: "Validating against cache: {{ cache_file_key }}"
 
-- name: Validate packages in catalog
+- name: Load catalog data from cache
+  ansible.builtin.set_fact:
+    cached_operators: "{{ catalog_cache[cache_file_key] | default({}) }}"
+
+- name: Validate each package in catalog
+  ansible.builtin.include_tasks: validate-single-operator.yml
+  loop: "{{ operator_catalog.packages }}"
+  loop_control:
+    loop_var: operator_package
+    label: "{{ operator_package.name }}"
   when: operator_catalog.packages is defined and operator_catalog.packages | length > 0
-  block:
-    - name: Parse cached catalog data
-      ansible.builtin.set_fact:
-        cached_operators: "{{ catalog_cache[cache_file_key] | default({}) }}"
-
-    - name: Validate each package
-      ansible.builtin.set_fact:
-        validation_results: >-
-          {{
-            validation_results | combine({
-              'total_checked': validation_results.total_checked | int + 1,
-              'valid_operators': validation_results.valid_operators + ([{'name': package.name, 'channel': package.channels[0].name if package.channels is defined and package.channels | length > 0 else none, 'catalog': operator_catalog.catalog}] if package.name in (cached_operators.keys() | default([])) else []),
-              'invalid_operators': validation_results.invalid_operators + ([{'name': package.name, 'catalog': operator_catalog.catalog, 'suggestion': (cached_operators.keys() | select('search', package.name) | list | first) if cached_operators.keys() | select('search', package.name) | list | length > 0 else none}] if package.name not in (cached_operators.keys() | default([])) else []),
-              'total_valid': (validation_results.total_valid | int + 1) if package.name in (cached_operators.keys() | default([])) else validation_results.total_valid | int,
-              'total_invalid': (validation_results.total_invalid | int + 1) if package.name not in (cached_operators.keys() | default([])) else validation_results.total_invalid | int
-            })
-          }}
-      loop: "{{ operator_catalog.packages }}"
-      loop_control:
-        loop_var: package
-        label: "{{ package.name }}"
-
-    - name: Validate channels if specified
-      when:
-        - operator_validation_check_channels
-        - package.name in (cached_operators.keys() | default([]))
-        - package.channels is defined
-        - package.channels | length > 0
-      ansible.builtin.set_fact:
-        validation_results: >-
-          {{
-            validation_results | combine({
-              'invalid_channels': validation_results.invalid_channels + ([{'operator': package.name, 'channel': channel.name, 'catalog': operator_catalog.catalog, 'available_channels': cached_operators[package.name].channels | map(attribute='name') | list}] if channel.name not in (cached_operators[package.name].channels | map(attribute='name') | list) else [])
-            })
-          }}
-      loop: "{{ operator_catalog.packages }}"
-      loop_control:
-        loop_var: package
-        label: "{{ package.name }}"
-      when: operator_catalog.packages is defined

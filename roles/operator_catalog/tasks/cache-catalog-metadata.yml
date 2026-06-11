@@ -69,15 +69,42 @@
           --catalog={{ item.url }} \
           --authfile={{ pull_secret_path }} \
           --v2 \
-          2>/dev/null | tee {{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json
+          2>/dev/null > {{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.txt
       args:
-        creates: "{{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json"
+        creates: "{{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.txt"
       loop: "{{ operator_catalog_types }}"
       register: catalog_download
       failed_when: false
       become: true
       environment:
         PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+
+    - name: Convert table format to JSON for {{ item.name }}
+      ansible.builtin.shell: |
+        python3 << 'EOF'
+        import json
+        import sys
+
+        catalog = {}
+        with open("{{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.txt", "r") as f:
+            lines = f.readlines()
+            for line in lines[1:]:  # Skip header
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                    name = parts[0]
+                    default_channel = parts[-1]
+                    catalog[name] = {
+                        "defaultChannel": default_channel,
+                        "channels": [{"name": default_channel}]
+                    }
+
+        with open("{{ operator_catalog_cache_dir }}/{{ item.name }}-v{{ openshift_version }}.json", "w") as f:
+            json.dump(catalog, f, indent=2)
+        EOF
+      loop: "{{ operator_catalog_types }}"
+      register: catalog_convert
+      failed_when: false
+      become: true
 
     - name: Check download results
       ansible.builtin.debug:

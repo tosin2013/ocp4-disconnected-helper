@@ -1,0 +1,74 @@
+---
+# Validate a single operator package
+# Called from validate-operator-catalog.yml
+
+- name: Increment total checked count
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results | combine({'total_checked': validation_results.total_checked | int + 1}) }}"
+
+- name: Check if operator exists in catalog
+  ansible.builtin.set_fact:
+    operator_exists: "{{ operator_package.name in (cached_operators.keys() | default([])) }}"
+    operator_suggestion: "{{ cached_operators.keys() | select('search', operator_package.name) | list | first | default('') }}"
+
+- name: Record valid operator
+  when: operator_exists
+  block:
+    - name: Add to valid operators list
+      ansible.builtin.set_fact:
+        validation_results: >-
+          {{
+            validation_results | combine({
+              'valid_operators': validation_results.valid_operators + [{
+                'name': operator_package.name,
+                'channel': operator_package.channels[0].name if (operator_package.channels is defined and operator_package.channels | length > 0) else cached_operators[operator_package.name].defaultChannel,
+                'catalog': operator_catalog.catalog
+              }],
+              'total_valid': validation_results.total_valid | int + 1
+            })
+          }}
+
+- name: Record invalid operator
+  when: not operator_exists
+  block:
+    - name: Add to invalid operators list
+      ansible.builtin.set_fact:
+        validation_results: >-
+          {{
+            validation_results | combine({
+              'invalid_operators': validation_results.invalid_operators + [{
+                'name': operator_package.name,
+                'catalog': operator_catalog.catalog,
+                'suggestion': operator_suggestion if operator_suggestion else none
+              }],
+              'total_invalid': validation_results.total_invalid | int + 1
+            })
+          }}
+
+- name: Validate channels if specified
+  when:
+    - operator_validation_check_channels
+    - operator_exists
+    - operator_package.channels is defined
+    - operator_package.channels | length > 0
+  block:
+    - name: Get available channels from cache
+      ansible.builtin.set_fact:
+        available_channels: "{{ cached_operators[operator_package.name].channels | map(attribute='name') | list }}"
+
+    - name: Check each requested channel
+      ansible.builtin.set_fact:
+        validation_results: >-
+          {{
+            validation_results | combine({
+              'invalid_channels': validation_results.invalid_channels + ([{
+                'operator': operator_package.name,
+                'channel': item.name,
+                'catalog': operator_catalog.catalog,
+                'available_channels': available_channels
+              }] if item.name not in available_channels else [])
+            })
+          }}
+      loop: "{{ operator_package.channels }}"
+      loop_control:
+        label: "{{ operator_package.name }}:{{ item.name }}"
