@@ -1,3 +1,11 @@
+---
+layout: default
+title: Home
+nav_order: 1
+description: "Complete documentation for OpenShift Disconnected Helper"
+permalink: /
+---
+
 # Diátaxis Documentation Index
 
 This project follows the [Diátaxis documentation framework](https://diataxis.fr/) for structured, comprehensive documentation.

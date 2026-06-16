@@ -1,0 +1,62 @@
+title: OpenShift Disconnected Helper
+description: Complete documentation for deploying disconnected OpenShift 4 clusters
+theme: just-the-docs
+url: https://tosin2013.github.io
+baseurl: /ocp4-disconnected-helper
+
+# Navigation structure
+nav_enabled: true
+nav_sort: case_insensitive
+
+# Search
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 3
+  preview_words_before: 5
+  preview_words_after: 10
+  tokenizer_separator: /[\s/]+/
+  rel_url: true
+  button: false
+
+# Mermaid diagrams support
+mermaid:
+  version: "10.6.0"
+
+# Code highlighting
+color_scheme: dark
+highlighter: rouge
+
+# Footer
+footer_content: "Copyright &copy; 2024-2026 Tosin Akinosho. Distributed under the Apache 2.0 License."
+
+# Collections
+collections:
+  tutorials:
+    permalink: "/:collection/:path/"
+    output: true
+  how-to:
+    permalink: "/:collection/:path/"
+    output: true
+  reference:
+    permalink: "/:collection/:path/"
+    output: true
+  explanations:
+    permalink: "/:collection/:path/"
+    output: true
+
+# Just the Docs specific
+just_the_docs:
+  collections:
+    tutorials:
+      name: Tutorials
+      nav_fold: false
+    how-to:
+      name: How-To Guides
+      nav_fold: false
+    reference:
+      name: Reference
+      nav_fold: false
+    explanations:
+      name: Explanations
+      nav_fold: false

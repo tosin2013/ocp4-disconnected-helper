@@ -6,6 +6,25 @@ This project automates the deployment of disconnected/air-gapped OpenShift 4 inf
 
 **Architecture**: Nested KVM hypervisor on IBM Cloud VSI → VyOS router → Registry VMs → OpenShift clusters
 
+---
+
+## Change Requests (Mandatory Planning Gate)
+
+When the user asks for any change that affects code, architecture, dependencies, or repo structure:
+
+1) **DO NOT write or modify code immediately.**
+2) **Run the "Change Planning — ADR-Driven Feature Design" protocol first:**
+   - **Phase 1**: Architectural impact analysis
+   - **Phase 2**: ADR decision gate (new ADR vs update)
+   - **Phase 3**: Implementation planning (atomic steps + validation + rollback)
+   - **Phase 4**: Seed memory (pin plan/steps if PMB is available)
+   - **Phase 5**: Structured summary
+3) **Only after the plan is approved should implementation begin.**
+
+If required inputs are missing, ask the minimum clarifying questions before proceeding.
+
+---
+
 ## Security Rules - MANDATORY
 
 ### Rule 1: NEVER Commit Credentials to Git
