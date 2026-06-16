@@ -1,0 +1,114 @@
+---
+# Configure dnsmasq for Local Development DNS
+# Uses /etc/dnsmasq.d/openshift-<cluster_name>.conf
+
+- name: Check if dnsmasq is installed
+  ansible.builtin.command: which dnsmasq
+  register: dnsmasq_check
+  failed_when: false
+  changed_when: false
+
+- name: Install dnsmasq if not present
+  ansible.builtin.package:
+    name: dnsmasq
+    state: present
+  become: true
+  when: dnsmasq_check.rc != 0
+
+- name: Ensure /etc/dnsmasq.d directory exists
+  ansible.builtin.file:
+    path: /etc/dnsmasq.d
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Check if main dnsmasq.conf includes dnsmasq.d
+  ansible.builtin.lineinfile:
+    path: /etc/dnsmasq.conf
+    line: 'conf-dir=/etc/dnsmasq.d'
+    state: present
+  become: true
+  register: dnsmasq_conf_updated
+
+- name: Create dnsmasq configuration for OpenShift cluster
+  ansible.builtin.template:
+    src: dnsmasq-cluster.conf.j2
+    dest: "/etc/dnsmasq.d/openshift-{{ cluster_name }}.conf"
+    mode: '0644'
+  become: true
+  register: dnsmasq_cluster_conf
+
+- name: Validate dnsmasq configuration syntax
+  ansible.builtin.command: dnsmasq --test
+  become: true
+  changed_when: false
+  register: dnsmasq_test
+
+- name: Display dnsmasq configuration test result
+  ansible.builtin.debug:
+    msg: "{{ dnsmasq_test.stderr_lines }}"
+
+- name: Restart dnsmasq service
+  ansible.builtin.systemd:
+    name: dnsmasq
+    state: restarted
+    enabled: true
+  become: true
+  when: dnsmasq_cluster_conf.changed or dnsmasq_conf_updated.changed
+
+- name: Wait for dnsmasq to be ready
+  ansible.builtin.wait_for:
+    port: 53
+    host: 127.0.0.1
+    timeout: 10
+  when: dnsmasq_cluster_conf.changed or dnsmasq_conf_updated.changed
+
+- name: Test DNS resolution - API endpoint
+  ansible.builtin.command: "dig +short api.{{ cluster_name }}.{{ base_domain }} @127.0.0.1"
+  register: dns_api_test
+  changed_when: false
+  failed_when: false
+
+- name: Test DNS resolution - Apps wildcard
+  ansible.builtin.command: "dig +short test.apps.{{ cluster_name }}.{{ base_domain }} @127.0.0.1"
+  register: dns_apps_test
+  changed_when: false
+  failed_when: false
+
+- name: Validate DNS responses
+  ansible.builtin.assert:
+    that:
+      - api_vip in dns_api_test.stdout
+      - ingress_vip in dns_apps_test.stdout
+    fail_msg: "DNS resolution failed - check dnsmasq configuration"
+    success_msg: "✅ DNS resolution validated"
+
+- name: Display DNS configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ dnsmasq DNS Configuration Complete"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Configuration: /etc/dnsmasq.d/openshift-{{ cluster_name }}.conf"
+      - ""
+      - "DNS Records Configured:"
+      - "  • api.{{ cluster_name }}.{{ base_domain }} → {{ api_vip }}"
+      - "  • *.apps.{{ cluster_name }}.{{ base_domain }} → {{ ingress_vip }}"
+      - "{% if control_plane_nodes is defined %}"
+      - "  Control Plane Nodes:"
+      - "{% for node in control_plane_nodes %}"
+      - "    • {{ node.name }}.{{ cluster_name }}.{{ base_domain }} → {{ node.ip }}"
+      - "{% endfor %}"
+      - "{% endif %}"
+      - "{% if worker_nodes is defined %}"
+      - "  Worker Nodes:"
+      - "{% for node in worker_nodes %}"
+      - "    • {{ node.name }}.{{ cluster_name }}.{{ base_domain }} → {{ node.ip }}"
+      - "{% endfor %}"
+      - "{% endif %}"
+      - ""
+      - "Test DNS Resolution:"
+      - "  dig api.{{ cluster_name }}.{{ base_domain }} @127.0.0.1"
+      - "  dig test.apps.{{ cluster_name }}.{{ base_domain }} @127.0.0.1"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

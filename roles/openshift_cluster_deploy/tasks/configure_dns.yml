@@ -1,7 +1,45 @@
 ---
-# Phase 4: Configure DNS
-# TODO: Full implementation in Phase 4 (Task 84)
+# DNS Configuration - Dispatcher for dnsmasq or Route53
 
-- name: Placeholder - DNS configuration will be implemented in Phase 4
+- name: Validate DNS provider selection
+  ansible.builtin.assert:
+    that:
+      - dns_provider in ['dnsmasq', 'route53', 'none']
+    fail_msg: "dns_provider must be 'dnsmasq', 'route53', or 'none'"
+    success_msg: "✅ DNS provider: {{ dns_provider }}"
+
+- name: Display DNS configuration mode
   ansible.builtin.debug:
-    msg: "Phase 4: DNS configuration - To be implemented"
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "DNS Configuration"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Provider: {{ dns_provider }}"
+      - "Base Domain: {{ base_domain }}"
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - ""
+      - "Required DNS Records:"
+      - "  • api.{{ cluster_name }}.{{ base_domain }} → {{ api_vip }}"
+      - "  • *.apps.{{ cluster_name }}.{{ base_domain }} → {{ ingress_vip }}"
+      - "{% if control_plane_nodes is defined %}  • {{ control_plane_nodes | length }} control plane node records{% endif %}"
+      - "{% if worker_nodes is defined %}  • {{ worker_nodes | length }} worker node records{% endif %}"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+- name: Configure DNS with dnsmasq (local development)
+  ansible.builtin.include_tasks: configure_dnsmasq.yml
+  when: dns_provider == 'dnsmasq'
+
+- name: Configure DNS with Route53 (production AWS)
+  ansible.builtin.include_tasks: configure_route53.yml
+  when: dns_provider == 'route53'
+
+- name: Skip DNS configuration (manual mode)
+  ansible.builtin.debug:
+    msg:
+      - "⚠️  DNS provider set to 'none' - skipping automated DNS configuration"
+      - "Manual DNS configuration required:"
+      - "  • Configure api.{{ cluster_name }}.{{ base_domain }} → {{ api_vip }}"
+      - "  • Configure *.apps.{{ cluster_name }}.{{ base_domain }} → {{ ingress_vip }}"
+      - "{% if control_plane_nodes is defined %}  • Configure {{ control_plane_nodes | length }} node A records{% endif %}"
+  when: dns_provider == 'none'

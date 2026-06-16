@@ -1,0 +1,146 @@
+---
+# Configure AWS Route53 for Production DNS
+# Requires: aws CLI configured with credentials, amazon.aws collection
+
+- name: Validate Route53 prerequisites
+  block:
+    - name: Check if aws CLI is installed
+      ansible.builtin.command: which aws
+      register: aws_cli_check
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if aws CLI not found
+      ansible.builtin.fail:
+        msg: "aws CLI not found. Install with: pip install awscli or dnf install awscli"
+      when: aws_cli_check.rc != 0
+
+    - name: Check AWS credentials
+      ansible.builtin.command: aws sts get-caller-identity
+      register: aws_creds_check
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if AWS credentials not configured
+      ansible.builtin.fail:
+        msg: "AWS credentials not configured. Run: aws configure"
+      when: aws_creds_check.rc != 0
+
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - route53_zone_id is defined or base_domain is defined
+        fail_msg: "Either route53_zone_id or base_domain must be defined"
+        success_msg: "✅ Route53 prerequisites validated"
+
+- name: Get Route53 hosted zone ID (if not provided)
+  when: route53_zone_id is not defined
+  block:
+    - name: Query Route53 for hosted zone
+      ansible.builtin.command: >
+        aws route53 list-hosted-zones-by-name
+        --dns-name {{ base_domain }}
+        --query 'HostedZones[0].Id'
+        --output text
+      register: zone_lookup
+      changed_when: false
+
+    - name: Set zone ID fact
+      ansible.builtin.set_fact:
+        route53_zone_id: "{{ zone_lookup.stdout | regex_replace('/hostedzone/', '') }}"
+
+    - name: Display discovered zone ID
+      ansible.builtin.debug:
+        msg: "Discovered Route53 zone: {{ route53_zone_id }} for {{ base_domain }}"
+
+- name: Generate Route53 change batch JSON
+  ansible.builtin.template:
+    src: route53-change-batch.json.j2
+    dest: "/tmp/route53-{{ cluster_name }}-change-batch.json"
+    mode: '0600'
+  register: change_batch
+
+- name: Display Route53 change batch
+  ansible.builtin.debug:
+    msg: "{{ lookup('file', '/tmp/route53-' + cluster_name + '-change-batch.json') | from_json }}"
+
+- name: Apply Route53 DNS changes
+  ansible.builtin.command: >
+    aws route53 change-resource-record-sets
+    --hosted-zone-id {{ route53_zone_id }}
+    --change-batch file:///tmp/route53-{{ cluster_name }}-change-batch.json
+  register: route53_change
+  changed_when: route53_change.rc == 0
+
+- name: Parse change info
+  ansible.builtin.set_fact:
+    change_id: "{{ (route53_change.stdout | from_json).ChangeInfo.Id }}"
+    change_status: "{{ (route53_change.stdout | from_json).ChangeInfo.Status }}"
+
+- name: Display Route53 change status
+  ansible.builtin.debug:
+    msg:
+      - "Route53 Change ID: {{ change_id }}"
+      - "Status: {{ change_status }}"
+
+- name: Wait for Route53 changes to propagate
+  ansible.builtin.command: >
+    aws route53 get-change --id {{ change_id }}
+    --query 'ChangeInfo.Status'
+    --output text
+  register: change_status_check
+  until: change_status_check.stdout == "INSYNC"
+  retries: 30
+  delay: 10
+  changed_when: false
+
+- name: Test DNS resolution - API endpoint
+  ansible.builtin.command: "dig +short api.{{ cluster_name }}.{{ base_domain }}"
+  register: dns_api_test
+  changed_when: false
+  retries: 5
+  delay: 5
+  until: api_vip in dns_api_test.stdout
+
+- name: Test DNS resolution - Apps wildcard
+  ansible.builtin.command: "dig +short test.apps.{{ cluster_name }}.{{ base_domain }}"
+  register: dns_apps_test
+  changed_when: false
+  retries: 5
+  delay: 5
+  until: ingress_vip in dns_apps_test.stdout
+
+- name: Clean up temporary files
+  ansible.builtin.file:
+    path: "/tmp/route53-{{ cluster_name }}-change-batch.json"
+    state: absent
+
+- name: Display DNS configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ Route53 DNS Configuration Complete"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Hosted Zone: {{ route53_zone_id }}"
+      - "Change ID: {{ change_id }}"
+      - "Status: INSYNC"
+      - ""
+      - "DNS Records Created:"
+      - "  • api.{{ cluster_name }}.{{ base_domain }} → {{ api_vip }}"
+      - "  • *.apps.{{ cluster_name }}.{{ base_domain }} → {{ ingress_vip }}"
+      - "{% if control_plane_nodes is defined %}"
+      - "  Control Plane Nodes:"
+      - "{% for node in control_plane_nodes %}"
+      - "    • {{ node.name }}.{{ cluster_name }}.{{ base_domain }} → {{ node.ip }}"
+      - "{% endfor %}"
+      - "{% endif %}"
+      - "{% if worker_nodes is defined %}"
+      - "  Worker Nodes:"
+      - "{% for node in worker_nodes %}"
+      - "    • {{ node.name }}.{{ cluster_name }}.{{ base_domain }} → {{ node.ip }}"
+      - "{% endfor %}"
+      - "{% endif %}"
+      - ""
+      - "DNS propagation complete and validated"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

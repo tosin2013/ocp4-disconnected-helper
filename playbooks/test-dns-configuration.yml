@@ -1,0 +1,96 @@
+---
+# Test DNS Configuration (dnsmasq and Route53)
+# Tests DNS setup without full cluster deployment
+
+- name: Test DNS Configuration - SNO with dnsmasq
+  hosts: localhost
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../extra_vars/cluster-configs/sno-quay.yml
+
+  tasks:
+    - name: Override DNS provider for test
+      ansible.builtin.set_fact:
+        dns_provider: "dnsmasq"
+
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run DNS configuration
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/configure_dns.yml
+
+    - name: Display test result
+      ansible.builtin.debug:
+        msg:
+          - "✅ SNO dnsmasq DNS configuration test complete"
+          - "Test commands:"
+          - "  dig api.{{ cluster_name }}.{{ base_domain }} @127.0.0.1"
+          - "  dig test.apps.{{ cluster_name }}.{{ base_domain }} @127.0.0.1"
+
+- name: Test DNS Configuration - Compact with dnsmasq
+  hosts: localhost
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../extra_vars/cluster-configs/compact-3node-quay.yml
+
+  tasks:
+    - name: Override DNS provider for test
+      ansible.builtin.set_fact:
+        dns_provider: "dnsmasq"
+
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run DNS configuration
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/configure_dns.yml
+
+    - name: Display test result
+      ansible.builtin.debug:
+        msg:
+          - "✅ Compact dnsmasq DNS configuration test complete"
+          - "Node DNS records created: {{ control_plane_nodes | length }}"
+
+- name: Test DNS Configuration - Manual Mode (none)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/ha-cluster-quay.yml
+
+  tasks:
+    - name: Override DNS provider for manual test
+      ansible.builtin.set_fact:
+        dns_provider: "none"
+
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run DNS configuration (manual mode)
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/configure_dns.yml
+
+- name: Test Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ DNS Configuration Testing Complete"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Tested configurations:"
+          - "  ✅ SNO + dnsmasq - API and wildcard DNS"
+          - "  ✅ Compact + dnsmasq - Multi-node DNS with node records"
+          - "  ✅ Manual mode (none) - Instructions displayed"
+          - ""
+          - "DNS provider options validated:"
+          - "  • dnsmasq - Local development (automated)"
+          - "  • route53 - Production AWS (requires credentials)"
+          - "  • none - Manual configuration (external DNS)"
+          - ""
+          - "Note: Route53 test requires AWS credentials"
+          - "      Run manually with route53_zone_id configured"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

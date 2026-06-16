@@ -1,0 +1,19 @@
+---
+# Quick test for DNS manual mode (no system changes)
+
+- name: Test DNS Manual Mode
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/sno-quay.yml
+
+  tasks:
+    - name: Override DNS provider to manual
+      ansible.builtin.set_fact:
+        dns_provider: "none"
+
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run DNS configuration (manual mode)
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/configure_dns.yml

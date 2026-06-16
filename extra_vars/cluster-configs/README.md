@@ -83,6 +83,23 @@ All configuration examples include variants for:
 - **Harbor** (Community) - Project-based structure  
 - **JFrog** (Community) - Docker-local repositories
 
+---
+
+## DNS Provider Options
+
+All cluster configurations support three DNS providers:
+
+- **dnsmasq** (Default) - Local development, automated configuration
+- **route53** - Production AWS, requires AWS credentials
+- **none** - Manual external DNS configuration
+
+**Change DNS provider:**
+```yaml
+dns_provider: "dnsmasq"  # or "route53" or "none"
+```
+
+See [DNS Configuration Guide](../../docs/how-to/configure-dns-for-openshift-clusters.md) for details.
+
 ## Usage
 
 ```bash

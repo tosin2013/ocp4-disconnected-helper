@@ -27,8 +27,17 @@ registry_password: ""  # Should be provided via vault or survey
 # Pull Secret
 pull_secret_path: "/root/pull-secret.json"
 
-# DNS Provider (dnsmasq|route53|corporate)
+# DNS Provider (dnsmasq|route53|none)
 dns_provider: "dnsmasq"
+
+# DNS Configuration Options
+dns_cache_size: 1000
+dns_enable_logging: false
+dns_upstream_servers: []  # Optional: ["8.8.8.8", "8.8.4.4"]
+
+# Route53 Configuration (when dns_provider=route53)
+# route53_zone_id: ""  # Optional: Auto-discovered from base_domain if not set
+route53_ttl: 300  # DNS TTL in seconds
 
 # Network Configuration
 api_vip: "192.168.10.100"

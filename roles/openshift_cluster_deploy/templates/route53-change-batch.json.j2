@@ -1,0 +1,57 @@
+{
+  "Comment": "OpenShift cluster {{ cluster_name }}.{{ base_domain }} DNS records",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "api.{{ cluster_name }}.{{ base_domain }}",
+        "Type": "A",
+        "TTL": {{ route53_ttl | default(300) }},
+        "ResourceRecords": [
+          {
+            "Value": "{{ api_vip }}"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "*.apps.{{ cluster_name }}.{{ base_domain }}",
+        "Type": "A",
+        "TTL": {{ route53_ttl | default(300) }},
+        "ResourceRecords": [
+          {
+            "Value": "{{ ingress_vip }}"
+          }
+        ]
+      }
+    }{% if control_plane_nodes is defined %}{% for node in control_plane_nodes %},
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "{{ node.name }}.{{ cluster_name }}.{{ base_domain }}",
+        "Type": "A",
+        "TTL": {{ route53_ttl | default(300) }},
+        "ResourceRecords": [
+          {
+            "Value": "{{ node.ip }}"
+          }
+        ]
+      }
+    }{% endfor %}{% endif %}{% if worker_nodes is defined %}{% for node in worker_nodes %},
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "{{ node.name }}.{{ cluster_name }}.{{ base_domain }}",
+        "Type": "A",
+        "TTL": {{ route53_ttl | default(300) }},
+        "ResourceRecords": [
+          {
+            "Value": "{{ node.ip }}"
+          }
+        ]
+      }
+    }{% endfor %}{% endif %}
+  ]
+}
