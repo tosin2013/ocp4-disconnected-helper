@@ -1,0 +1,60 @@
+---
+# OpenShift Cluster Deployment - Default Variables (Registry-Agnostic)
+
+# Cluster Configuration
+cluster_name: "ocp4"
+base_domain: "example.com"
+cluster_network_cidr: "10.128.0.0/14"
+cluster_network_host_prefix: 23
+service_network_cidr: "172.30.0.0/16"
+machine_network_cidr: "192.168.10.0/24"
+
+# Topology (sno|compact|ha)
+cluster_topology: "sno"
+control_plane_replicas: 1  # 1 for SNO, 3 for compact/HA
+compute_replicas: 0        # 0 for SNO/compact, 2+ for HA
+
+# OpenShift Version
+ocp_version: "4.21"
+ocp_release_image: "quay.io/openshift-release-dev/ocp-release:{{ ocp_version }}.0-x86_64"
+
+# Registry Configuration (multi-registry support)
+registry_type: "quay"  # quay | harbor | jfrog
+registry_url: "registry.{{ base_domain }}:8443"
+registry_username: "init"
+registry_password: ""  # Should be provided via vault or survey
+
+# Pull Secret
+pull_secret_path: "/root/pull-secret.json"
+
+# DNS Provider (dnsmasq|route53|corporate)
+dns_provider: "dnsmasq"
+
+# Network Configuration
+api_vip: "192.168.10.100"
+ingress_vip: "192.168.10.101"
+
+# VM Configuration (when provision_vms=true)
+provision_vms: true
+vm_memory_mb: 32768  # 32GB for SNO, 24GB for compact nodes
+vm_vcpus: 8          # 8 for SNO, 6 for compact nodes
+vm_disk_size_gb: 130
+vm_network: "ocp-network"
+
+# Installation Timeouts
+install_timeout_minutes: 90
+bootstrap_timeout_minutes: 30
+
+# Paths
+openshift_install_dir: "/root/openshift-install"
+iso_output_path: "/data/iso"
+manifests_dir: "{{ openshift_install_dir }}/manifests"
+
+# Agent-Based Installer Configuration
+rendezvous_ip: "{{ api_vip }}"  # First control plane node for rendezvous
+platform_type: "none"  # Required for SNO and bare-metal
+
+# Advanced Options
+validate_manifests: true
+cleanup_on_failure: false
+enable_kdump: false

@@ -1,0 +1,7 @@
+---
+# Configure_access - Placeholder
+# TODO: Full implementation in later phases
+
+- name: Placeholder - configure_access will be implemented later
+  ansible.builtin.debug:
+    msg: "configure_access - To be implemented"

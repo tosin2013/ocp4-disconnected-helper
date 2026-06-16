@@ -1,0 +1,39 @@
+---
+# JFrog Artifactory - Community Contribution Configuration
+
+# Registry-specific paths (JFrog docker registry structure)
+registry_mirror_paths:
+  - source: quay.io/openshift-release-dev/ocp-release
+    mirrors:
+      - "{{ registry_url }}/ocp4-docker-local/openshift4"
+
+  - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    mirrors:
+      - "{{ registry_url }}/ocp4-docker-local/openshift4"
+
+  - source: registry.redhat.io/ubi8
+    mirrors:
+      - "{{ registry_url }}/redhat-docker-local/ubi8"
+
+  - source: registry.redhat.io/ubi9
+    mirrors:
+      - "{{ registry_url }}/redhat-docker-local/ubi9"
+
+# JFrog-specific catalog source (if operators were mirrored)
+operator_catalog_image: "{{ registry_url }}/ocp4-docker-local/redhat-operator-index:v{{ ocp_version }}"
+
+# Certificate bundle (JFrog default path)
+registry_ca_bundle_path: "/etc/pki/ca-trust/source/anchors/jfrog-ca.crt"
+
+# JFrog API endpoint (for advanced operations)
+jfrog_api_url: "https://{{ registry_url }}/artifactory/api"
+
+# Authentication (JFrog access tokens)
+registry_auth_file: "/root/.docker/config.json"
+
+# JFrog-specific notes for community contributors
+# 1. JFrog Artifactory uses "repositories" with docker-local suffix
+# 2. Create docker repositories: ocp4-docker-local, redhat-docker-local
+# 3. Access tokens preferred over username/password for authentication
+# 4. JFrog supports virtual repositories - can aggregate multiple repos
+# 5. Docker Registry API v2 must be enabled in repository settings

@@ -1,0 +1,49 @@
+apiVersion: v1
+baseDomain: {{ base_domain }}
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  replicas: {{ compute_replicas }}
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  replicas: {{ control_plane_replicas }}
+metadata:
+  name: {{ cluster_name }}
+networking:
+  clusterNetwork:
+  - cidr: {{ cluster_network_cidr }}
+    hostPrefix: {{ cluster_network_host_prefix }}
+  machineNetwork:
+  - cidr: {{ machine_network_cidr }}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - {{ service_network_cidr }}
+platform:
+  {% if cluster_topology == 'sno' %}
+  none: {}
+  {% else %}
+  baremetal:
+    apiVIPs:
+    - {{ api_vip }}
+    ingressVIPs:
+    - {{ ingress_vip }}
+  {% endif %}
+pullSecret: '{{ lookup("file", pull_secret_path) | trim }}'
+sshKey: '{{ lookup("file", lookup("env", "HOME") + "/.ssh/id_rsa.pub") }}'
+{% if registry_mirror_paths is defined %}
+imageContentSources:
+{% for mirror in registry_mirror_paths %}
+- mirrors:
+  {% for mirror_url in mirror.mirrors %}
+  - {{ mirror_url }}
+  {% endfor %}
+  source: {{ mirror.source }}
+{% endfor %}
+{% endif %}
+{% if registry_ca_bundle_path is defined %}
+additionalTrustBundle: |
+{{ lookup("file", registry_ca_bundle_path) | indent(2, first=True) }}
+{% endif %}

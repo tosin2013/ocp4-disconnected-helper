@@ -1,0 +1,29 @@
+---
+galaxy_info:
+  role_name: openshift_cluster_deploy
+  author: OCP4 Disconnected Helper Project
+  description: Deploy OpenShift clusters using Agent-Based Installer with support for SNO, 3-node, and HA topologies
+  company: Community
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+  galaxy_tags:
+    - openshift
+    - kubernetes
+    - cluster
+    - deployment
+    - agent-based-installer
+    - disconnected
+
+dependencies:
+  - role: common_vm
+    when: provision_vms | default(true)
+
+collections:
+  - community.libvirt
+  - kubernetes.core
+  - ansible.posix

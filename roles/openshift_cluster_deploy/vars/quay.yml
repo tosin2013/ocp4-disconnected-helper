@@ -1,0 +1,32 @@
+---
+# Quay Mirror Registry - Specific Configuration
+
+# Registry-specific paths (Quay structure)
+registry_mirror_paths:
+  - source: quay.io/openshift-release-dev/ocp-release
+    mirrors:
+      - "{{ registry_url }}/ocp4/openshift4"
+
+  - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    mirrors:
+      - "{{ registry_url }}/ocp4/openshift4"
+
+  - source: registry.redhat.io/ubi8
+    mirrors:
+      - "{{ registry_url }}/ubi8/ubi"
+
+  - source: registry.redhat.io/ubi9
+    mirrors:
+      - "{{ registry_url }}/ubi9/ubi"
+
+# Quay-specific catalog source (if operators were mirrored)
+operator_catalog_image: "{{ registry_url }}/redhat/redhat-operator-index:v{{ ocp_version }}"
+
+# Certificate bundle (Quay default path)
+registry_ca_bundle_path: "/etc/pki/ca-trust/source/anchors/{{ registry_url | regex_replace(':.+', '') }}.ca.crt"
+
+# Quay API endpoint (for advanced operations)
+quay_api_url: "https://{{ registry_url }}/api/v1"
+
+# Authentication (Quay robot accounts)
+registry_auth_file: "/root/.docker/config.json"

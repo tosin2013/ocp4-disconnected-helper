@@ -1,0 +1,7 @@
+---
+# Display_cluster_info - Placeholder
+# TODO: Full implementation in later phases
+
+- name: Placeholder - display_cluster_info will be implemented later
+  ansible.builtin.debug:
+    msg: "display_cluster_info - To be implemented"

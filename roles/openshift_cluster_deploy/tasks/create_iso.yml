@@ -1,0 +1,7 @@
+---
+# Phase 3: Create Bootable ISO
+# TODO: Full implementation in Phase 5 (Task 85)
+
+- name: Placeholder - ISO creation will be implemented in Phase 5
+  ansible.builtin.debug:
+    msg: "Phase 3: ISO creation - To be implemented"

@@ -1,0 +1,11 @@
+apiVersion: v1alpha1
+kind: AgentConfig
+metadata:
+  name: {{ cluster_name }}
+rendezvousIP: {{ rendezvous_ip }}
+{% if cluster_topology == 'sno' %}
+# SNO specific configuration
+additionalNTPSources:
+- time.cloudflare.com
+- time.google.com
+{% endif %}

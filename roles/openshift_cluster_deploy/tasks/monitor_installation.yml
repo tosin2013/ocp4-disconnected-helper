@@ -1,0 +1,7 @@
+---
+# Monitor_installation - Placeholder
+# TODO: Full implementation in later phases
+
+- name: Placeholder - monitor_installation will be implemented later
+  ansible.builtin.debug:
+    msg: "monitor_installation - To be implemented"

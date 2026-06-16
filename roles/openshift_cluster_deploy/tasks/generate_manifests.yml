@@ -1,0 +1,48 @@
+---
+# Phase 2: Generate Cluster Manifests
+
+- name: Generate install-config.yaml from template
+  ansible.builtin.template:
+    src: install-config.yaml.j2
+    dest: "{{ openshift_install_dir }}/install-config.yaml"
+    mode: '0600'
+
+- name: Backup install-config.yaml (will be consumed by openshift-install)
+  ansible.builtin.copy:
+    src: "{{ openshift_install_dir }}/install-config.yaml"
+    dest: "{{ openshift_install_dir }}/install-config.yaml.bak"
+    remote_src: true
+    mode: '0600'
+
+- name: Generate agent-config.yaml from template
+  ansible.builtin.template:
+    src: agent-config.yaml.j2
+    dest: "{{ openshift_install_dir }}/agent-config.yaml"
+    mode: '0600'
+
+- name: Generate ImageDigestMirrorSet manifest
+  ansible.builtin.template:
+    src: image-digest-mirror-set.yaml.j2
+    dest: "{{ manifests_dir }}/image-digest-mirror-set.yaml"
+    mode: '0644'
+
+- name: Validate install-config.yaml syntax
+  ansible.builtin.command: >
+    /usr/local/bin/openshift-install agent create config-image
+    --dir {{ openshift_install_dir }}
+    --log-level debug
+  when: validate_manifests | bool
+  register: validate_result
+  failed_when: false
+  changed_when: false
+
+- name: Display manifest generation summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ Manifests generated successfully"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "install-config.yaml: {{ openshift_install_dir }}/install-config.yaml"
+      - "agent-config.yaml: {{ openshift_install_dir }}/agent-config.yaml"
+      - "image-digest-mirror-set.yaml: {{ manifests_dir }}/image-digest-mirror-set.yaml"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

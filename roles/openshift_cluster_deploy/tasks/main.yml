@@ -1,0 +1,44 @@
+---
+# OpenShift Cluster Deploy - Main Task Orchestration
+# Implements 8-phase workflow inspired by openshift-agent-install
+
+- name: Load registry-specific variables
+  ansible.builtin.include_vars: "{{ registry_type }}.yml"
+  tags: [always]
+
+- name: Phase 0 - Validate Prerequisites
+  ansible.builtin.include_tasks: validate_prerequisites.yml
+  tags: [validate, phase0]
+
+- name: Phase 1 - Prepare Installation Directory
+  ansible.builtin.include_tasks: prepare_installation.yml
+  tags: [prepare, phase1]
+
+- name: Phase 2 - Generate Cluster Manifests
+  ansible.builtin.include_tasks: generate_manifests.yml
+  tags: [manifests, phase2]
+
+- name: Phase 3 - Create Bootable ISO
+  ansible.builtin.include_tasks: create_iso.yml
+  tags: [iso, phase3]
+
+- name: Phase 4 - Configure DNS
+  ansible.builtin.include_tasks: configure_dns.yml
+  tags: [dns, phase4]
+
+- name: Phase 5 - Provision VMs (if enabled)
+  ansible.builtin.include_tasks: provision_vms.yml
+  when: provision_vms | bool
+  tags: [provision, phase5]
+
+- name: Phase 6 - Monitor Installation
+  ansible.builtin.include_tasks: monitor_installation.yml
+  tags: [monitor, phase6]
+
+- name: Phase 7 - Configure Cluster Access
+  ansible.builtin.include_tasks: configure_access.yml
+  tags: [access, phase7]
+
+- name: Display Cluster Information
+  ansible.builtin.include_tasks: display_cluster_info.yml
+  tags: [always]

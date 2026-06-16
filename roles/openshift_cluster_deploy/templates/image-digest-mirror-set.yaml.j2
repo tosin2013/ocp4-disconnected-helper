@@ -1,0 +1,15 @@
+---
+# ImageDigestMirrorSet for OpenShift 4.21+ (replaces deprecated imageContentSources)
+apiVersion: config.openshift.io/v1
+kind: ImageDigestMirrorSet
+metadata:
+  name: {{ cluster_name }}-mirror-config
+spec:
+  imageDigestMirrors:
+{% for mirror in registry_mirror_paths %}
+  - source: {{ mirror.source }}
+    mirrors:
+{% for mirror_url in mirror.mirrors %}
+    - {{ mirror_url }}
+{% endfor %}
+{% endfor %}

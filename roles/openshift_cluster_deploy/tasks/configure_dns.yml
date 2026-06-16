@@ -1,0 +1,7 @@
+---
+# Phase 4: Configure DNS
+# TODO: Full implementation in Phase 4 (Task 84)
+
+- name: Placeholder - DNS configuration will be implemented in Phase 4
+  ansible.builtin.debug:
+    msg: "Phase 4: DNS configuration - To be implemented"

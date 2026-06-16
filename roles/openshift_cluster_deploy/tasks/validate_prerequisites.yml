@@ -1,0 +1,105 @@
+---
+# Phase 0: Validate Prerequisites
+
+- name: Check required variables are defined
+  ansible.builtin.assert:
+    that:
+      - cluster_name is defined
+      - base_domain is defined
+      - ocp_version is defined
+      - registry_url is defined
+      - pull_secret_path is defined
+    fail_msg: "Required variables not defined. Check defaults/main.yml and extra_vars."
+    success_msg: "All required variables are defined"
+
+- name: Validate cluster topology
+  ansible.builtin.assert:
+    that:
+      - cluster_topology in ['sno', 'compact', 'ha']
+    fail_msg: "cluster_topology must be one of: sno, compact, ha"
+
+- name: Validate control plane replicas for topology
+  ansible.builtin.assert:
+    that:
+      - (cluster_topology == 'sno' and control_plane_replicas == 1) or
+        (cluster_topology in ['compact', 'ha'] and control_plane_replicas == 3)
+    fail_msg: "Invalid control_plane_replicas for {{ cluster_topology }} topology"
+
+- name: Validate compute replicas for topology
+  ansible.builtin.assert:
+    that:
+      - (cluster_topology in ['sno', 'compact'] and compute_replicas == 0) or
+        (cluster_topology == 'ha' and compute_replicas >= 2)
+    fail_msg: "Invalid compute_replicas for {{ cluster_topology }} topology"
+
+- name: Check openshift-install binary exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/openshift-install
+  register: openshift_install_bin
+  failed_when: not openshift_install_bin.stat.exists
+  changed_when: false
+
+- name: Verify openshift-install version
+  ansible.builtin.command: openshift-install version
+  register: oc_install_version
+  changed_when: false
+
+- name: Display openshift-install version
+  ansible.builtin.debug:
+    msg: "Using {{ oc_install_version.stdout_lines[0] }}"
+
+- name: Check pull secret file exists
+  ansible.builtin.stat:
+    path: "{{ pull_secret_path }}"
+  register: pull_secret_file
+  failed_when: not pull_secret_file.stat.exists
+
+- name: Validate pull secret is valid JSON
+  ansible.builtin.command: jq empty {{ pull_secret_path }}
+  changed_when: false
+
+- name: Test registry connectivity
+  ansible.builtin.uri:
+    url: "https://{{ registry_url }}/v2/"
+    validate_certs: false
+    status_code: [200, 401]  # 401 is expected without auth
+  register: registry_health
+  failed_when: registry_health.status not in [200, 401]
+
+- name: Verify libvirt connection (if provisioning VMs)
+  ansible.builtin.command: virsh -c qemu:///system list
+  when: provision_vms | bool
+  changed_when: false
+  environment:
+    LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+- name: Check available disk space for ISO
+  ansible.builtin.shell: df -BG {{ iso_output_path | dirname }} | tail -1 | awk '{print $4}' | sed 's/G//'
+  register: disk_space
+  changed_when: false
+
+- name: Ensure sufficient disk space (minimum 10GB)
+  ansible.builtin.assert:
+    that:
+      - disk_space.stdout | int >= 10
+    fail_msg: "Insufficient disk space. Need 10GB, have {{ disk_space.stdout }}GB"
+
+- name: Validate registry type
+  ansible.builtin.assert:
+    that:
+      - registry_type in ['quay', 'harbor', 'jfrog']
+    fail_msg: "registry_type must be one of: quay, harbor, jfrog"
+
+- name: Display validation summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ Prerequisites validation complete"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - "Topology: {{ cluster_topology }} ({{ control_plane_replicas }} control, {{ compute_replicas }} compute)"
+      - "OpenShift: {{ ocp_version }}"
+      - "Registry: {{ registry_type }} ({{ registry_url }})"
+      - "DNS Provider: {{ dns_provider }}"
+      - "Provision VMs: {{ provision_vms }}"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

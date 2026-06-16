@@ -1,0 +1,7 @@
+---
+# Provision_vms - Placeholder
+# TODO: Full implementation in later phases
+
+- name: Placeholder - provision_vms will be implemented later
+  ansible.builtin.debug:
+    msg: "provision_vms - To be implemented"

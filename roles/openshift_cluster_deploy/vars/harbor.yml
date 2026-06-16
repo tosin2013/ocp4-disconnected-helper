@@ -1,0 +1,38 @@
+---
+# Harbor Mirror Registry - Community Contribution Configuration
+
+# Registry-specific paths (Harbor project-based structure)
+registry_mirror_paths:
+  - source: quay.io/openshift-release-dev/ocp-release
+    mirrors:
+      - "{{ registry_url }}/ocp4-project/openshift4"
+
+  - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    mirrors:
+      - "{{ registry_url }}/ocp4-project/openshift4"
+
+  - source: registry.redhat.io/ubi8
+    mirrors:
+      - "{{ registry_url }}/redhat-project/ubi8"
+
+  - source: registry.redhat.io/ubi9
+    mirrors:
+      - "{{ registry_url }}/redhat-project/ubi9"
+
+# Harbor-specific catalog source (if operators were mirrored)
+operator_catalog_image: "{{ registry_url }}/ocp4-project/redhat-operator-index:v{{ ocp_version }}"
+
+# Certificate bundle (Harbor default path)
+registry_ca_bundle_path: "/etc/pki/ca-trust/source/anchors/harbor-ca.crt"
+
+# Harbor API endpoint (for advanced operations)
+harbor_api_url: "https://{{ registry_url }}/api/v2.0"
+
+# Authentication (Harbor uses projects)
+registry_auth_file: "/root/.docker/config.json"
+
+# Harbor-specific notes for community contributors
+# 1. Harbor organizes images in "projects" (e.g., ocp4-project, redhat-project)
+# 2. Ensure projects are created before mirroring: harbor.cfg or Web UI
+# 3. Robot accounts should have read access to all projects
+# 4. Harbor supports image replication - consider for multi-site deployments
