@@ -501,6 +501,37 @@ When you install an operator from OperatorHub, the cluster will pull images from
 
 ---
 
+**Choose your method**:
+
+#### Option A: Automated Playbook (Recommended)
+
+```bash
+# One command configures everything
+ansible-playbook playbooks/configure-operator-catalog.yml \
+  -e kubeconfig=/root/openshift-install/auth/kubeconfig \
+  -e registry_url=registry.example.com:8443 \
+  -e ocp_version=4.21
+```
+
+**What it does**:
+- ✅ Applies ImageContentSourcePolicy
+- ✅ Waits for nodes to reboot (automatic)
+- ✅ Creates CatalogSource
+- ✅ Validates catalog is READY
+- ✅ Lists available operators
+
+**Time**: 15-25 minutes (fully automated)
+
+**See**: [Configure Operator Catalog for Disconnected Cluster](../how-to/configure-operator-catalog-for-disconnected.md) for details
+
+---
+
+#### Option B: Manual Configuration (Educational)
+
+If you want to understand each step manually:
+
+---
+
 #### Step 22a: Apply ImageContentSourcePolicy for Operators
 
 ```bash

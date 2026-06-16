@@ -1,0 +1,165 @@
+---
+- name: Configure Workflow 2 Node 4 - Operator Catalog Configuration
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    aap_host: "{{ controller_host | default('https://aap.sandbox3377.opentlc.com') }}"
+    aap_username: "{{ controller_username | default('admin') }}"
+    aap_password: "{{ controller_password }}"
+    validate_certs: false
+
+    workflow_name: "Workflow 2: OpenShift Image Mirroring"
+
+    # Node 4 configuration
+    node_4_job_template_name: "Job: Configure Operator Catalog"
+    node_4_identifier: "node_4_configure_catalog"
+
+  tasks:
+    - name: Create Job Template for Operator Catalog Configuration
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ validate_certs }}"
+
+        name: "{{ node_4_job_template_name }}"
+        description: "Configure OpenShift cluster to use mirrored operator catalog"
+        organization: "Default"
+        inventory: "Localhost"
+        project: "ocp4-disconnected-helper"
+
+        playbook: playbooks/configure-operator-catalog.yml
+
+        credentials:
+          - "OpenShift Kubeconfig"
+
+        extra_vars:
+          registry_url: "{{ target_registry | default('registry.ocp4.sandbox3377.opentlc.com:8443') }}"
+          ocp_version: "{{ openshift_version | default('4.21') }}"
+          validate_catalog: true
+
+        ask_variables_on_launch: true
+
+        survey_enabled: true
+        survey_spec:
+          name: "Operator Catalog Configuration Survey"
+          description: "Configure cluster to use mirrored operators"
+          spec:
+            - question_name: "Cluster Kubeconfig Path"
+              question_description: "Absolute path to cluster kubeconfig file"
+              required: true
+              type: "text"
+              variable: "kubeconfig"
+              default: "/root/openshift-install/auth/kubeconfig"
+
+            - question_name: "Registry URL"
+              question_description: "Mirrored registry URL (no https://)"
+              required: true
+              type: "text"
+              variable: "registry_url"
+              default: "registry.ocp4.sandbox3377.opentlc.com:8443"
+
+            - question_name: "OpenShift Version"
+              question_description: "OpenShift version (matches catalog index tag)"
+              required: true
+              type: "text"
+              variable: "ocp_version"
+              default: "4.21"
+
+            - question_name: "Cluster Name"
+              question_description: "Cluster name for identification (optional)"
+              required: false
+              type: "text"
+              variable: "cluster_name"
+              default: "ocp4"
+
+        verbosity: 1
+        job_type: "run"
+        state: present
+      register: job_template_result
+
+    - name: Add Node 4 to Workflow 2
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ validate_certs }}"
+
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "{{ node_4_identifier }}"
+
+        unified_job_template: "{{ node_4_job_template_name }}"
+
+        success_nodes:
+          - "node_workflow_complete"  # Terminal node
+
+        state: present
+      register: node_4_result
+
+    - name: Link Node 3 → Node 4
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ validate_certs }}"
+
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "node_3_push_to_registry"
+
+        success_nodes:
+          - "{{ node_4_identifier }}"
+
+        state: present
+      register: link_result
+
+    - name: Display Workflow 2 Node 4 Configuration
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ Workflow 2 Node 4 configured successfully!"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Workflow: {{ workflow_name }}"
+          - "Node 4: {{ node_4_job_template_name }}"
+          - ""
+          - "Workflow execution order:"
+          - "  Node 1: Validate Operator Selection ✅"
+          - "  Node 2: Download Images to Disk ✅"
+          - "  Node 3: Push Images to Registry ✅"
+          - "  Node 4: Configure Cluster Catalog ⭐ NEW"
+          - ""
+          - "Survey fields:"
+          - "  - Cluster Kubeconfig Path"
+          - "  - Registry URL"
+          - "  - OpenShift Version"
+          - "  - Cluster Name (optional)"
+          - ""
+          - "Next steps:"
+          - "  1. Login to AAP Web UI"
+          - "  2. Navigate to Resources → Templates → Workflows"
+          - "  3. Launch 'Workflow 2: OpenShift Image Mirroring'"
+          - "  4. Fill operator preset + cluster kubeconfig in survey"
+          - "  5. Operators will automatically appear in OperatorHub!"
+
+    - name: Update Workflow 2 description
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ aap_password }}"
+        validate_certs: "{{ validate_certs }}"
+
+        name: "{{ workflow_name }}"
+        description: |
+          End-to-end disconnected operator mirroring with automatic cluster configuration.
+
+          Workflow Steps:
+          1. Validate operator selection (oc-mirror preflight)
+          2. Download operators to disk (DMZ-safe TAR workflow)
+          3. Push operators to registry (disconnected environment)
+          4. Configure cluster catalog (ICSP + CatalogSource)
+
+          Result: Operators appear in OperatorHub, images pull from disconnected registry.
+
+        state: present

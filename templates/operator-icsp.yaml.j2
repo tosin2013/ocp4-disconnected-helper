@@ -1,0 +1,39 @@
+---
+apiVersion: operator.openshift.io/v1alpha1
+kind: ImageContentSourcePolicy
+metadata:
+  name: operator-mirror-config
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    app.kubernetes.io/created-by: ocp4-disconnected-helper
+spec:
+  repositoryDigestMirrors:
+  # Redirect Red Hat operator catalog index
+  - mirrors:
+    - {{ registry_url }}/redhat/redhat-operator-index
+    source: registry.redhat.io/redhat/redhat-operator-index
+
+  # Redirect certified operator catalog index
+  - mirrors:
+    - {{ registry_url }}/redhat/certified-operator-index
+    source: registry.redhat.io/redhat/certified-operator-index
+
+  # Redirect community operator catalog index
+  - mirrors:
+    - {{ registry_url }}/redhat/community-operator-index
+    source: registry.redhat.io/redhat/community-operator-index
+
+  # Redirect marketplace operator catalog index
+  - mirrors:
+    - {{ registry_url }}/redhat/redhat-marketplace-index
+    source: registry.redhat.io/redhat/redhat-marketplace-index
+
+  # Wildcard redirect for all Red Hat operator images
+  - mirrors:
+    - {{ registry_url }}
+    source: registry.redhat.io
+
+  # Wildcard redirect for certified partner images
+  - mirrors:
+    - {{ registry_url }}
+    source: registry.connect.redhat.com

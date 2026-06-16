@@ -37,6 +37,7 @@ This project follows the [Diátaxis documentation framework](https://diataxis.fr
 - [Deploy VyOS Router](how-to/deploy-vyos-router.md) - Set up VyOS network infrastructure
 - [Deploy Workflow 1 (Registry Infrastructure)](how-to/deploy-workflow-1-registry-infrastructure.md) - Deploy container registry via AAP
 - [Deploy Workflow 2 (Image Mirroring)](how-to/deploy-workflow-2-image-mirroring.md) - Mirror OpenShift images via AAP
+- [Configure Operator Catalog for Disconnected](how-to/configure-operator-catalog-for-disconnected.md) - Connect cluster to mirrored operators
 
 #### Configuration
 - [Add Custom Operators](how-to/add-custom-operators.md) - Create custom operator presets
@@ -56,7 +57,7 @@ This project follows the [Diátaxis documentation framework](https://diataxis.fr
 - [Resolve: Registry TLS Authentication](how-to/resolve-registry-tls-authentication.md) - Fix certificate trust errors
 - [Troubleshoot Workflow Failures](how-to/troubleshoot-workflow-failures.md) - Systematic AAP debugging
 
-**Total**: 18 guides | **When to use**: You know what you want to do, just need the steps.
+**Total**: 19 guides | **When to use**: You know what you want to do, just need the steps.
 
 ---
 

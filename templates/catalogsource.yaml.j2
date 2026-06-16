@@ -1,0 +1,17 @@
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: {{ catalog_name | default('redhat-operator-index') }}
+  namespace: openshift-marketplace
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    app.kubernetes.io/created-by: ocp4-disconnected-helper
+spec:
+  sourceType: grpc
+  image: {{ registry_url }}/redhat/redhat-operator-index:v{{ ocp_version }}
+  displayName: Red Hat Operators (Mirrored)
+  publisher: Red Hat
+  updateStrategy:
+    registryPoll:
+      interval: 30m

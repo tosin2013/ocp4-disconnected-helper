@@ -1,0 +1,187 @@
+---
+- name: Configure OpenShift Operator Catalog for Disconnected Registry
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Override these via -e or inventory
+    kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('/root/openshift-install/auth/kubeconfig') }}"
+    registry_url: "{{ target_registry | default('registry.example.com:8443') }}"
+    ocp_version: "{{ openshift_version | default('4.21') }}"
+    catalog_name: "redhat-operator-index"
+    wait_timeout: 3600  # 1 hour for MachineConfigPool rollout
+    validate_catalog: true
+
+  tasks:
+    - name: Validate prerequisites
+      block:
+        - name: Check if kubeconfig exists
+          ansible.builtin.stat:
+            path: "{{ kubeconfig }}"
+          register: kubeconfig_stat
+          failed_when: not kubeconfig_stat.stat.exists
+
+        - name: Test cluster connectivity
+          kubernetes.core.k8s_cluster_info:
+            kubeconfig: "{{ kubeconfig }}"
+          register: cluster_info
+
+        - name: Display cluster information
+          ansible.builtin.debug:
+            msg:
+              - "Connected to cluster: {{ cluster_info.version.server.kubernetes.gitVersion }}"
+              - "Registry URL: {{ registry_url }}"
+              - "OpenShift Version: {{ ocp_version }}"
+      tags:
+        - validate
+        - always
+
+    - name: Apply ImageContentSourcePolicy for operators
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ lookup('template', '../templates/operator-icsp.yaml.j2') }}"
+      register: icsp_result
+      tags:
+        - icsp
+
+    - name: Display ICSP creation status
+      ansible.builtin.debug:
+        msg:
+          - "ICSP Status: {{ 'Created' if icsp_result.changed else 'Already exists' }}"
+          - "⚠️  MachineConfigPool rollout will begin (nodes will reboot sequentially)"
+      tags:
+        - icsp
+
+    - name: Wait for MachineConfigPool rollout to complete
+      block:
+        - name: Monitor master MachineConfigPool
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            api_version: machineconfiguration.openshift.io/v1
+            kind: MachineConfigPool
+            name: master
+          register: mcp_master
+          until:
+            - mcp_master.resources | length > 0
+            - mcp_master.resources[0].status.readyMachineCount == mcp_master.resources[0].status.machineCount
+            - mcp_master.resources[0].status.updatedMachineCount == mcp_master.resources[0].status.machineCount
+            - not mcp_master.resources[0].status.degradedMachineCount | default(0)
+          retries: 120
+          delay: 30
+          tags:
+            - wait
+
+        - name: Monitor worker MachineConfigPool
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            api_version: machineconfiguration.openshift.io/v1
+            kind: MachineConfigPool
+            name: worker
+          register: mcp_worker
+          until:
+            - mcp_worker.resources | length > 0
+            - mcp_worker.resources[0].status.readyMachineCount == mcp_worker.resources[0].status.machineCount
+            - mcp_worker.resources[0].status.updatedMachineCount == mcp_worker.resources[0].status.machineCount
+            - not mcp_worker.resources[0].status.degradedMachineCount | default(0)
+          retries: 120
+          delay: 30
+          tags:
+            - wait
+
+        - name: Display MachineConfigPool status
+          ansible.builtin.debug:
+            msg:
+              - "✓ Master nodes: {{ mcp_master.resources[0].status.readyMachineCount }}/{{ mcp_master.resources[0].status.machineCount }} ready"
+              - "✓ Worker nodes: {{ mcp_worker.resources[0].status.readyMachineCount }}/{{ mcp_worker.resources[0].status.machineCount }} ready"
+              - "MachineConfigPool rollout complete!"
+      when: icsp_result.changed
+      tags:
+        - wait
+
+    - name: Create CatalogSource for mirrored operators
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ lookup('template', '../templates/catalogsource.yaml.j2') }}"
+        wait: true
+        wait_timeout: 300
+      register: catalogsource_result
+      tags:
+        - catalogsource
+
+    - name: Wait for CatalogSource to become READY
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: operators.coreos.com/v1alpha1
+        kind: CatalogSource
+        name: "{{ catalog_name }}"
+        namespace: openshift-marketplace
+      register: catalog_status
+      until:
+        - catalog_status.resources | length > 0
+        - catalog_status.resources[0].status.connectionState.lastObservedState == "READY"
+      retries: 30
+      delay: 10
+      tags:
+        - catalogsource
+        - validate
+
+    - name: Verify catalog pod is running
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: openshift-marketplace
+        label_selectors:
+          - "olm.catalogSource={{ catalog_name }}"
+      register: catalog_pod
+      failed_when: catalog_pod.resources | length == 0
+      tags:
+        - catalogsource
+        - validate
+
+    - name: List available operators from mirrored catalog
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: packages.operators.coreos.com/v1
+        kind: PackageManifest
+        namespace: openshift-marketplace
+      register: package_manifests
+      when: validate_catalog
+      tags:
+        - validate
+
+    - name: Display available operators
+      ansible.builtin.debug:
+        msg:
+          - "✓ CatalogSource '{{ catalog_name }}' is READY"
+          - "✓ Catalog pod '{{ catalog_pod.resources[0].metadata.name }}' is Running"
+          - "✓ {{ package_manifests.resources | selectattr('status.catalogSource', 'equalto', catalog_name) | list | length }} operators available from mirrored catalog"
+          - ""
+          - "Example operators (if you mirrored storage-operators):"
+          - "  - odf-operator (OpenShift Data Foundation)"
+          - "  - lvms-operator (Logical Volume Manager Storage)"
+          - "  - local-storage-operator (Local Storage)"
+          - ""
+          - "View all operators in OpenShift Console:"
+          - "  → Operators → OperatorHub → Source: Red Hat Operators (Mirrored)"
+      when: validate_catalog
+      tags:
+        - validate
+
+    - name: Configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ Operator catalog configuration complete!"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Next steps:"
+          - "  1. Login to OpenShift Console"
+          - "  2. Navigate to Operators → OperatorHub"
+          - "  3. Search for operators (storage, networking, observability)"
+          - "  4. Install operators (images will pull from {{ registry_url }})"
+          - ""
+          - "No internet connection needed for operator installation!"
+      tags:
+        - always
