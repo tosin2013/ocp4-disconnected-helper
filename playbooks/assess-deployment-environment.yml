@@ -1,0 +1,304 @@
+---
+# Assess Deployment Environment for Workflow 1 (Infrastructure Deployment)
+#
+# This playbook detects the deployment scenario (KVM/Existing/Cloud) and determines
+# which infrastructure components need to be deployed.
+#
+# Outputs survey-compatible facts that control conditional workflow execution:
+#   - requires_vyos: true/false (KVM environments only)
+#   - requires_dns: true/false (if DNS not already configured)
+#   - deployment_scenario: kvm_full / existing_infrastructure / cloud_deployment
+#
+# Usage:
+#   ansible-playbook -i inventory assess-deployment-environment.yml
+#
+# Survey Integration:
+#   This playbook is Step 1 of Workflow 1 (Infrastructure Deployment).
+#   Survey selections override auto-detection.
+
+- name: Assess Deployment Environment for Infrastructure Workflow
+  hosts: all  # Will resolve to kvm-host when AAP job template sets limit
+  gather_facts: true
+  become: false
+
+  vars:
+    # Survey-driven scenario (overrides auto-detection if provided)
+    deployment_scenario: "{{ deployment_scenario | default('auto-detect') }}"
+
+    # DNS provider preference (survey-driven)
+    dns_provider: "{{ dns_provider | default('auto-detect') }}"
+
+    # Registry type (survey-driven)
+    registry_type: "{{ registry_type | default('quay') }}"
+
+    # Certificate mode (survey-driven)
+    certificate_mode: "{{ certificate_mode | default('auto-detect') }}"
+
+  tasks:
+    # =========================================================================
+    # Assessment Header
+    # =========================================================================
+    - name: Display assessment header
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Workflow 1: Infrastructure Deployment"
+          - "Step 1: Environment Assessment"
+          - "============================================"
+          - ""
+          - "Detecting deployment scenario and required components..."
+          - ""
+
+    # =========================================================================
+    # Detect Virtualization Platform (KVM vs Cloud)
+    # =========================================================================
+    - name: Check if running in KVM environment
+      ansible.builtin.command:
+        cmd: systemd-detect-virt
+      register: virt_detection
+      changed_when: false
+      failed_when: false
+
+    - name: Set virtualization fact
+      ansible.builtin.set_fact:
+        is_kvm_host: "{{ 'kvm' in virt_detection.stdout or 'qemu' in virt_detection.stdout }}"
+        is_cloud_environment: "{{ 'google' in virt_detection.stdout or 'amazon' in virt_detection.stdout or 'azure' in virt_detection.stdout }}"
+
+    - name: Display virtualization detection
+      ansible.builtin.debug:
+        msg:
+          - "Virtualization Platform: {{ virt_detection.stdout }}"
+          - "KVM Host: {{ is_kvm_host }}"
+          - "Cloud Environment: {{ is_cloud_environment }}"
+
+    # =========================================================================
+    # Check for Existing VyOS Router
+    # =========================================================================
+    - name: Check if VyOS router already exists
+      ansible.builtin.command:
+        cmd: virsh list --all --name
+      register: virsh_vms
+      changed_when: false
+      failed_when: false
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Set VyOS requirement fact
+      ansible.builtin.set_fact:
+        vyos_exists: "{{ 'vyos' in virsh_vms.stdout }}"
+        requires_vyos: "{{ is_kvm_host and 'vyos' not in virsh_vms.stdout }}"
+
+    - name: Display VyOS status
+      ansible.builtin.debug:
+        msg: "{{ '✅ VyOS router already exists' if vyos_exists else ('⏭️  VyOS deployment required (KVM environment)' if requires_vyos else '⏭️  VyOS not needed (cloud environment)') }}"
+
+    # =========================================================================
+    # Check for Existing DNS Configuration
+    # =========================================================================
+    - name: Check Route53 AWS credentials
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+      register: aws_creds
+      failed_when: false
+
+    - name: Check FreeIPA server accessibility
+      ansible.builtin.command:
+        cmd: "dig @{{ dns_server | default('8.8.8.8') }} {{ ansible_fqdn }} +short"
+      register: freeipa_check
+      changed_when: false
+      failed_when: false
+      when: dns_provider == "freeipa" or dns_provider == "auto-detect"
+
+    - name: Determine DNS provider
+      ansible.builtin.set_fact:
+        detected_dns_provider: >-
+          {% if dns_provider != "auto-detect" %}
+          {{ dns_provider }}
+          {% elif aws_creds.stat.exists %}
+          route53
+          {% elif freeipa_check.rc == 0 and freeipa_check.stdout | length > 0 %}
+          freeipa
+          {% else %}
+          none
+          {% endif %}
+        requires_dns: >-
+          {% if dns_provider != "auto-detect" %}
+          {{ dns_provider != "none" }}
+          {% else %}
+          {{ not aws_creds.stat.exists and (freeipa_check.rc != 0 or freeipa_check.stdout | length == 0) }}
+          {% endif %}
+
+    - name: Display DNS status
+      ansible.builtin.debug:
+        msg:
+          - "DNS Provider: {{ detected_dns_provider }}"
+          - "{{ '✅ DNS already configured' if not requires_dns else '⏭️  DNS configuration required' }}"
+
+    # =========================================================================
+    # Check for Existing Registry
+    # =========================================================================
+    - name: Check if registry VM exists
+      ansible.builtin.command:
+        cmd: virsh list --all --name
+      register: registry_vms
+      changed_when: false
+      failed_when: false
+      environment:
+        LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+    - name: Set registry requirement fact
+      ansible.builtin.set_fact:
+        registry_exists: "{{ 'registry' in registry_vms.stdout }}"
+        requires_registry: "{{ 'registry' not in registry_vms.stdout }}"
+
+    - name: Display registry status
+      ansible.builtin.debug:
+        msg: "{{ '✅ Registry VM already exists' if registry_exists else '⏭️  Registry deployment required' }}"
+
+    # =========================================================================
+    # Check HAProxy Installation
+    # =========================================================================
+    - name: Check if HAProxy is installed
+      ansible.builtin.command:
+        cmd: which haproxy
+      register: haproxy_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set HAProxy requirement fact
+      ansible.builtin.set_fact:
+        haproxy_installed: "{{ haproxy_check.rc == 0 }}"
+        requires_haproxy: "{{ haproxy_check.rc != 0 }}"
+
+    - name: Display HAProxy status
+      ansible.builtin.debug:
+        msg: "{{ '✅ HAProxy already installed' if haproxy_installed else '⏭️  HAProxy configuration required' }}"
+
+    # =========================================================================
+    # Check Certificate Configuration
+    # =========================================================================
+    - name: Check for existing certificates
+      ansible.builtin.stat:
+        path: "/opt/registry-credentials/registry.crt"
+      register: cert_check
+
+    - name: Determine certificate mode
+      ansible.builtin.set_fact:
+        detected_cert_mode: >-
+          {% if certificate_mode != "auto-detect" %}
+          {{ certificate_mode }}
+          {% elif aws_creds.stat.exists %}
+          letsencrypt
+          {% else %}
+          selfsigned
+          {% endif %}
+        requires_certificates: "{{ not cert_check.stat.exists }}"
+
+    - name: Display certificate status
+      ansible.builtin.debug:
+        msg:
+          - "Certificate Mode: {{ detected_cert_mode }}"
+          - "{{ '✅ Certificates already exist' if not requires_certificates else '⏭️  Certificate setup required' }}"
+
+    # =========================================================================
+    # Determine Deployment Scenario
+    # =========================================================================
+    - name: Set deployment scenario
+      ansible.builtin.set_fact:
+        final_deployment_scenario: >-
+          {% if deployment_scenario != "auto-detect" %}
+          {{ deployment_scenario }}
+          {% elif requires_vyos and requires_dns %}
+          kvm_full
+          {% elif not requires_vyos and not requires_dns %}
+          cloud_deployment
+          {% else %}
+          existing_infrastructure
+          {% endif %}
+
+    # =========================================================================
+    # Assessment Summary
+    # =========================================================================
+    - name: Display assessment summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Environment Assessment Complete"
+          - "============================================"
+          - ""
+          - "Deployment Scenario: {{ final_deployment_scenario }}"
+          - ""
+          - "Required Components:"
+          - "  {{ '✅' if not requires_vyos else '⏭️ ' }} VyOS Router: {{ 'Already exists' if not requires_vyos else 'Deploy required' }}"
+          - "  {{ '✅' if not requires_dns else '⏭️ ' }} DNS Services ({{ detected_dns_provider }}): {{ 'Already configured' if not requires_dns else 'Setup required' }}"
+          - "  {{ '✅' if not requires_registry else '⏭️ ' }} Registry VM ({{ registry_type }}): {{ 'Already exists' if not requires_registry else 'Deploy required' }}"
+          - "  {{ '✅' if not requires_haproxy else '⏭️ ' }} HAProxy: {{ 'Already installed' if not requires_haproxy else 'Configure required' }}"
+          - "  {{ '✅' if not requires_certificates else '⏭️ ' }} Certificates ({{ detected_cert_mode }}): {{ 'Already exist' if not requires_certificates else 'Setup required' }}"
+          - ""
+          - "Workflow Execution Plan:"
+          - "{% if final_deployment_scenario == 'kvm_full' %}"
+          - "  1. Deploy VyOS Router"
+          - "  2. Configure DNS ({{ detected_dns_provider }})"
+          - "  3. Deploy Registry VM"
+          - "  4. Setup Registry ({{ registry_type }})"
+          - "  5. Configure HAProxy"
+          - "  6. Setup Certificates"
+          - "  7. Verify Infrastructure"
+          - "{% elif final_deployment_scenario == 'existing_infrastructure' %}"
+          - "  1. Deploy Registry VM"
+          - "  2. Setup Registry ({{ registry_type }})"
+          - "  3. Configure HAProxy"
+          - "  4. Setup Certificates"
+          - "  5. Verify Infrastructure"
+          - "{% else %}"
+          - "  1. Deploy Registry VM"
+          - "  2. Setup Registry ({{ registry_type }})"
+          - "  3. Configure HAProxy"
+          - "  4. Setup Certificates"
+          - "  5. Verify Infrastructure"
+          - "{% endif %}"
+          - ""
+          - "============================================"
+
+    # =========================================================================
+    # Export Assessment Results (for workflow conditional logic)
+    # =========================================================================
+    - name: Set workflow control facts
+      ansible.builtin.set_fact:
+        workflow_requires_vyos: "{{ requires_vyos }}"
+        workflow_requires_dns: "{{ requires_dns }}"
+        workflow_requires_registry: "{{ requires_registry }}"
+        workflow_requires_haproxy: "{{ requires_haproxy }}"
+        workflow_requires_certificates: "{{ requires_certificates }}"
+        workflow_deployment_scenario: "{{ final_deployment_scenario }}"
+        workflow_dns_provider: "{{ detected_dns_provider }}"
+        workflow_cert_mode: "{{ detected_cert_mode }}"
+        workflow_registry_type: "{{ registry_type }}"
+
+    - name: Save assessment results to file (for AAP workflow consumption)
+      ansible.builtin.copy:
+        content: |
+          ---
+          # Workflow 1 Assessment Results
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          deployment_scenario: "{{ final_deployment_scenario }}"
+
+          requires_vyos: {{ requires_vyos }}
+          requires_dns: {{ requires_dns }}
+          requires_registry: {{ requires_registry }}
+          requires_haproxy: {{ requires_haproxy }}
+          requires_certificates: {{ requires_certificates }}
+
+          dns_provider: "{{ detected_dns_provider }}"
+          certificate_mode: "{{ detected_cert_mode }}"
+          registry_type: "{{ registry_type }}"
+        dest: "/tmp/workflow1-assessment.yml"
+        mode: '0644'
+
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg:
+          - "Assessment results saved to: /tmp/workflow1-assessment.yml"
+          - ""
+          - "Workflow will now proceed with conditional execution based on these results."

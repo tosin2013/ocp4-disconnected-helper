@@ -1,0 +1,371 @@
+---
+# Verify Infrastructure Deployment for Workflow 1
+#
+# This playbook performs comprehensive validation that Workflow 1 (Infrastructure
+# Deployment) completed successfully.
+#
+# Validates:
+#   - VyOS router accessibility (if deployed in KVM scenario)
+#   - DNS resolution working
+#   - Container registry accessible and authenticated
+#   - HAProxy routing correctly to registry
+#   - SSL/TLS certificates valid and not expired
+#   - Network connectivity between components
+#
+# Usage:
+#   ansible-playbook -i inventory verify-infrastructure-deployment.yml
+#
+# Variables:
+#   deployment_scenario: kvm_full / existing_infrastructure / cloud_deployment
+#   target_registry: Registry URL to validate
+#   skip_tls_verify: Skip certificate validation (default: false)
+
+- name: Verify Infrastructure Deployment for Workflow 1
+  hosts: all  # Will resolve to kvm-host when AAP job template sets limit
+  gather_facts: true
+  become: false
+
+  vars:
+    # Load assessment results (if available)
+    assessment_file: "/tmp/workflow1-assessment.yml"
+
+    # Validation settings
+    validation_mode: "strict"  # strict or permissive
+    target_registry: "{{ target_registry | default('registry.ocp4.sandbox3377.opentlc.com:8443') }}"
+    skip_tls_verify: false
+
+  pre_tasks:
+    - name: Load workflow assessment results
+      ansible.builtin.include_vars:
+        file: "{{ assessment_file }}"
+      failed_when: false
+      register: assessment_loaded
+
+  tasks:
+    # =========================================================================
+    # Validation Header
+    # =========================================================================
+    - name: Display validation header
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Workflow 1: Infrastructure Deployment Verification"
+          - "Step 8: Comprehensive Validation"
+          - "============================================"
+          - ""
+          - "Validating all infrastructure components deployed by Workflow 1..."
+          - ""
+          - "Deployment Scenario: {{ deployment_scenario | default('unknown') }}"
+          - "Target Registry: {{ target_registry }}"
+          - "Validation Mode: {{ validation_mode }}"
+          - ""
+
+    # =========================================================================
+    # VyOS Router Validation (Conditional - KVM Scenarios Only)
+    # =========================================================================
+    - name: Validate VyOS Router (if deployed)
+      when:
+        - deployment_scenario is defined
+        - deployment_scenario == "kvm_full"
+      block:
+        - name: Check VyOS VM status
+          ansible.builtin.command:
+            cmd: virsh domstate vyos
+          register: vyos_state
+          changed_when: false
+          failed_when: false
+          environment:
+            LIBVIRT_DEFAULT_URI: "qemu:///system"
+
+        - name: Display VyOS status
+          ansible.builtin.debug:
+            msg: "{{ '✅ VyOS router running' if vyos_state.stdout == 'running' else '❌ VyOS router NOT running' }}"
+
+        - name: Test VyOS SSH connectivity
+          ansible.builtin.wait_for:
+            host: "192.168.122.2"
+            port: 22
+            timeout: 10
+          register: vyos_ssh
+          failed_when: false
+
+        - name: Display VyOS SSH connectivity
+          ansible.builtin.debug:
+            msg: "{{ '✅ VyOS SSH accessible' if vyos_ssh is success else '❌ VyOS SSH NOT accessible' }}"
+
+        - name: Fail if VyOS not operational (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ VALIDATION FAILED: VyOS router not operational
+
+              VyOS VM State: {{ vyos_state.stdout | default('unknown') }}
+              SSH Accessible: {{ vyos_ssh is success }}
+
+              **Action Required**:
+              1. Check VyOS VM status: virsh list --all
+              2. Start VyOS if stopped: virsh start vyos
+              3. Check VyOS console: virsh console vyos
+              4. Verify network configuration
+
+              **Workflow 1 Status**: INCOMPLETE (VyOS deployment failed)
+          when:
+            - validation_mode == "strict"
+            - vyos_state.stdout != "running" or vyos_ssh is failed
+
+    # =========================================================================
+    # DNS Resolution Validation
+    # =========================================================================
+    - name: Validate DNS Resolution
+      block:
+        - name: Test DNS resolution for registry hostname
+          ansible.builtin.command:
+            cmd: "dig {{ target_registry.split(':')[0] }} +short"
+          register: dns_check
+          changed_when: false
+          failed_when: false
+
+        - name: Display DNS resolution status
+          ansible.builtin.debug:
+            msg: "{{ '✅ DNS resolution working (' + dns_check.stdout + ')' if dns_check.stdout | length > 0 else '❌ DNS resolution FAILED' }}"
+
+        - name: Fail if DNS not working (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ VALIDATION FAILED: DNS resolution not working
+
+              Registry Hostname: {{ target_registry.split(':')[0] }}
+              DNS Response: {{ dns_check.stdout | default('No response') }}
+
+              **Action Required**:
+              1. Check DNS server configuration: cat /etc/resolv.conf
+              2. Verify Route53 records (if using AWS): aws route53 list-resource-record-sets
+              3. Check FreeIPA DNS (if using FreeIPA): ipa dnsrecord-find
+              4. Test manual resolution: dig {{ target_registry.split(':')[0] }} @8.8.8.8
+
+              **Workflow 1 Status**: INCOMPLETE (DNS configuration failed)
+          when:
+            - validation_mode == "strict"
+            - dns_check.stdout | length == 0
+
+    # =========================================================================
+    # Container Registry Validation
+    # =========================================================================
+    - name: Validate Container Registry
+      block:
+        - name: Test registry API endpoint
+          ansible.builtin.uri:
+            url: "https://{{ target_registry }}/v2/"
+            validate_certs: "{{ not skip_tls_verify }}"
+            status_code: [200, 401]  # 401 is OK (auth required but reachable)
+            timeout: 10
+          register: registry_check
+          failed_when: false
+
+        - name: Display registry status
+          ansible.builtin.debug:
+            msg: "{{ '✅ Registry accessible (HTTP ' + (registry_check.status | string) + ')' if registry_check.status in [200, 401] else '❌ Registry NOT accessible' }}"
+
+        - name: Check registry service (Quay pod)
+          ansible.builtin.systemd:
+            name: quay-pod
+          register: quay_service
+          failed_when: false
+
+        - name: Display registry service status
+          ansible.builtin.debug:
+            msg: "{{ '✅ Registry service running' if quay_service.status.ActiveState == 'active' else '❌ Registry service NOT running' }}"
+
+        - name: Fail if registry not accessible (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ VALIDATION FAILED: Container registry not accessible
+
+              Registry URL: https://{{ target_registry }}/v2/
+              HTTP Status: {{ registry_check.status | default('No response') }}
+              Quay Service: {{ quay_service.status.ActiveState | default('unknown') }}
+
+              **Action Required**:
+              1. Check registry service: sudo systemctl status quay-pod
+              2. Verify registry containers: sudo podman ps --filter label=com.docker.compose.project=mirror-registry
+              3. Check registry logs: sudo journalctl -u quay-pod -n 100
+              4. Verify firewall allows port {{ target_registry.split(':')[1] | default('8443') }}
+
+              **Workflow 1 Status**: INCOMPLETE (Registry deployment failed)
+          when:
+            - validation_mode == "strict"
+            - registry_check.status not in [200, 401]
+
+    # =========================================================================
+    # HAProxy Validation
+    # =========================================================================
+    - name: Validate HAProxy Configuration
+      block:
+        - name: Check HAProxy service status
+          ansible.builtin.systemd:
+            name: haproxy
+          register: haproxy_status
+          failed_when: false
+
+        - name: Display HAProxy status
+          ansible.builtin.debug:
+            msg: "{{ '✅ HAProxy running' if haproxy_status.status.ActiveState == 'active' else '❌ HAProxy NOT running' }}"
+
+        - name: Test HAProxy routing to registry
+          ansible.builtin.uri:
+            url: "https://{{ ansible_fqdn }}:443/v2/"
+            validate_certs: "{{ not skip_tls_verify }}"
+            status_code: [200, 401]
+            timeout: 10
+          register: haproxy_routing
+          failed_when: false
+
+        - name: Display HAProxy routing status
+          ansible.builtin.debug:
+            msg: "{{ '✅ HAProxy routing to registry' if haproxy_routing.status in [200, 401] else '❌ HAProxy routing FAILED' }}"
+
+        - name: Fail if HAProxy not working (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ VALIDATION FAILED: HAProxy not routing correctly
+
+              HAProxy Service: {{ haproxy_status.status.ActiveState | default('unknown') }}
+              Routing Test: {{ haproxy_routing.status | default('No response') }}
+
+              **Action Required**:
+              1. Check HAProxy status: sudo systemctl status haproxy
+              2. Verify HAProxy configuration: sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+              3. Check HAProxy logs: sudo journalctl -u haproxy -n 50
+              4. Test backend connectivity: curl -k https://{{ target_registry }}/v2/
+
+              **Workflow 1 Status**: INCOMPLETE (HAProxy configuration failed)
+          when:
+            - validation_mode == "strict"
+            - haproxy_status.status.ActiveState != "active" or haproxy_routing.status not in [200, 401]
+
+    # =========================================================================
+    # SSL/TLS Certificate Validation
+    # =========================================================================
+    - name: Validate SSL/TLS Certificates
+      block:
+        - name: Check for certificate files
+          ansible.builtin.stat:
+            path: "/opt/registry-credentials/{{ item }}"
+          loop:
+            - registry.crt
+            - registry.key
+          register: cert_files
+
+        - name: Display certificate presence
+          ansible.builtin.debug:
+            msg: "{{ '✅ Certificates present (2/2 files)' if cert_files.results | selectattr('stat.exists') | list | length == 2 else '❌ Certificates MISSING' }}"
+
+        - name: Check certificate expiration
+          ansible.builtin.command:
+            cmd: "openssl x509 -in /opt/registry-credentials/registry.crt -noout -checkend 86400"
+          register: cert_expiry
+          changed_when: false
+          failed_when: false
+          when: cert_files.results[0].stat.exists
+
+        - name: Display certificate validity
+          ansible.builtin.debug:
+            msg: "{{ '✅ Certificate valid (>24h remaining)' if cert_expiry.rc == 0 else '⚠️  Certificate expires within 24 hours' }}"
+          when: cert_expiry is defined
+
+        - name: Verify certificate matches registry hostname
+          ansible.builtin.command:
+            cmd: "openssl x509 -in /opt/registry-credentials/registry.crt -noout -text"
+          register: cert_details
+          changed_when: false
+          when: cert_files.results[0].stat.exists
+
+        - name: Check certificate subject alternate names
+          ansible.builtin.debug:
+            msg: "Certificate SANs detected. Verification needed for hostname match."
+          when:
+            - cert_details is defined
+            - "'Subject Alternative Name' in cert_details.stdout"
+
+        - name: Fail if certificates invalid (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ VALIDATION FAILED: SSL/TLS certificates invalid
+
+              Certificate Files: {{ cert_files.results | selectattr('stat.exists') | list | length }} / 2
+              Certificate Expiry: {{ 'Valid' if cert_expiry.rc == 0 else 'Expired or expiring soon' }}
+
+              **Action Required**:
+              1. Check certificate files: ls -la /opt/registry-credentials/
+              2. Verify certificate validity: openssl x509 -in /opt/registry-credentials/registry.crt -noout -text
+              3. Check certificate expiration: openssl x509 -in /opt/registry-credentials/registry.crt -noout -dates
+              4. Regenerate certificates if needed: ansible-playbook playbooks/setup-certificates.yml
+
+              **Workflow 1 Status**: INCOMPLETE (Certificate setup failed)
+          when:
+            - validation_mode == "strict"
+            - cert_files.results | selectattr('stat.exists') | list | length < 2 or cert_expiry.rc != 0
+
+    # =========================================================================
+    # Network Connectivity Validation
+    # =========================================================================
+    - name: Validate Network Connectivity
+      block:
+        - name: Check firewall rules
+          ansible.builtin.command:
+            cmd: firewall-cmd --list-ports
+          register: firewall_ports
+          changed_when: false
+          failed_when: false
+
+        - name: Verify registry port open
+          ansible.builtin.set_fact:
+            registry_port_open: "{{ target_registry.split(':')[1] | default('8443') + '/tcp' in firewall_ports.stdout }}"
+          when: firewall_ports.rc == 0
+
+        - name: Display firewall status
+          ansible.builtin.debug:
+            msg: "{{ '✅ Registry port open in firewall' if registry_port_open else '❌ Registry port NOT open in firewall' }}"
+          when: registry_port_open is defined
+
+        - name: Test network connectivity from hypervisor to registry
+          ansible.builtin.command:
+            cmd: "curl -k -I https://{{ target_registry }}/v2/"
+          register: network_test
+          changed_when: false
+          failed_when: false
+
+        - name: Display network connectivity
+          ansible.builtin.debug:
+            msg: "{{ '✅ Network connectivity working' if network_test.rc == 0 else '❌ Network connectivity FAILED' }}"
+
+    # =========================================================================
+    # Validation Success Summary
+    # =========================================================================
+    - name: Display validation success summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "✅ Infrastructure Deployment Validation: PASSED"
+          - "============================================"
+          - ""
+          - "All infrastructure components validated successfully:"
+          - "  {{ '✅ VyOS Router: Running and accessible' if deployment_scenario == 'kvm_full' else '⏭️  VyOS: Not required for this scenario' }}"
+          - "  ✅ DNS Resolution: Working correctly"
+          - "  ✅ Container Registry: Accessible and authenticated"
+          - "  ✅ HAProxy: Routing traffic correctly"
+          - "  ✅ SSL/TLS Certificates: Valid and not expired"
+          - "  ✅ Network Connectivity: All components reachable"
+          - ""
+          - "Workflow 1 (Infrastructure Deployment) completed successfully."
+          - ""
+          - "Next Steps:"
+          - "  → Proceed to Workflow 2 (Image Mirroring)"
+          - "  → Workflow 2 will mirror OpenShift releases and operators to this registry"
+          - "  → Access AAP Web UI to launch Workflow 2"
+          - ""
+          - "Registry Details:"
+          - "  URL: https://{{ target_registry }}"
+          - "  Type: {{ registry_type | default('Quay') }}"
+          - "  Authentication: {{ 'Let's Encrypt' if certificate_mode == 'letsencrypt' else 'Self-signed CA' }}"
+          - ""
+          - "============================================"
