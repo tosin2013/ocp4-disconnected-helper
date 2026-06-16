@@ -1,22 +1,22 @@
 ---
-# AAP Configuration: Workflow 1 - OpenShift Infrastructure Deployment
+# AAP Configuration: Workflow 1 - Registry Infrastructure Deployment
 #
-# This playbook configures the "Workflow 1: OpenShift Infrastructure Deployment"
-# workflow in AAP 2.6 with conditional execution based on deployment scenario.
+# This playbook configures "Workflow 1: Registry Infrastructure Deployment"
+# workflow in AAP 2.6 for deploying container registry infrastructure.
 #
-# Workflow Structure:
-#   Step 1: Assess Deployment Environment (always)
-#   Step 2: Deploy VyOS Router (conditional - KVM only)
-#   Step 3: Configure DNS Services (conditional - if needed)
-#   Step 4: Deploy Registry VM (always)
-#   Step 5: Setup Registry (always - Quay/Harbor/JFrog)
-#   Step 6: Configure HAProxy (always)
-#   Step 7: Setup Certificates (always - Let's Encrypt or self-signed)
-#   Step 8: Verify Infrastructure (always)
+# ⚠️ BOOTSTRAP PREREQUISITES (Must exist BEFORE this workflow can run):
+#   - VyOS Router (network routing for AAP communication)
+#   - DNS Services (name resolution for aap.sandbox3377.opentlc.com)
+#   - AAP 2.6 (automation platform itself - bootstrap paradox)
+#
+# Workflow Structure (5 steps):
+#   Step 1: Deploy Registry VM (KVM guest provisioning)
+#   Step 2: Setup Registry (Quay/Harbor/JFrog installation)
+#   Step 3: Configure HAProxy (SNI routing and SSL termination)
+#   Step 4: Setup Certificates (Let's Encrypt or self-signed CA)
+#   Step 5: Verify Infrastructure (health checks and validation)
 #
 # Survey Integration:
-#   - Deployment Scenario: kvm_full / existing_infrastructure / cloud_deployment
-#   - DNS Provider: route53 / freeipa / none
 #   - Registry Type: quay / harbor / jfrog
 #   - Certificate Mode: letsencrypt / selfsigned
 #
@@ -24,7 +24,7 @@
 #   ansible-playbook -i inventory configure-infrastructure-workflow.yml \
 #     -e @extra_vars/aap-credentials.yml --vault-password-file ~/.vault_pass
 
-- name: Configure Workflow 1 - Infrastructure Deployment in AAP
+- name: Configure Workflow 1 - Registry Infrastructure Deployment in AAP
   hosts: localhost
   gather_facts: false
   collections:
@@ -32,140 +32,61 @@
 
   vars:
     # AAP Controller connection
-    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default('https://aap.sandbox3377.opentlc.com', true) }}"
-    controller_username: "{{ lookup('env', 'CONTROLLER_USERNAME') | default('admin', true) }}"
-    controller_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') }}"
-    validate_certs: false
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
 
-    # Project and inventory
-    project_name: "OpenShift Disconnected Helper"
-    inventory_name: "IBM Cloud KVM Infrastructure"
-    execution_environment: "OpenShift Disconnected EE"
+    # Project and inventory references
+    organization_name: "Default"
+    project_name: "ocp4-disconnected-helper"
+    inventory_name: "Disconnected Infrastructure"
+    credential_name: "KVM Hypervisor SSH Key"
+    execution_environment: "OCP4 Custom EE with oc-mirror"
 
     # Workflow name
-    workflow_name: "Workflow 1: OpenShift Infrastructure Deployment"
+    workflow_name: "Workflow 1: Registry Infrastructure Deployment"
 
   tasks:
     # =========================================================================
     # Job Templates Creation
     # =========================================================================
-    - name: Create job template - Step 1 Assess Deployment Environment
+    - name: Create job template - Step 1 Deploy Registry VM
       ansible.controller.job_template:
-        name: "Step 1: Assess Deployment Environment"
-        description: |
-          Environment assessment for Workflow 1 (Infrastructure Deployment).
-
-          Detects deployment scenario (KVM/Existing/Cloud) and determines which
-          infrastructure components need to be deployed:
-          - VyOS router (KVM environments only)
-          - DNS services (if not already configured)
-          - Registry VM (always)
-          - HAProxy load balancer (always)
-          - SSL/TLS certificates (always)
-
-          Outputs control facts for conditional workflow execution.
-        job_type: "run"
-        inventory: "{{ inventory_name }}"
-        project: "{{ project_name }}"
-        playbook: "playbooks/assess-deployment-environment.yml"
-        credentials:
-          - "IBM Cloud SSH Key"
-        execution_environment: "{{ execution_environment }}"
-        ask_variables_on_launch: true
-        extra_vars:
-          deployment_scenario: "{{ deployment_scenario | default('auto-detect') }}"
-          dns_provider: "{{ dns_provider | default('auto-detect') }}"
-          registry_type: "{{ registry_type | default('quay') }}"
-          certificate_mode: "{{ certificate_mode | default('auto-detect') }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Create job template - Step 2 Deploy VyOS Router
-      ansible.controller.job_template:
-        name: "Step 2: Deploy VyOS Router"
-        description: |
-          Deploy VyOS router for network infrastructure (KVM environments only).
-
-          This step is CONDITIONAL - only runs if:
-          - Deployment scenario is "kvm_full"
-          - VyOS router does not already exist
-
-          Provisions VyOS VM with VLAN segmentation for management, OpenShift, and storage networks.
-        job_type: "run"
-        inventory: "{{ inventory_name }}"
-        project: "{{ project_name }}"
-        playbook: "playbooks/deploy-vyos.yml"
-        credentials:
-          - "IBM Cloud SSH Key"
-        execution_environment: "{{ execution_environment }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Create job template - Step 3 Configure DNS Services
-      ansible.controller.job_template:
-        name: "Step 3: Configure DNS Services"
-        description: |
-          Configure DNS services (Route53 or FreeIPA).
-
-          This step is CONDITIONAL - only runs if:
-          - DNS is not already configured
-          - DNS provider is not "none"
-
-          Supports:
-          - AWS Route53 (cloud deployments with Let's Encrypt)
-          - FreeIPA (on-premise deployments)
-        job_type: "run"
-        inventory: "{{ inventory_name }}"
-        project: "{{ project_name }}"
-        playbook: "playbooks/setup-route53-dns.yml"
-        credentials:
-          - "IBM Cloud SSH Key"
-          - "AWS Credentials"
-        execution_environment: "{{ execution_environment }}"
-        ask_variables_on_launch: true
-        extra_vars:
-          dns_provider: "{{ dns_provider | default('route53') }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Create job template - Step 4 Deploy Registry VM
-      ansible.controller.job_template:
-        name: "Step 4: Deploy Registry VM"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        organization: "{{ organization_name }}"
+        name: "Step 1: Deploy Registry VM"
         description: |
           Deploy container registry VM using KVM/libvirt.
-
-          This step ALWAYS runs (not conditional).
 
           Provisions VM with:
           - 4 vCPU, 16 GiB RAM
           - 200 GiB disk for container storage
           - Static IP on management VLAN
           - Cloud-init configuration
+
+          Prerequisites: VyOS router and DNS services must be operational
         job_type: "run"
         inventory: "{{ inventory_name }}"
         project: "{{ project_name }}"
         playbook: "playbooks/deploy-registry.yml"
         credentials:
-          - "IBM Cloud SSH Key"
+          - "{{ credential_name }}"
         execution_environment: "{{ execution_environment }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        state: present
 
-    - name: Create job template - Step 5 Setup Registry
+    - name: Create job template - Step 2 Setup Registry
       ansible.controller.job_template:
-        name: "Step 5: Setup Registry (Quay/Harbor/JFrog)"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        organization: "{{ organization_name }}"
+        name: "Step 2: Setup Registry (Quay/Harbor/JFrog)"
         description: |
           Install and configure container registry (survey-driven selection).
-
-          This step ALWAYS runs (not conditional).
 
           Supported registry types:
           - Quay (mirror-registry v2)
@@ -178,24 +99,24 @@
         project: "{{ project_name }}"
         playbook: "playbooks/install-mirror-registry.yml"
         credentials:
-          - "IBM Cloud SSH Key"
+          - "{{ credential_name }}"
           - "Red Hat Registry Credentials"
         execution_environment: "{{ execution_environment }}"
         ask_variables_on_launch: true
         extra_vars:
           registry_type: "{{ registry_type | default('quay') }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        state: present
 
-    - name: Create job template - Step 6 Configure HAProxy
+    - name: Create job template - Step 3 Configure HAProxy
       ansible.controller.job_template:
-        name: "Step 6: Configure HAProxy Load Balancer"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        organization: "{{ organization_name }}"
+        name: "Step 3: Configure HAProxy Load Balancer"
         description: |
           Configure HAProxy for SNI-based routing and SSL termination.
-
-          This step ALWAYS runs (not conditional).
 
           Configuration includes:
           - Frontend SSL termination
@@ -207,20 +128,20 @@
         project: "{{ project_name }}"
         playbook: "playbooks/configure-haproxy.yml"
         credentials:
-          - "IBM Cloud SSH Key"
+          - "{{ credential_name }}"
         execution_environment: "{{ execution_environment }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        state: present
 
-    - name: Create job template - Step 7 Setup Certificates
+    - name: Create job template - Step 4 Setup Certificates
       ansible.controller.job_template:
-        name: "Step 7: Setup SSL/TLS Certificates"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        organization: "{{ organization_name }}"
+        name: "Step 4: Setup SSL/TLS Certificates"
         description: |
           Generate or provision SSL/TLS certificates (survey-driven mode).
-
-          This step ALWAYS runs (not conditional).
 
           Certificate modes:
           - Let's Encrypt (cloud deployments with Route53 DNS-01 validation)
@@ -232,31 +153,30 @@
         project: "{{ project_name }}"
         playbook: "playbooks/setup-certificates.yml"
         credentials:
-          - "IBM Cloud SSH Key"
+          - "{{ credential_name }}"
           - "AWS Credentials"
         execution_environment: "{{ execution_environment }}"
         ask_variables_on_launch: true
         extra_vars:
           certificate_mode: "{{ certificate_mode | default('selfsigned') }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        state: present
 
-    - name: Create job template - Step 8 Verify Infrastructure Deployment
+    - name: Create job template - Step 5 Verify Infrastructure Deployment
       ansible.controller.job_template:
-        name: "Step 8: Verify Infrastructure Deployment"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        organization: "{{ organization_name }}"
+        name: "Step 5: Verify Infrastructure Deployment"
         description: |
           Comprehensive infrastructure validation.
 
-          This step ALWAYS runs (not conditional).
-
           Validates:
-          - VyOS router accessibility (if deployed)
-          - DNS resolution working
           - Registry accessible and authenticated
           - HAProxy routing correctly
           - SSL/TLS certificates valid
+          - All services operational
 
           Fails workflow if any critical component not functional.
         job_type: "run"
@@ -264,61 +184,65 @@
         project: "{{ project_name }}"
         playbook: "playbooks/verify-infrastructure-deployment.yml"
         credentials:
-          - "IBM Cloud SSH Key"
+          - "{{ credential_name }}"
         execution_environment: "{{ execution_environment }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        state: present
 
     # =========================================================================
     # Workflow Template Creation
     # =========================================================================
-    - name: Create workflow template - Infrastructure Deployment
+    - name: Create workflow template - Registry Infrastructure Deployment
       ansible.controller.workflow_job_template:
         name: "{{ workflow_name }}"
         description: |
-          **Workflow 1: OpenShift Infrastructure Deployment**
+          **Workflow 1: Registry Infrastructure Deployment**
 
-          Deploy foundational infrastructure for OpenShift disconnected deployments with
-          conditional execution based on deployment scenario.
+          Deploy container registry infrastructure for OpenShift disconnected deployments.
 
-          **Deployment Scenarios** (survey-driven):
-          - **KVM Full Deployment**: VyOS + DNS + Registry + HAProxy + Certificates
-          - **Existing Infrastructure**: Skip VyOS/DNS, deploy Registry + HAProxy + Certificates
-          - **Cloud Deployment**: Minimal deployment (Registry + HAProxy + Certificates)
+          ⚠️ **Bootstrap Prerequisites** (must exist before running):
+          - **VyOS Router**: Network routing for AAP communication
+          - **DNS Services**: Name resolution (aap.sandbox3377.opentlc.com)
+          - **AAP 2.6**: Automation platform itself (bootstrap paradox)
 
-          **Workflow Execution Graph** (8 steps):
-          ```
-          Step 1: Assess Environment (always)
-                    ↓
-          Step 2: Deploy VyOS (conditional - KVM only)
-                    ↓
-          Step 3: Configure DNS (conditional - if needed)
-                    ↓
-          Step 4: Deploy Registry VM (always)
-                    ↓
-          Step 5: Setup Registry (always - Quay/Harbor/JFrog)
-                    ↓
-          Step 6: Configure HAProxy (always)
-                    ↓
-          Step 7: Setup Certificates (always - Let's Encrypt/self-signed)
-                    ↓
-          Step 8: Verify Infrastructure (always)
+          Deploy these manually BEFORE running this workflow:
+          ```bash
+          ansible-playbook playbooks/deploy-vyos.yml
+          ansible-playbook playbooks/setup-route53-dns.yml
+          ansible-playbook playbooks/deploy-aap-multi-node.yml
           ```
 
-          **Prerequisites**: None (this is the entry point for deployment)
+          **Workflow Components** (5 steps):
+          - Step 1: Deploy Registry VM (KVM guest provisioning)
+          - Step 2: Setup Registry (Quay/Harbor/JFrog)
+          - Step 3: Configure HAProxy (SNI routing and SSL termination)
+          - Step 4: Setup SSL/TLS Certificates (Let's Encrypt or self-signed)
+          - Step 5: Verify Infrastructure (health checks and validation)
+
+          **Workflow Execution Graph**:
+          ```
+          Step 1: Deploy Registry VM
+                    ↓
+          Step 2: Setup Registry (Quay/Harbor/JFrog)
+                    ↓
+          Step 3: Configure HAProxy
+                    ↓
+          Step 4: Setup Certificates (Let's Encrypt/self-signed)
+                    ↓
+          Step 5: Verify Infrastructure
+          ```
+
+          **Survey Parameters**:
+          - Registry Type: quay / harbor / jfrog
+          - Certificate Mode: letsencrypt / selfsigned
 
           **Next Workflow**: Workflow 2 (Image Mirroring) validates that this workflow completed successfully
-
-          **Conditional Execution**: Steps 2-3 run only if required based on environment assessment
         organization: "Default"
         inventory: "{{ inventory_name }}"
         survey_enabled: true
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     # =========================================================================
     # Workflow Survey Configuration
@@ -328,32 +252,9 @@
         name: "{{ workflow_name }}"
         survey_enabled: true
         survey_spec:
-          name: "Infrastructure Deployment Configuration"
-          description: "Configure deployment scenario and infrastructure components"
+          name: "Registry Infrastructure Configuration"
+          description: "Configure registry type and certificate mode"
           spec:
-            - question_name: "Deployment Scenario"
-              question_description: "Select deployment scenario based on your environment"
-              required: true
-              type: "multiplechoice"
-              variable: "deployment_scenario"
-              choices:
-                - "kvm_full"
-                - "existing_infrastructure"
-                - "cloud_deployment"
-              default: "kvm_full"
-
-            - question_name: "DNS Provider"
-              question_description: "Select DNS provider (auto-detect recommended)"
-              required: true
-              type: "multiplechoice"
-              variable: "dns_provider"
-              choices:
-                - "auto-detect"
-                - "route53"
-                - "freeipa"
-                - "none"
-              default: "auto-detect"
-
             - question_name: "Registry Type"
               question_description: "Select container registry to deploy"
               required: true
@@ -366,163 +267,85 @@
               default: "quay"
 
             - question_name: "Certificate Mode"
-              question_description: "Select certificate generation mode (auto-detect recommended)"
+              question_description: "Select certificate generation mode"
               required: true
               type: "multiplechoice"
               variable: "certificate_mode"
               choices:
-                - "auto-detect"
                 - "letsencrypt"
                 - "selfsigned"
-              default: "auto-detect"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+              default: "selfsigned"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     # =========================================================================
     # Workflow Nodes Creation
     # =========================================================================
-    - name: Create workflow node - Step 1 Assess Environment
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "assess_environment"
-        unified_job_template: "Step 1: Assess Deployment Environment"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Create workflow node - Step 2 Deploy VyOS
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "deploy_vyos"
-        unified_job_template: "Step 2: Deploy VyOS Router"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Create workflow node - Step 3 Configure DNS
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "configure_dns"
-        unified_job_template: "Step 3: Configure DNS Services"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Create workflow node - Step 4 Deploy Registry VM
+    - name: Create workflow node - Step 1 Deploy Registry VM
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "{{ workflow_name }}"
         identifier: "deploy_registry_vm"
-        unified_job_template: "Step 4: Deploy Registry VM"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        unified_job_template: "Step 1: Deploy Registry VM"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
-    - name: Create workflow node - Step 5 Setup Registry
+    - name: Create workflow node - Step 2 Setup Registry
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "{{ workflow_name }}"
         identifier: "setup_registry"
-        unified_job_template: "Step 5: Setup Registry (Quay/Harbor/JFrog)"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        unified_job_template: "Step 2: Setup Registry (Quay/Harbor/JFrog)"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
-    - name: Create workflow node - Step 6 Configure HAProxy
+    - name: Create workflow node - Step 3 Configure HAProxy
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "{{ workflow_name }}"
         identifier: "configure_haproxy"
-        unified_job_template: "Step 6: Configure HAProxy Load Balancer"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        unified_job_template: "Step 3: Configure HAProxy Load Balancer"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
-    - name: Create workflow node - Step 7 Setup Certificates
+    - name: Create workflow node - Step 4 Setup Certificates
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "{{ workflow_name }}"
         identifier: "setup_certificates"
-        unified_job_template: "Step 7: Setup SSL/TLS Certificates"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        unified_job_template: "Step 4: Setup SSL/TLS Certificates"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
-    - name: Create workflow node - Step 8 Verify Infrastructure
+    - name: Create workflow node - Step 5 Verify Infrastructure
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "{{ workflow_name }}"
         identifier: "verify_infrastructure"
-        unified_job_template: "Step 8: Verify Infrastructure Deployment"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        unified_job_template: "Step 5: Verify Infrastructure Deployment"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     # =========================================================================
-    # Workflow Node Linking (Conditional Execution Logic)
+    # Workflow Node Linking (Sequential Execution)
     # =========================================================================
-    # Sequential flow with conditional branches based on assessment results
-
-    - name: Link assess_environment → deploy_vyos (on success, if requires_vyos)
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "assess_environment"
-        success_nodes:
-          - "deploy_vyos"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Link deploy_vyos → configure_dns (on success, if requires_dns)
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "deploy_vyos"
-        success_nodes:
-          - "configure_dns"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    - name: Link configure_dns → deploy_registry_vm (on success)
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "configure_dns"
-        success_nodes:
-          - "deploy_registry_vm"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
-    # Alternative path: assess_environment → deploy_registry_vm (skip VyOS/DNS if not needed)
-    - name: Link assess_environment → deploy_registry_vm (if no VyOS/DNS needed)
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "{{ workflow_name }}"
-        identifier: "assess_environment"
-        success_nodes:
-          - "deploy_registry_vm"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
-
     - name: Link deploy_registry_vm → setup_registry (on success)
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "{{ workflow_name }}"
         identifier: "deploy_registry_vm"
         success_nodes:
           - "setup_registry"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     - name: Link setup_registry → configure_haproxy (on success)
       ansible.controller.workflow_job_template_node:
@@ -530,10 +353,10 @@
         identifier: "setup_registry"
         success_nodes:
           - "configure_haproxy"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     - name: Link configure_haproxy → setup_certificates (on success)
       ansible.controller.workflow_job_template_node:
@@ -541,10 +364,10 @@
         identifier: "configure_haproxy"
         success_nodes:
           - "setup_certificates"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     - name: Link setup_certificates → verify_infrastructure (on success)
       ansible.controller.workflow_job_template_node:
@@ -552,10 +375,10 @@
         identifier: "setup_certificates"
         success_nodes:
           - "verify_infrastructure"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ validate_certs }}"
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
 
     # =========================================================================
     # Summary
@@ -564,37 +387,32 @@
       ansible.builtin.debug:
         msg:
           - "=============================================="
-          - "Workflow 1: Infrastructure Deployment - Configured"
+          - "Workflow 1: Registry Infrastructure Deployment - Configured"
           - "=============================================="
           - ""
           - "Workflow Name: {{ workflow_name }}"
-          - "Survey Enabled: Yes (4 questions)"
-          - "Nodes: 8 job templates"
+          - "Survey Enabled: Yes (2 questions)"
+          - "Nodes: 5 job templates"
           - ""
-          - "Workflow Execution Graph:"
-          - "  Step 1: Assess Environment (always)"
-          - "  Step 2: Deploy VyOS (conditional - KVM only)"
-          - "  Step 3: Configure DNS (conditional - if needed)"
-          - "  Step 4: Deploy Registry VM (always)"
-          - "  Step 5: Setup Registry (always)"
-          - "  Step 6: Configure HAProxy (always)"
-          - "  Step 7: Setup Certificates (always)"
-          - "  Step 8: Verify Infrastructure (always)"
+          - "⚠️ Bootstrap Prerequisites (must be deployed manually FIRST):"
+          - "  - VyOS Router: ansible-playbook playbooks/deploy-vyos.yml"
+          - "  - DNS Services: ansible-playbook playbooks/setup-route53-dns.yml"
+          - "  - AAP 2.6: ansible-playbook playbooks/deploy-aap-multi-node.yml"
           - ""
-          - "Deployment Scenarios:"
-          - "  - KVM Full: All 8 steps execute"
-          - "  - Existing Infrastructure: Steps 1, 4-8 execute (skip VyOS/DNS)"
-          - "  - Cloud: Steps 1, 4-8 execute (skip VyOS/DNS)"
+          - "Workflow Execution Graph (5 steps):"
+          - "  Step 1: Deploy Registry VM"
+          - "  Step 2: Setup Registry (Quay/Harbor/JFrog)"
+          - "  Step 3: Configure HAProxy"
+          - "  Step 4: Setup Certificates (Let's Encrypt/self-signed)"
+          - "  Step 5: Verify Infrastructure"
           - ""
           - "Survey Questions:"
-          - "  1. Deployment Scenario (kvm_full / existing_infrastructure / cloud_deployment)"
-          - "  2. DNS Provider (auto-detect / route53 / freeipa / none)"
-          - "  3. Registry Type (quay / harbor / jfrog)"
-          - "  4. Certificate Mode (auto-detect / letsencrypt / selfsigned)"
+          - "  1. Registry Type (quay / harbor / jfrog)"
+          - "  2. Certificate Mode (letsencrypt / selfsigned)"
           - ""
           - "Next Steps:"
           - "  1. Deploy this configuration: ansible-playbook configure-infrastructure-workflow.yml"
-          - "  2. Access AAP Web UI: {{ controller_host }}"
+          - "  2. Access AAP Web UI: {{ aap_host }}"
           - "  3. Navigate to Templates → Workflows"
           - "  4. Launch '{{ workflow_name }}' with survey"
           - ""
