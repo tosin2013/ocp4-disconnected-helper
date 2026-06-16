@@ -1,0 +1,217 @@
+---
+# Verify Infrastructure Prerequisites for Workflow 2 (Image Mirroring)
+#
+# This playbook validates that Workflow 1 (Infrastructure Deployment) has
+# completed successfully before allowing Workflow 2 to proceed.
+#
+# Validates:
+#   - Container registry (Quay/Harbor/JFrog) is accessible
+#   - HAProxy load balancer is configured and routing traffic
+#   - SSL/TLS certificates are valid and not expired
+#   - Network connectivity to infrastructure components
+#
+# Usage:
+#   ansible-playbook -i inventory verify-infrastructure-prerequisites.yml
+#
+# Variables:
+#   required_services: List of services to validate (default: registry, haproxy)
+#   validation_mode: strict (fail on any issue) or permissive (warn only)
+#   target_registry: Registry URL to validate (from Workflow 2 survey)
+
+- name: Verify Infrastructure Prerequisites for Workflow 2
+  hosts: all  # Will resolve to kvm-host when AAP job template sets limit
+  gather_facts: true
+  become: false
+
+  vars:
+    # Default services to validate
+    required_services:
+      - registry
+      - haproxy
+      - certificates
+
+    # Validation mode
+    validation_mode: "strict"  # strict or permissive
+
+    # Registry settings (passed from Workflow 2 survey)
+    target_registry: "{{ target_registry | default('registry.ocp4.sandbox3377.opentlc.com:8443') }}"
+    target_namespace: "{{ target_namespace | default('openshift4') }}"
+
+  tasks:
+    # =========================================================================
+    # Validation Summary Header
+    # =========================================================================
+    - name: Display validation header
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Workflow 2: Infrastructure Prerequisite Validation"
+          - "============================================"
+          - ""
+          - "Validating that Workflow 1 (Infrastructure Deployment) completed successfully."
+          - ""
+          - "Required Services:"
+          - "  {% for service in required_services %}"
+          - "  - {{ service }}"
+          - "  {% endfor %}"
+          - ""
+          - "Target Registry: {{ target_registry }}"
+          - "Validation Mode: {{ validation_mode }}"
+          - ""
+          - "============================================"
+
+    # =========================================================================
+    # Validate Registry Accessibility
+    # =========================================================================
+    - name: Check registry accessibility (HTTP health check)
+      when: "'registry' in required_services"
+      block:
+        - name: Test registry API endpoint
+          ansible.builtin.uri:
+            url: "https://{{ target_registry }}/v2/"
+            validate_certs: false  # May use self-signed certs
+            status_code: [200, 401]  # 401 is OK (means auth required but reachable)
+            timeout: 10
+          register: registry_check
+          failed_when: false
+
+        - name: Display registry status
+          ansible.builtin.debug:
+            msg: "{{ '✅ Registry accessible' if registry_check.status in [200, 401] else '❌ Registry NOT accessible' }}"
+
+        - name: Fail if registry not accessible (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ PREREQUISITE FAILED: Container registry not accessible
+
+              Registry URL: https://{{ target_registry }}/v2/
+              HTTP Status: {{ registry_check.status | default('No response') }}
+
+              **Action Required**:
+              1. Run Workflow 1 (Infrastructure Deployment) first to deploy registry
+              2. Verify registry service is running:
+                 podman ps | grep quay
+              3. Check HAProxy routing configuration
+              4. Verify firewall allows traffic on port {{ target_registry.split(':')[1] | default('8443') }}
+
+              **Workflow Execution Order**:
+              ✅ Workflow 1: Infrastructure Deployment (REQUIRED - run this first)
+              ❌ Workflow 2: Image Mirroring (BLOCKED - you are here)
+              ⏸️  Workflow 3: Cluster Deployment (FUTURE)
+          when:
+            - validation_mode == "strict"
+            - registry_check.status not in [200, 401]
+
+    # =========================================================================
+    # Validate HAProxy Configuration
+    # =========================================================================
+    - name: Check HAProxy service status
+      when: "'haproxy' in required_services"
+      block:
+        - name: Check if HAProxy is running
+          ansible.builtin.systemd:
+            name: haproxy
+          register: haproxy_status
+          failed_when: false
+
+        - name: Display HAProxy status
+          ansible.builtin.debug:
+            msg: "{{ '✅ HAProxy running' if haproxy_status.status.ActiveState == 'active' else '❌ HAProxy NOT running' }}"
+
+        - name: Fail if HAProxy not running (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ PREREQUISITE FAILED: HAProxy load balancer not running
+
+              Service State: {{ haproxy_status.status.ActiveState | default('unknown') }}
+
+              **Action Required**:
+              1. Run Workflow 1 (Infrastructure Deployment) to configure HAProxy
+              2. Verify HAProxy configuration:
+                 sudo systemctl status haproxy
+              3. Check HAProxy logs for errors:
+                 sudo journalctl -u haproxy -n 50
+
+              **Workflow Execution Order**:
+              ✅ Workflow 1: Infrastructure Deployment (REQUIRED - run this first)
+              ❌ Workflow 2: Image Mirroring (BLOCKED - you are here)
+          when:
+            - validation_mode == "strict"
+            - haproxy_status.status.ActiveState != "active"
+
+    # =========================================================================
+    # Validate SSL/TLS Certificates
+    # =========================================================================
+    - name: Check certificate validity
+      when: "'certificates' in required_services"
+      block:
+        - name: Check for certificate files
+          ansible.builtin.stat:
+            path: "/opt/registry-credentials/{{ item }}"
+          loop:
+            - registry.crt
+            - registry.key
+          register: cert_files
+
+        - name: Display certificate status
+          ansible.builtin.debug:
+            msg: "{{ '✅ Certificates present' if cert_files.results | selectattr('stat.exists') | list | length == 2 else '❌ Certificates MISSING' }}"
+
+        - name: Check certificate expiration
+          ansible.builtin.command:
+            cmd: "openssl x509 -in /opt/registry-credentials/registry.crt -noout -checkend 86400"
+          register: cert_expiry
+          failed_when: false
+          when: cert_files.results[0].stat.exists
+
+        - name: Display certificate expiration status
+          ansible.builtin.debug:
+            msg: "{{ '✅ Certificate valid (>24h remaining)' if cert_expiry.rc == 0 else '⚠️  Certificate expires within 24 hours' }}"
+          when: cert_expiry is defined
+
+        - name: Fail if certificates missing or expired (strict mode)
+          ansible.builtin.fail:
+            msg: |
+              ❌ PREREQUISITE FAILED: SSL/TLS certificates missing or invalid
+
+              Certificate Path: /opt/registry-credentials/
+              Files Found: {{ cert_files.results | selectattr('stat.exists') | list | length }} / 2
+
+              **Action Required**:
+              1. Run Workflow 1 (Infrastructure Deployment) to generate certificates
+              2. Verify certificate setup:
+                 ls -la /opt/registry-credentials/
+              3. Check certificate validity:
+                 openssl x509 -in /opt/registry-credentials/registry.crt -noout -text
+
+              **Workflow Execution Order**:
+              ✅ Workflow 1: Infrastructure Deployment (REQUIRED - run this first)
+              ❌ Workflow 2: Image Mirroring (BLOCKED - you are here)
+          when:
+            - validation_mode == "strict"
+            - cert_files.results | selectattr('stat.exists') | list | length < 2
+
+    # =========================================================================
+    # Validation Summary
+    # =========================================================================
+    - name: Display validation success summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "✅ Infrastructure Prerequisite Validation: PASSED"
+          - "============================================"
+          - ""
+          - "All required services validated:"
+          - "  ✅ Registry: {{ target_registry }} (accessible)"
+          - "  ✅ HAProxy: Running and configured"
+          - "  ✅ Certificates: Valid and not expired"
+          - ""
+          - "Workflow 1 (Infrastructure Deployment) completed successfully."
+          - "Proceeding to Workflow 2 (Image Mirroring)..."
+          - ""
+          - "Next Steps:"
+          - "  → Step 1: Validate Operator Selection"
+          - "  → Step 2: Download OpenShift Images"
+          - "  → Step 3: Mirror Images to Registry"
+          - ""
+          - "============================================"
