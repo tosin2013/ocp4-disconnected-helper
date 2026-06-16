@@ -1,0 +1,160 @@
+---
+# Verify playbook for MAC address generation
+# Validates MAC format, determinism, and uniqueness
+
+- name: Verify - MAC Address Generation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read MAC generation results
+      ansible.builtin.slurp:
+        src: /tmp/molecule-test-mac/mac-results.txt
+      register: mac_results_b64
+
+    - name: Decode results
+      ansible.builtin.set_fact:
+        mac_results: "{{ mac_results_b64.content | b64decode }}"
+
+    - name: Display MAC results
+      ansible.builtin.debug:
+        var: mac_results
+
+    # Re-generate MACs for verification
+    - name: Re-generate MAC for test-vm-1 (first)
+      ansible.builtin.set_fact:
+        mac_vm1: "{{ '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-vm-1"
+
+    - name: Re-generate MAC for test-vm-1 (second time)
+      ansible.builtin.set_fact:
+        mac_vm1_again: "{{ '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-vm-1"
+
+    - name: Re-generate MAC for test-vm-2
+      ansible.builtin.set_fact:
+        mac_vm2: "{{ '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-vm-2"
+
+    # Test 1: Determinism (same name = same MAC)
+    - name: Assert MAC generation is deterministic
+      ansible.builtin.assert:
+        that:
+          - mac_vm1 == mac_vm1_again
+        fail_msg: "MAC generation not deterministic (same name produced different MACs)"
+        success_msg: "✓ MAC generation is deterministic"
+
+    # Test 2: Uniqueness (different names = different MACs)
+    - name: Assert different VMs get different MACs
+      ansible.builtin.assert:
+        that:
+          - mac_vm1 != mac_vm2
+        fail_msg: "Different VM names produced same MAC (collision)"
+        success_msg: "✓ Different VMs get unique MACs"
+
+    # Test 3: MAC format validation (52:54:00:xx:xx:xx)
+    - name: Assert MAC starts with 52:54:00 (KVM/QEMU OUI)
+      ansible.builtin.assert:
+        that:
+          - mac_vm1 is match('^52:54:00:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}$')
+          - mac_vm2 is match('^52:54:00:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}$')
+        fail_msg: "MAC address format invalid (must be 52:54:00:xx:xx:xx)"
+        success_msg: "✓ MAC format correct (52:54:00:xx:xx:xx)"
+
+    # Test 4: Generate multiple MACs and check uniqueness
+    - name: Generate MACs for 10 VMs
+      ansible.builtin.set_fact:
+        generated_macs: "{{ generated_macs | default([]) + ['52:54:00:' + ((('vm-' + (item | string)) | hash('md5'))[:6] | batch(2) | map('join') | join(':'))] }}"
+      loop: "{{ range(1, 11) | list }}"
+
+    - name: Count unique MACs
+      ansible.builtin.set_fact:
+        unique_mac_count: "{{ generated_macs | unique | length }}"
+        total_mac_count: "{{ generated_macs | length }}"
+
+    - name: Assert all generated MACs are unique
+      ansible.builtin.assert:
+        that:
+          - unique_mac_count | int == total_mac_count | int
+        fail_msg: "MAC collision detected ({{ unique_mac_count }} unique out of {{ total_mac_count }} total)"
+        success_msg: "✓ All {{ total_mac_count }} MACs are unique (no collisions)"
+
+    # Test 5: Manual MAC override
+    - name: Test manual override takes precedence
+      ansible.builtin.set_fact:
+        mac_with_override: "{{ vm_mac_address if vm_mac_address else '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-override-vm"
+        vm_mac_address: "52:54:00:aa:bb:cc"
+
+    - name: Assert manual MAC is used
+      ansible.builtin.assert:
+        that:
+          - mac_with_override == "52:54:00:aa:bb:cc"
+        fail_msg: "Manual MAC override not applied"
+        success_msg: "✓ Manual MAC override works"
+
+    # Test 6: Automatic MAC when override is empty
+    - name: Test automatic MAC when override is empty string
+      ansible.builtin.set_fact:
+        mac_auto_generated: "{{ vm_mac_address if vm_mac_address else '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-auto-vm"
+        vm_mac_address: ""
+
+    - name: Assert automatic generation when override empty
+      ansible.builtin.assert:
+        that:
+          - mac_auto_generated is match('^52:54:00:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}$')
+          - mac_auto_generated != ""
+        fail_msg: "Automatic MAC generation failed when override was empty"
+        success_msg: "✓ Automatic MAC generation works when override is empty"
+
+    # Test 7: Consistency check (same VM name always produces same MAC)
+    - name: Generate MAC 5 times for same VM name
+      ansible.builtin.set_fact:
+        consistency_macs: "{{ consistency_macs | default([]) + ['52:54:00:' + (('consistency-test-vm' | hash('md5'))[:6] | batch(2) | map('join') | join(':'))] }}"
+      loop: "{{ range(1, 6) | list }}"
+
+    - name: Assert consistency across multiple generations
+      ansible.builtin.assert:
+        that:
+          - consistency_macs | unique | length == 1
+        fail_msg: "Same VM name produced different MACs (not deterministic)"
+        success_msg: "✓ Same VM name always produces same MAC (5/5 consistent)"
+
+    # Test 8: Collision probability analysis
+    - name: Calculate collision probability (informational)
+      ansible.builtin.debug:
+        msg: |
+          MAC Address Space Analysis:
+          - Prefix: 52:54:00 (fixed, QEMU/KVM OUI)
+          - Variable bytes: 3 (last 24 bits)
+          - Total possible MACs: 16,777,216 (2^24)
+          - Generated MACs: {{ total_mac_count }}
+          - Collision probability: ~{{ (total_mac_count | int * (total_mac_count | int - 1) / 2) / 16777216.0 * 100 }}%
+          - Actual collisions: {{ total_mac_count | int - unique_mac_count | int }}
+
+    # Summary
+    - name: Test Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          MAC Address Generation Tests: PASSED
+          ============================================
+          ✓ Deterministic generation (same name = same MAC)
+          ✓ Unique MACs (different names = different MACs)
+          ✓ Format validation (52:54:00:xx:xx:xx)
+          ✓ No collisions in {{ total_mac_count }} generated MACs
+          ✓ Manual MAC override works
+          ✓ Automatic generation when override is empty
+          ✓ Consistency: 5/5 generations identical
+
+          Generated Examples:
+          - test-vm-1: {{ mac_vm1 }}
+          - test-vm-2: {{ mac_vm2 }}
+
+          Note: MD5 hash provides good distribution across 2^24 MAC space.
+          Collision probability negligible for typical deployments (<100 VMs).

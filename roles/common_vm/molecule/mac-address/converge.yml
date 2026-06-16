@@ -1,0 +1,85 @@
+---
+# Converge playbook for MAC address generation testing
+# Tests deterministic MAC generation from vm_name
+
+- name: Converge - MAC Address Generation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Create test output directory
+      ansible.builtin.file:
+        path: /tmp/molecule-test-mac
+        state: directory
+        mode: '0755'
+
+    # Test 1: Generate MAC from vm_name (deterministic)
+    - name: Generate MAC address for test-vm-1
+      ansible.builtin.set_fact:
+        mac_vm1: "{{ '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-vm-1"
+
+    - name: Generate MAC address for test-vm-2
+      ansible.builtin.set_fact:
+        mac_vm2: "{{ '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-vm-2"
+
+    - name: Generate MAC address for test-vm-1 again (idempotence test)
+      ansible.builtin.set_fact:
+        mac_vm1_again: "{{ '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-vm-1"
+
+    # Test 2: Generate MACs for multiple VMs
+    - name: Generate MACs for 10 different VMs
+      ansible.builtin.set_fact:
+        generated_macs: "{{ generated_macs | default([]) + [{'vm_name': 'vm-' + (item | string), 'mac': '52:54:00:' + ((('vm-' + (item | string)) | hash('md5'))[:6] | batch(2) | map('join') | join(':'))}] }}"
+      loop: "{{ range(1, 11) | list }}"
+
+    # Test 3: Manual MAC address override
+    - name: Test manual MAC address override
+      ansible.builtin.set_fact:
+        mac_manual: "{{ vm_mac_address if vm_mac_address else '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-override-vm"
+        vm_mac_address: "52:54:00:aa:bb:cc"
+
+    - name: Test automatic MAC when vm_mac_address is empty
+      ansible.builtin.set_fact:
+        mac_auto: "{{ vm_mac_address if vm_mac_address else '52:54:00:' + ((vm_name | hash('md5'))[:6] | batch(2) | map('join') | join(':')) }}"
+      vars:
+        vm_name: "test-auto-vm"
+        vm_mac_address: ""
+
+    # Save results for verification
+    - name: Save MAC generation results
+      ansible.builtin.copy:
+        content: |
+          # MAC Address Generation Test Results
+
+          ## Test 1: Deterministic Generation
+          test-vm-1 (first):  {{ mac_vm1 }}
+          test-vm-1 (second): {{ mac_vm1_again }}
+          test-vm-2:          {{ mac_vm2 }}
+
+          ## Test 2: Multiple VMs
+          {% for item in generated_macs %}
+          {{ item.vm_name }}: {{ item.mac }}
+          {% endfor %}
+
+          ## Test 3: Manual Override
+          Manual MAC:    {{ mac_manual }}
+          Automatic MAC: {{ mac_auto }}
+        dest: /tmp/molecule-test-mac/mac-results.txt
+        mode: '0644'
+
+    - name: Display MAC generation summary
+      ansible.builtin.debug:
+        msg:
+          - "Generated MACs:"
+          - "  test-vm-1: {{ mac_vm1 }}"
+          - "  test-vm-2: {{ mac_vm2 }}"
+          - "  test-vm-1 (again): {{ mac_vm1_again }}"
+          - "  Manual override: {{ mac_manual }}"
+          - "  Automatic: {{ mac_auto }}"

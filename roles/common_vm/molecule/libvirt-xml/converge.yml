@@ -1,0 +1,69 @@
+---
+# Converge playbook for libvirt XML validation
+# Generates VM domain XML and validates structure
+
+- name: Converge - Libvirt XML Generation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Create test output directory
+      ansible.builtin.file:
+        path: /tmp/molecule-test-libvirt
+        state: directory
+        mode: '0755'
+
+    # Test 1: Cloud-init mode (default)
+    - name: Generate domain XML with cloud-init ISO
+      ansible.builtin.template:
+        src: "../../templates/libvirt/domain.xml.j2"
+        dest: "/tmp/molecule-test-libvirt/domain-cloud-init.xml"
+        mode: '0644'
+      vars:
+        vm_name: "test-libvirt-vm"
+        vm_memory: 4096
+        vm_cpus: 4
+        vm_disk_path_full: "/var/lib/libvirt/images/test-libvirt-vm.qcow2"
+        vm_cloud_init_iso: "/var/lib/libvirt/images/test-libvirt-vm-cloud-init.iso"
+        vm_boot_iso: ""  # Empty - use cloud-init
+        vm_mac_address: "52:54:00:ab:cd:ef"
+        vm_network: "default"
+
+    # Test 2: Custom boot ISO mode (OpenShift Agent-Based Installer)
+    - name: Generate domain XML with custom boot ISO
+      ansible.builtin.template:
+        src: "../../templates/libvirt/domain.xml.j2"
+        dest: "/tmp/molecule-test-libvirt/domain-custom-iso.xml"
+        mode: '0644'
+      vars:
+        vm_name: "test-openshift-vm"
+        vm_memory: 16384
+        vm_cpus: 8
+        vm_disk_path_full: "/var/lib/libvirt/images/test-openshift-vm.qcow2"
+        vm_cloud_init_iso: "/var/lib/libvirt/images/test-openshift-vm-cloud-init.iso"
+        vm_boot_iso: "/data/agent.x86_64.iso"  # Custom ISO
+        vm_mac_address: "52:54:00:12:34:56"
+        vm_network: "openshift"
+
+    # Test 3: Minimal VM (low resources)
+    - name: Generate domain XML with minimal resources
+      ansible.builtin.template:
+        src: "../../templates/libvirt/domain.xml.j2"
+        dest: "/tmp/molecule-test-libvirt/domain-minimal.xml"
+        mode: '0644'
+      vars:
+        vm_name: "test-minimal-vm"
+        vm_memory: 2048
+        vm_cpus: 2
+        vm_disk_path_full: "/var/lib/libvirt/images/test-minimal-vm.qcow2"
+        vm_cloud_init_iso: "/var/lib/libvirt/images/test-minimal-vm-cloud-init.iso"
+        vm_boot_iso: ""
+        vm_mac_address: "52:54:00:aa:bb:cc"
+        vm_network: "default"
+
+    - name: Display generated XML files
+      ansible.builtin.debug:
+        msg:
+          - "Generated 3 libvirt domain XML files:"
+          - "  1. Cloud-init mode: /tmp/molecule-test-libvirt/domain-cloud-init.xml"
+          - "  2. Custom ISO mode: /tmp/molecule-test-libvirt/domain-custom-iso.xml"
+          - "  3. Minimal resources: /tmp/molecule-test-libvirt/domain-minimal.xml"

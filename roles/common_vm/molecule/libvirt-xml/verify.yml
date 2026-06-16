@@ -1,0 +1,217 @@
+---
+# Verify playbook for libvirt XML validation
+# Validates XML syntax and required elements
+
+- name: Verify - Libvirt XML Validation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # Test 1: Cloud-init mode XML validation
+    - name: Validate cloud-init XML syntax with xmllint
+      ansible.builtin.command:
+        cmd: xmllint --noout /tmp/molecule-test-libvirt/domain-cloud-init.xml
+      register: cloud_init_xml_validation
+      changed_when: false
+      failed_when: cloud_init_xml_validation.rc != 0
+
+    - name: Assert cloud-init XML is valid
+      ansible.builtin.assert:
+        that:
+          - cloud_init_xml_validation.rc == 0
+        fail_msg: "Cloud-init XML has invalid syntax"
+        success_msg: "✓ Cloud-init XML syntax valid"
+
+    # Test 2: Read and parse cloud-init XML
+    - name: Read cloud-init domain XML
+      ansible.builtin.slurp:
+        src: /tmp/molecule-test-libvirt/domain-cloud-init.xml
+      register: cloud_init_xml_b64
+
+    - name: Decode cloud-init XML
+      ansible.builtin.set_fact:
+        cloud_init_xml: "{{ cloud_init_xml_b64.content | b64decode }}"
+
+    # Test 3: Verify required XML elements
+    - name: Assert VM name is present
+      ansible.builtin.assert:
+        that:
+          - "'<name>test-libvirt-vm</name>' in cloud_init_xml"
+        fail_msg: "VM name not found in XML"
+        success_msg: "✓ VM name element present"
+
+    - name: Assert memory configuration
+      ansible.builtin.assert:
+        that:
+          - "'<memory unit=\\'MiB\\'>4096</memory>' in cloud_init_xml"
+        fail_msg: "Memory configuration incorrect"
+        success_msg: "✓ Memory configured (4096 MiB)"
+
+    - name: Assert CPU count
+      ansible.builtin.assert:
+        that:
+          - "'<vcpu>4</vcpu>' in cloud_init_xml"
+        fail_msg: "CPU count incorrect"
+        success_msg: "✓ CPU count configured (4 vCPUs)"
+
+    - name: Assert KVM domain type
+      ansible.builtin.assert:
+        that:
+          - "'<domain type=\\'kvm\\'>' in cloud_init_xml"
+        fail_msg: "Domain type not KVM"
+        success_msg: "✓ Domain type is KVM"
+
+    - name: Assert disk configuration
+      ansible.builtin.assert:
+        that:
+          - "'<disk type=\\'file\\' device=\\'disk\\'>' in cloud_init_xml"
+          - "'/var/lib/libvirt/images/test-libvirt-vm.qcow2' in cloud_init_xml"
+          - "'<driver name=\\'qemu\\' type=\\'qcow2\\'/>' in cloud_init_xml"
+        fail_msg: "Disk configuration missing or incorrect"
+        success_msg: "✓ Disk configuration correct (qcow2, virtio)"
+
+    - name: Assert cloud-init ISO is used (not custom boot ISO)
+      ansible.builtin.assert:
+        that:
+          - "'/var/lib/libvirt/images/test-libvirt-vm-cloud-init.iso' in cloud_init_xml"
+          - "'/data/agent.x86_64.iso' not in cloud_init_xml"
+        fail_msg: "Cloud-init ISO not configured correctly"
+        success_msg: "✓ Cloud-init ISO configured"
+
+    - name: Assert network interface configuration
+      ansible.builtin.assert:
+        that:
+          - "'<interface type=\\'network\\'>' in cloud_init_xml"
+          - "'<mac address=\\'52:54:00:ab:cd:ef\\'/>' in cloud_init_xml"
+          - "'<source network=\\'default\\'/>' in cloud_init_xml"
+          - "'<model type=\\'virtio\\'/>' in cloud_init_xml"
+        fail_msg: "Network configuration missing or incorrect"
+        success_msg: "✓ Network interface configured (MAC, virtio)"
+
+    - name: Assert serial console configuration
+      ansible.builtin.assert:
+        that:
+          - "'<serial type=\\'pty\\'>' in cloud_init_xml"
+          - "'<console type=\\'pty\\'>' in cloud_init_xml"
+        fail_msg: "Serial console not configured"
+        success_msg: "✓ Serial console configured"
+
+    - name: Assert VNC graphics
+      ansible.builtin.assert:
+        that:
+          - "'<graphics type=\\'vnc\\' port=\\'-1\\' autoport=\\'yes\\' listen=\\'127.0.0.1\\'>' in cloud_init_xml"
+        fail_msg: "VNC graphics not configured"
+        success_msg: "✓ VNC graphics configured (localhost only)"
+
+    # Test 4: Custom boot ISO mode validation
+    - name: Validate custom ISO XML syntax
+      ansible.builtin.command:
+        cmd: xmllint --noout /tmp/molecule-test-libvirt/domain-custom-iso.xml
+      register: custom_iso_xml_validation
+      changed_when: false
+      failed_when: custom_iso_xml_validation.rc != 0
+
+    - name: Read custom ISO domain XML
+      ansible.builtin.slurp:
+        src: /tmp/molecule-test-libvirt/domain-custom-iso.xml
+      register: custom_iso_xml_b64
+
+    - name: Decode custom ISO XML
+      ansible.builtin.set_fact:
+        custom_iso_xml: "{{ custom_iso_xml_b64.content | b64decode }}"
+
+    - name: Assert custom boot ISO is used (not cloud-init)
+      ansible.builtin.assert:
+        that:
+          - "'/data/agent.x86_64.iso' in custom_iso_xml"
+          - "'/var/lib/libvirt/images/test-openshift-vm-cloud-init.iso' not in custom_iso_xml"
+        fail_msg: "Custom boot ISO not configured correctly"
+        success_msg: "✓ Custom boot ISO configured (OpenShift Agent-Based)"
+
+    - name: Assert high-resource configuration for OpenShift
+      ansible.builtin.assert:
+        that:
+          - "'<memory unit=\\'MiB\\'>16384</memory>' in custom_iso_xml"
+          - "'<vcpu>8</vcpu>' in custom_iso_xml"
+        fail_msg: "High-resource configuration incorrect"
+        success_msg: "✓ High-resource config (16GB RAM, 8 vCPUs)"
+
+    # Test 5: Minimal VM validation
+    - name: Validate minimal XML syntax
+      ansible.builtin.command:
+        cmd: xmllint --noout /tmp/molecule-test-libvirt/domain-minimal.xml
+      register: minimal_xml_validation
+      changed_when: false
+      failed_when: minimal_xml_validation.rc != 0
+
+    - name: Read minimal domain XML
+      ansible.builtin.slurp:
+        src: /tmp/molecule-test-libvirt/domain-minimal.xml
+      register: minimal_xml_b64
+
+    - name: Decode minimal XML
+      ansible.builtin.set_fact:
+        minimal_xml: "{{ minimal_xml_b64.content | b64decode }}"
+
+    - name: Assert minimal resource configuration
+      ansible.builtin.assert:
+        that:
+          - "'<memory unit=\\'MiB\\'>2048</memory>' in minimal_xml"
+          - "'<vcpu>2</vcpu>' in minimal_xml"
+        fail_msg: "Minimal resource configuration incorrect"
+        success_msg: "✓ Minimal config (2GB RAM, 2 vCPUs)"
+
+    # Test 6: Verify Q35 machine type and host-passthrough CPU
+    - name: Assert Q35 machine type (modern chipset)
+      ansible.builtin.assert:
+        that:
+          - "'<type arch=\\'x86_64\\' machine=\\'q35\\'>hvm</type>' in cloud_init_xml"
+        fail_msg: "Q35 machine type not configured"
+        success_msg: "✓ Q35 machine type configured"
+
+    - name: Assert host-passthrough CPU mode
+      ansible.builtin.assert:
+        that:
+          - "'<cpu mode=\\'host-passthrough\\'/>' in cloud_init_xml"
+        fail_msg: "CPU mode not host-passthrough"
+        success_msg: "✓ CPU mode: host-passthrough (nested KVM support)"
+
+    # Test 7: Verify boot order and power management
+    - name: Assert boot order is hard disk first
+      ansible.builtin.assert:
+        that:
+          - "'<boot dev=\\'hd\\'/>' in cloud_init_xml"
+        fail_msg: "Boot order not set to hard disk"
+        success_msg: "✓ Boot order: hard disk first"
+
+    - name: Assert power management settings
+      ansible.builtin.assert:
+        that:
+          - "'<on_poweroff>destroy</on_poweroff>' in cloud_init_xml"
+          - "'<on_reboot>restart</on_reboot>' in cloud_init_xml"
+          - "'<on_crash>destroy</on_crash>' in cloud_init_xml"
+        fail_msg: "Power management settings incorrect"
+        success_msg: "✓ Power management configured"
+
+    # Summary
+    - name: Test Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          Libvirt XML Validation Tests: PASSED
+          ============================================
+          ✓ Cloud-init XML syntax valid
+          ✓ VM name, memory, CPU configured
+          ✓ Disk configuration (qcow2, virtio)
+          ✓ Cloud-init ISO vs custom boot ISO conditional
+          ✓ Network interface (MAC, virtio, network)
+          ✓ Serial console configured
+          ✓ VNC graphics (localhost only)
+          ✓ Q35 machine type (modern chipset)
+          ✓ CPU mode: host-passthrough (nested KVM)
+          ✓ Boot order: hard disk first
+          ✓ Power management settings
+
+          Tested Configurations:
+          - Cloud-init mode (4GB RAM, 4 vCPUs)
+          - Custom ISO mode (16GB RAM, 8 vCPUs, OpenShift)
+          - Minimal mode (2GB RAM, 2 vCPUs)

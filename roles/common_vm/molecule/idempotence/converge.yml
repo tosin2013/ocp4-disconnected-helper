@@ -1,0 +1,126 @@
+---
+# Converge playbook for idempotence testing
+# Simulates common_vm role behavior for idempotence validation
+
+- name: Converge - Idempotence Test
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-idempotence"
+    base_image: "{{ test_dir }}/base-image.qcow2"
+    vm_disk: "{{ test_dir }}/test-vm.qcow2"
+    cloud_init_iso: "{{ test_dir }}/test-vm-cloud-init.iso"
+    cloud_init_temp: "{{ test_dir }}/cloud-init-temp"
+  tasks:
+    # Simulate common_vm provision tasks
+    - name: Create test directory
+      ansible.builtin.file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Test 1: File creation with 'creates:' parameter
+    - name: Create fake base image (first run should create)
+      ansible.builtin.command:
+        cmd: touch {{ base_image }}
+        creates: "{{ base_image }}"
+      register: base_image_creation
+
+    - name: Create fake VM disk from base image (should use creates:)
+      ansible.builtin.command:
+        cmd: touch {{ vm_disk }}
+        creates: "{{ vm_disk }}"
+      register: vm_disk_creation
+
+    # Test 2: Cloud-init directory lifecycle
+    - name: Create temporary directory for cloud-init
+      ansible.builtin.file:
+        path: "{{ cloud_init_temp }}"
+        state: directory
+        mode: '0755'
+
+    - name: Generate cloud-init user-data (idempotent template)
+      ansible.builtin.template:
+        src: "../../templates/cloud-init/user-data.yml.j2"
+        dest: "{{ cloud_init_temp }}/user-data"
+        mode: '0600'
+      vars:
+        vm_name: "test-idempotence-vm"
+        vm_hostname: "test-idempotence-vm"
+        vm_fqdn: "test-idempotence-vm.example.com"
+        vm_user: "admin"
+        vm_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ test@example.com"
+      register: user_data_generation
+
+    - name: Generate cloud-init network-config (idempotent template)
+      ansible.builtin.template:
+        src: "../../templates/cloud-init/network-config.yml.j2"
+        dest: "{{ cloud_init_temp }}/network-config"
+        mode: '0600'
+      vars:
+        vm_use_static_ip: true
+        vm_static_ip: "192.168.10.100"
+        vm_netmask: "255.255.255.0"
+        vm_gateway: "192.168.10.1"
+        vm_dns_servers:
+          - "192.168.10.1"
+          - "8.8.8.8"
+      register: network_config_generation
+
+    # Test 3: ISO creation with 'creates:' parameter
+    - name: Create fake cloud-init ISO (should use creates:)
+      ansible.builtin.command:
+        cmd: touch {{ cloud_init_iso }}
+        creates: "{{ cloud_init_iso }}"
+      register: iso_creation
+
+    # Test 4: Conditional task (should skip on second run)
+    - name: Check if VM already exists (mock)
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/vm-exists-flag"
+      register: vm_exists_check
+
+    - name: Set VM exists fact
+      ansible.builtin.set_fact:
+        vm_already_exists: "{{ vm_exists_check.stat.exists }}"
+
+    - name: Create VM exists flag (only on first run)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/vm-exists-flag"
+        state: touch
+        mode: '0644'
+      when: not vm_already_exists
+      register: vm_flag_creation
+
+    # Test 5: Idempotent file permissions
+    - name: Set file permissions (should be idempotent)
+      ansible.builtin.file:
+        path: "{{ vm_disk }}"
+        mode: '0644'
+      register: file_permissions
+
+    # Save run results
+    - name: Save run results for verification
+      ansible.builtin.copy:
+        content: |
+          Run results for idempotence testing:
+
+          base_image_creation: changed={{ base_image_creation.changed }}
+          vm_disk_creation: changed={{ vm_disk_creation.changed }}
+          user_data_generation: changed={{ user_data_generation.changed }}
+          network_config_generation: changed={{ network_config_generation.changed }}
+          iso_creation: changed={{ iso_creation.changed }}
+          vm_flag_creation: {% if vm_flag_creation is defined %}changed={{ vm_flag_creation.changed }}{% else %}skipped=true{% endif %}
+
+          file_permissions: changed={{ file_permissions.changed }}
+        dest: "{{ test_dir }}/run-results.txt"
+        mode: '0644'
+
+    - name: Display run results
+      ansible.builtin.debug:
+        msg:
+          - "Idempotence test run completed"
+          - "Base image: {{ 'created' if base_image_creation.changed else 'already exists' }}"
+          - "VM disk: {{ 'created' if vm_disk_creation.changed else 'already exists' }}"
+          - "Cloud-init ISO: {{ 'created' if iso_creation.changed else 'already exists' }}"
+          - "VM flag: {{ 'created' if (vm_flag_creation is defined and vm_flag_creation.changed) else 'already exists' }}"
