@@ -1,6 +1,6 @@
 title: OpenShift Disconnected Helper
 description: Complete documentation for deploying disconnected OpenShift 4 clusters
-theme: just-the-docs
+remote_theme: just-the-docs/just-the-docs@v0.8.2
 url: https://tosin2013.github.io
 baseurl: /ocp4-disconnected-helper
 
@@ -26,6 +26,13 @@ mermaid:
 # Code highlighting
 color_scheme: dark
 highlighter: rouge
+
+# Plugins
+plugins:
+  - jekyll-remote-theme
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
 
 # Footer
 footer_content: "Copyright &copy; 2024-2026 Tosin Akinosho. Distributed under the Apache 2.0 License."
