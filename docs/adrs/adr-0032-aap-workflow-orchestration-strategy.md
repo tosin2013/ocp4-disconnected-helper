@@ -1,15 +1,16 @@
-# ADR 0032: AAP Workflow Orchestration for Infrastructure Lifecycle Management
+# ADR 0032: Multi-Workflow Orchestration for Complete OpenShift Disconnected Deployment
 
 ## Date
 2026-06-10
 
-## Status
-Accepted → **Validated in Production (v1.2)**
+**Updated**: 2026-06-16 (v1.3 - Multi-Workflow Architecture)
 
-**Production Validation**: 2026-06-11 (Release v1.2)  
-**Workflows Deployed**: 
-- Workflow ID 36: "Disconnected OpenShift Image Mirroring" (3-node with operator validation)
-- Validation successful in Workflow Job #118 (all 3 nodes passed)
+## Status
+Accepted → **Validated in Production (v1.2)** → **Expanded (v1.3)**
+
+**Production Validation**: 
+- v1.2 (2026-06-11): Workflow ID 36 "Disconnected OpenShift Image Mirroring" (3-node with operator validation)
+- v1.3 (2026-06-16): Multi-workflow architecture with conditional execution (3 workflows)
 
 ## Context
 
@@ -62,28 +63,122 @@ AAP workflow orchestration provides:
 
 ## Decision
 
-**Adopt AAP workflow orchestration as the standard pattern for infrastructure lifecycle management (deployment and teardown).**
+**Adopt AAP multi-workflow orchestration as the standard pattern for complete OpenShift disconnected deployment lifecycle.**
+
+### Workflow Catalog (v1.3)
+
+The complete deployment lifecycle is organized into **3 numbered workflows** with clear dependencies and execution order:
+
+#### **Workflow 1: OpenShift Infrastructure Deployment**
+**Purpose**: Deploy foundational infrastructure (network, DNS, registry, load balancer, certificates)  
+**Execution Model**: Conditional (adapts to deployment scenario)  
+**Components**:
+- VyOS Router (conditional - KVM environments only)
+- DNS Services (conditional - if not already configured)
+- Registry VM (Quay/Harbor/JFrog) (always)
+- HAProxy Load Balancer (always)
+- SSL/TLS Certificates (always)
+- Infrastructure verification (always)
+
+**Survey-Driven Scenarios**:
+- **KVM Full Deployment**: VyOS + DNS + Registry + HAProxy + Certificates
+- **Existing Infrastructure**: Skip VyOS/DNS, deploy Registry + HAProxy + Certificates
+- **Cloud Deployment**: Minimal deployment (Registry + HAProxy + Certificates)
+
+**Prerequisites**: None (this is the entry point)
+
+---
+
+#### **Workflow 2: OpenShift Image Mirroring**
+**Purpose**: Mirror OpenShift releases and operators to disconnected registry  
+**Execution Model**: Sequential (3-step with validation)  
+**Components**:
+- Operator selection validation (ADR-0034)
+- Image download to disk (oc-mirror mirrorToDisk)
+- Image push to registry (oc-mirror diskToMirror)
+
+**Survey Options**: Operator preset, Custom preset path, Target registry, Namespace
+
+**Prerequisites**: **Workflow 1 must complete successfully** (verified via Step 0: infrastructure health check)
+
+---
+
+#### **Workflow 3: OpenShift Cluster Deployment** (Future - Deferred to v1.4+)
+**Purpose**: Deploy OpenShift cluster using disconnected registry  
+**Execution Model**: Sequential (multi-phase cluster deployment)  
+**Components** (Planned):
+- Generate install-config.yaml with imageContentSources
+- Deploy bootstrap node
+- Deploy control plane (masters)
+- Deploy compute nodes (workers)
+- Post-deployment cluster configuration
+- Cluster verification
+
+**Prerequisites**: **Workflows 1 and 2 must complete successfully**
+
+**Status**: Deferred - requires 5+ new playbooks for cluster deployment orchestration
+
+---
+
+### Workflow Execution Order
+
+```
+┌────────────────────────────────────────┐
+│ Workflow 1: Infrastructure Deployment  │
+│ (Conditional: KVM/Existing/Cloud)      │
+└───────────────┬────────────────────────┘
+                │ ✅ Infrastructure Ready
+                ▼
+┌────────────────────────────────────────┐
+│ Workflow 2: Image Mirroring            │
+│ (Validates Workflow 1 prerequisites)   │
+└───────────────┬────────────────────────┘
+                │ ✅ Images Mirrored
+                ▼
+┌────────────────────────────────────────┐
+│ Workflow 3: Cluster Deployment (Future)│
+│ (Validates Workflows 1 & 2)            │
+└────────────────────────────────────────┘
+```
+
+**Enforcement**: Each workflow includes prerequisite validation step that fails gracefully if dependencies not met.
+
+---
 
 ### Included in Workflow Orchestration
 
-The following components MUST be managed via AAP workflows:
+Components are managed via workflows based on the 3-workflow catalog:
+
+**Workflow 1 Components** (Infrastructure):
+- **VyOS Router** (conditional - KVM only)
+- **DNS Services** (conditional - if needed)
 - **Registry VMs**: Quay, Harbor, JFrog (deploy + teardown)
-- **oc-mirror Operations**: download-to-disk, push-to-registry, workspace cleanup
-- **OpenShift Clusters**: node provisioning, cluster deployment (future)
-- **Storage Infrastructure**: NFS VMs, persistent storage (future)
-- **Monitoring Stack**: Prometheus, Grafana, Loki (future)
-- **Certificate Management**: Let's Encrypt renewal, self-signed CA rotation
+- **HAProxy Load Balancer**: SNI routing, SSL termination
+- **Certificate Management**: Let's Encrypt or self-signed CA
+
+**Workflow 2 Components** (Mirroring):
+- **oc-mirror Operations**: operator validation, download-to-disk, push-to-registry
+- **Operator Catalog Mirroring**: Survey-driven preset selection (ADR-0034)
+- **Release Channel Mirroring**: OpenShift version selection
+
+**Workflow 3 Components** (Cluster - Future):
+- **OpenShift Clusters**: node provisioning, cluster deployment
+- **Storage Infrastructure**: NFS VMs, persistent storage
+- **Monitoring Stack**: Prometheus, Grafana, Loki
 - **Backup/Restore**: Infrastructure state backup and recovery
 
 ### Excluded from Workflow Orchestration (Manual Playbook Only)
 
 The following components MUST remain manual playbook execution:
-- **VyOS Router**: Network foundation prerequisite (ADR 0025), deployed before AAP
-- **DNS Services**: Foundational dependency for all name resolution
 - **AAP Deployment**: Bootstrap paradox (cannot use AAP to deploy itself)
 - **Hypervisor Setup**: One-time IBM Cloud VSI provisioning
 
-**Rationale for Exclusions**: These components are either prerequisites for AAP operation (VyOS, DNS) or create circular dependencies (AAP deploying itself). They require one-time manual deployment.
+**Rationale for Exclusions**: These components create circular dependencies (AAP deploying itself) or are one-time cloud infrastructure provisioning.
+
+**NOTE**: VyOS and DNS are now **conditionally included** in Workflow 1:
+- **VyOS**: Deployed by Workflow 1 in KVM environments (conditional step)
+- **DNS**: Deployed by Workflow 1 if not already configured (conditional step)
+- **Rationale**: Survey-driven conditional execution allows Workflow 1 to adapt to different scenarios (KVM vs Existing vs Cloud)
 
 ### Workflow Design Principles
 
@@ -93,6 +188,9 @@ The following components MUST remain manual playbook execution:
 4. **Safety Gates**: Teardown workflows include dry-run mode and confirmation prompts by default
 5. **Dependency Awareness**: Workflows check prerequisites before execution (fail fast if dependencies missing)
 6. **Shared Templates**: Common tasks (VM provisioning, certificate setup) as reusable job templates
+7. **Conditional Execution (NEW - v1.3)**: Workflows adapt to deployment scenario via survey-driven conditional nodes
+8. **Multi-Environment Support (NEW - v1.3)**: Single workflow supports KVM, existing infrastructure, and cloud deployments
+9. **Clear Sequencing (NEW - v1.3)**: Numbered workflows (1, 2, 3) indicate execution order and dependencies
 
 ### Workflow Implementation Pattern
 
@@ -141,6 +239,38 @@ Workflow: Teardown [Component] Infrastructure
     - Remove monitoring targets
 ```
 
+### Cross-Workflow Concerns (v1.3)
+
+Certain architectural concerns span multiple workflows and require coordination:
+
+#### **Certificate Management**
+- **Workflow 1**: Generates/deploys initial certificates (Let's Encrypt or self-signed)
+- **Workflow 2**: Uses certificates for registry authentication
+- **Workflow 3** (Future): Uses certificates for cluster API server
+- **Shared Dependency**: All workflows assume certificates exist and are valid
+
+#### **DNS Configuration**
+- **Workflow 1**: Conditionally configures DNS (Route53 or FreeIPA)
+- **Workflow 2**: Relies on DNS for registry resolution
+- **Workflow 3** (Future): Requires DNS for cluster API and ingress
+- **Shared Dependency**: DNS must be functional before Workflows 2 and 3
+
+#### **Network Infrastructure**
+- **Workflow 1**: Conditionally deploys VyOS router (KVM environments)
+- **Workflow 2**: Assumes network connectivity to registry
+- **Workflow 3** (Future): Requires VLAN segmentation and routing
+- **Shared Dependency**: Network infrastructure must exist for all workflows
+
+#### **Registry Access**
+- **Workflow 1**: Deploys and configures container registry
+- **Workflow 2**: Pushes images to registry
+- **Workflow 3** (Future): Pulls images from registry during cluster deployment
+- **Shared Dependency**: Registry must be accessible and authenticated
+
+**Design Pattern**: Cross-workflow dependencies are validated via prerequisite check steps (Step 0) at the beginning of dependent workflows.
+
+---
+
 ### Workflow Configuration Management
 
 All workflow definitions MUST be stored in Git:
@@ -158,6 +288,9 @@ All workflow definitions MUST be stored in Git:
 4. **Faster Onboarding**: New operators can use Web UI without mastering Ansible CLI
 5. **Workflow Reusability**: Templates shared across development, staging, production environments
 6. **Integration Capabilities**: Webhooks enable external system triggers (monitoring alerts → auto-remediation)
+7. **Clear Execution Path (v1.3)**: Numbered workflows (1→2→3) eliminate confusion about deployment sequence
+8. **Multi-Environment Flexibility (v1.3)**: Single Workflow 1 adapts to KVM, existing infrastructure, and cloud scenarios
+9. **Progressive Deployment (v1.3)**: Users can deploy infrastructure only (Workflow 1) without mirroring or clusters
 
 ### Negative Consequences
 
@@ -165,6 +298,9 @@ All workflow definitions MUST be stored in Git:
 2. **Additional Maintenance Burden**: Must maintain both playbooks AND workflow configuration files
 3. **Learning Curve**: Workflow designer requires different skillset than playbook authoring
 4. **Dependency on AAP Availability**: Workflows unavailable if AAP Controller is down (fallback to manual playbooks)
+5. **Multi-Workflow Complexity (v1.3)**: Users must understand 3-workflow catalog and execution order
+6. **Conditional Logic Complexity (v1.3)**: Survey-driven conditional execution requires thorough testing across scenarios
+7. **Documentation Burden (v1.3)**: Must document which workflow to use for different deployment scenarios
 
 ### Risks and Mitigation
 
@@ -183,6 +319,18 @@ All workflow definitions MUST be stored in Git:
 **Risk: Bootstrap Dependency**
 - If AAP is unavailable, all infrastructure operations blocked
 - **Mitigation**: Maintain manual playbook execution capability. Document emergency recovery procedures using CLI.
+
+**Risk: Workflow Execution Out of Order (v1.3)**
+- Users might run Workflow 2 before Workflow 1, causing failures
+- **Mitigation**: Prerequisite check steps (Step 0) fail gracefully with clear error messages directing users to correct workflow.
+
+**Risk: Conditional Execution Bugs (v1.3)**
+- Survey-driven logic may have edge cases across KVM/Existing/Cloud scenarios
+- **Mitigation**: Comprehensive testing matrix covering all 3 scenarios. Validation playbooks verify environment state before conditional steps.
+
+**Risk: Documentation Drift (v1.3)**
+- Workflow catalog documentation may become outdated as workflows evolve
+- **Mitigation**: Single source of truth: `docs/AAP_WORKFLOW_CATALOG.md`. Reference from all other documentation.
 
 ## Alternatives Considered
 
@@ -216,20 +364,26 @@ All workflow definitions MUST be stored in Git:
 
 ## Implementation Notes
 
-### Phase 1: Registry Infrastructure Workflows (Current - June 2026)
-- ✅ Completed: oc-mirror download/push/teardown workflows
-- 🔄 In Progress: Quay registry VM deployment workflow
-- 📋 Planned: Harbor and JFrog registry workflows
+### Release v1.2 (June 2026)
+- ✅ Workflow 2: Image Mirroring (oc-mirror download/push with operator validation)
+- ✅ Survey integration for operator preset selection
+- ✅ Step numbering (Step 1, Step 2, Step 3)
 
-### Phase 2: Storage and Backup Workflows (Q3 2026)
-- NFS VM provisioning workflow
-- Backup/restore automation workflow
-- Certificate renewal workflow
+### Release v1.3 (June 2026) - Multi-Workflow Architecture
+- ✅ ADR-0032 updated with 3-workflow catalog
+- 🔄 In Progress: Workflow 1 configuration (infrastructure deployment)
+- 🔄 In Progress: Workflow 2 prerequisite check (verify Workflow 1 completed)
+- 📋 Planned: Workflow catalog documentation (`AAP_WORKFLOW_CATALOG.md`)
+- 📋 Planned: New playbooks (assess-deployment-environment.yml, verify-infrastructure-prerequisites.yml)
 
-### Phase 3: OpenShift Cluster Workflows (Q4 2026)
-- Cluster node provisioning workflow
-- Cluster installation workflow
-- **Cluster upgrade workflow** (see **ADR 0006: Lifecycle Management Strategy** for detailed upgrade workflow design)
+### Release v1.4+ (Future) - Cluster Deployment
+- 📋 Workflow 3: OpenShift Cluster Deployment
+  - Generate install-config.yaml with imageContentSources
+  - Bootstrap node deployment
+  - Control plane deployment
+  - Worker node deployment
+  - Cluster verification
+- 📋 **Cluster upgrade workflow** (see **ADR 0006: Lifecycle Management Strategy**)
   - Pre-upgrade health checks
   - Image mirroring (oc-mirror incremental)
   - Cluster state backup
@@ -238,17 +392,21 @@ All workflow definitions MUST be stored in Git:
   - ClusterVersion upgrade execution
   - Post-upgrade verification
 
-### Workflow Template Repository Structure
+### Workflow Template Repository Structure (v1.3)
 
 ```
 playbooks/aap-configuration/
-├── configure-complete-aap-setup.yml      # Bootstrap AAP with all workflows
-├── configure-deployment-workflow.yml     # oc-mirror deployment (Workflow ID 18)
-├── configure-teardown-workflow.yml       # oc-mirror teardown (Workflow ID 21)
-├── configure-registry-vm-workflow.yml    # Registry VM lifecycle (future)
-├── configure-storage-workflow.yml        # Storage infrastructure (future)
-├── configure-cluster-workflow.yml        # OpenShift cluster provisioning (future)
-└── configure-cluster-upgrade-workflow.yml # OpenShift cluster upgrades (future - see ADR 0006)
+├── configure-complete-aap-setup.yml           # Bootstrap AAP with all workflows
+├── configure-infrastructure-workflow.yml      # Workflow 1: Infrastructure (v1.3 NEW)
+├── configure-oc-mirror-workflow.yml           # Workflow 2: Image Mirroring (renamed in v1.3)
+├── configure-cluster-deployment-workflow.yml  # Workflow 3: Cluster Deployment (future)
+└── configure-cluster-upgrade-workflow.yml     # Cluster upgrades (future - see ADR 0006)
+
+playbooks/
+├── assess-deployment-environment.yml          # Workflow 1 Step 1 (v1.3 NEW)
+├── verify-infrastructure-prerequisites.yml    # Workflow 2 Step 0 (v1.3 NEW)
+├── verify-infrastructure-deployment.yml       # Workflow 1 Step 8 (v1.3 NEW)
+└── (existing playbooks)
 ```
 
 ## Compliance and Audit Requirements
