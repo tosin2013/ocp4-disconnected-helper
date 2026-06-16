@@ -1,0 +1,588 @@
+---
+# Configure AAP Workflow 3: OpenShift Cluster Deployment
+#
+# Creates workflow for end-to-end OpenShift cluster deployment using Agent-Based Installer.
+# Follows ADR-0035 (Agent-Based Installer) and ADR-0032 (AAP Workflow Orchestration).
+#
+# Workflow Structure (5 nodes):
+#   1. Validate Prerequisites → 2. Generate ISO → 3. Configure DNS → 4. Provision VMs → 5. Monitor Installation
+#
+# Survey Parameters:
+#   - cluster_name: Cluster identifier (e.g., ocp4-sno)
+#   - cluster_topology: sno|compact|ha
+#   - registry_type: quay|harbor|jfrog
+#   - base_domain: DNS domain (e.g., sandbox3377.opentlc.com)
+#   - ocp_version: OpenShift version (e.g., 4.21)
+#
+# Usage:
+#   ansible-playbook -i inventory/ibm-cloud.yml \
+#     playbooks/aap-configuration/configure-workflow-3-openshift-cluster.yml \
+#     -e@extra_vars/rhel-subscription-secrets.yml \
+#     --vault-password-file ~/.vault_pass
+#
+# Created: 2026-06-16
+# ADR: 0035 - Adopt OpenShift Agent-Based Installer
+
+- name: Configure AAP Workflow 3 - OpenShift Cluster Deployment
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_host: "https://aap.sandbox3377.opentlc.com"
+    aap_username: "admin"
+    aap_validate_certs: false
+
+    # Project and inventory references
+    project_name: "ocp4-disconnected-helper"
+    inventory_name: "Disconnected Infrastructure"
+    credential_name: "KVM Hypervisor SSH Key"
+    vault_credential_name: "Ansible Vault Password"
+    execution_environment: "OCP4 Custom EE with oc-mirror"
+
+    # Workflow configuration
+    workflow_name: "Deploy OpenShift Cluster (Agent-Based)"
+    workflow_description: |
+      End-to-end OpenShift cluster deployment using Agent-Based Installer.
+
+      Supports topologies:
+      - SNO (Single-Node OpenShift)
+      - Compact (3 control plane, schedulable)
+      - HA (3 control + 2+ workers)
+
+      Workflow phases:
+      1. Validate prerequisites (binary, pull secret, resources)
+      2. Generate bootable ISO (install-config + agent-config)
+      3. Configure DNS (dnsmasq or Route53)
+      4. Provision VMs (boot from ISO)
+      5. Monitor installation (bootstrap → operators)
+
+      Registry support: Quay, Harbor, JFrog
+      Deployment time: 35-90 minutes (topology-dependent)
+
+  tasks:
+    # =========================================================================
+    # Job Template 1: Validate Prerequisites
+    # =========================================================================
+    - name: Create job template - Validate OpenShift Prerequisites
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "OpenShift: Validate Prerequisites"
+        description: |
+          Validate prerequisites for OpenShift cluster deployment.
+
+          Checks:
+          - openshift-install binary exists
+          - Pull secret JSON valid
+          - Topology configuration correct
+          - Resource requirements met (memory, CPU, disk)
+          - Registry connectivity
+          - Libvirt connection
+
+          Fails fast if dependencies missing.
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/deploy-openshift-cluster.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "localhost"
+        execution_environment: "{{ execution_environment }}"
+        extra_vars:
+          ansible_run_tags: "phase0"
+        ask_variables_on_launch: true
+        verbosity: 1
+        state: present
+      register: prereq_template
+
+    - name: Display prerequisites template
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Node 1: Validate Prerequisites"
+          - "   Template ID: {{ prereq_template.id }}"
+
+    # =========================================================================
+    # Job Template 2: Generate Bootable ISO
+    # =========================================================================
+    - name: Create job template - Generate OpenShift ISO
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "OpenShift: Generate Bootable ISO"
+        description: |
+          Generate Agent-Based Installer bootable ISO.
+
+          Tasks:
+          - Prepare installation directory
+          - Generate install-config.yaml
+          - Generate agent-config.yaml
+          - Create ImageDigestMirrorSet manifests
+          - Run openshift-install agent create image
+          - Copy ISO to output directory
+
+          Output: /data/iso/<cluster>-agent.x86_64.iso (~1.2GB)
+          Time: 5-15 minutes (depends on mirror speed)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/deploy-openshift-cluster.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "localhost"
+        execution_environment: "{{ execution_environment }}"
+        extra_vars:
+          ansible_run_tags: "phase1,phase2,phase3"
+        ask_variables_on_launch: true
+        verbosity: 1
+        state: present
+      register: iso_template
+
+    - name: Display ISO generation template
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Node 2: Generate ISO"
+          - "   Template ID: {{ iso_template.id }}"
+
+    # =========================================================================
+    # Job Template 3: Configure DNS
+    # =========================================================================
+    - name: Create job template - Configure OpenShift DNS
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "OpenShift: Configure DNS"
+        description: |
+          Configure DNS records for OpenShift cluster.
+
+          Providers:
+          - dnsmasq: Local development (automated)
+          - Route53: Production AWS (requires credentials)
+          - none: Manual external DNS
+
+          Creates records:
+          - api.<cluster>.<domain> → API VIP
+          - *.apps.<cluster>.<domain> → Ingress VIP
+          - <node>.<cluster>.<domain> → Node IPs (multi-node)
+
+          Time: 1-3 minutes (provider-dependent)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/deploy-openshift-cluster.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "localhost"
+        execution_environment: "{{ execution_environment }}"
+        extra_vars:
+          ansible_run_tags: "phase4"
+        ask_variables_on_launch: true
+        verbosity: 1
+        state: present
+      register: dns_template
+
+    - name: Display DNS configuration template
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Node 3: Configure DNS"
+          - "   Template ID: {{ dns_template.id }}"
+
+    # =========================================================================
+    # Job Template 4: Provision VMs
+    # =========================================================================
+    - name: Create job template - Provision OpenShift VMs
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "OpenShift: Provision VMs"
+        description: |
+          Provision KVM VMs and boot from Agent-Based Installer ISO.
+
+          Topologies:
+          - SNO: 1 VM (32GB RAM, 8 vCPU)
+          - Compact: 3 control plane VMs (24GB RAM, 6 vCPU each)
+          - HA: 3 control + N workers (configurable resources)
+
+          Network:
+          - Static IP configuration via NMState (embedded in ISO)
+          - No cloud-init required
+          - Auto-start on boot
+
+          VMs boot from ISO and begin installation automatically.
+          Time: 3-5 minutes
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/deploy-openshift-cluster.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "localhost"
+        execution_environment: "{{ execution_environment }}"
+        extra_vars:
+          ansible_run_tags: "phase5"
+        ask_variables_on_launch: true
+        verbosity: 1
+        state: present
+      register: vm_template
+
+    - name: Display VM provisioning template
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Node 4: Provision VMs"
+          - "   Template ID: {{ vm_template.id }}"
+
+    # =========================================================================
+    # Job Template 5: Monitor Installation
+    # =========================================================================
+    - name: Create job template - Monitor OpenShift Installation
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "OpenShift: Monitor Installation"
+        description: |
+          Monitor OpenShift installation progress to completion.
+
+          Monitoring steps:
+          1. Bootstrap complete (20-40 min)
+          2. Control plane ready (5-10 min)
+          3. Worker nodes join (HA only, 5-15 min)
+          4. Cluster operators available (10-20 min)
+          5. Export credentials
+
+          Auto-approves worker CSRs (HA clusters).
+          Detects degraded operators.
+          Exports kubeconfig and kubeadmin password to /data/ocp-credentials.
+
+          Total time: 35-90 minutes (topology-dependent)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/deploy-openshift-cluster.yml"
+        credentials:
+          - "{{ credential_name }}"
+          - "{{ vault_credential_name }}"
+        limit: "localhost"
+        execution_environment: "{{ execution_environment }}"
+        extra_vars:
+          ansible_run_tags: "phase6"
+        ask_variables_on_launch: true
+        verbosity: 1
+        timeout: 7200  # 2 hours for full installation
+        state: present
+      register: monitor_template
+
+    - name: Display monitoring template
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Node 5: Monitor Installation"
+          - "   Template ID: {{ monitor_template.id }}"
+
+    # =========================================================================
+    # Workflow Job Template: Orchestrate All Nodes
+    # =========================================================================
+    - name: Create workflow job template - Deploy OpenShift Cluster
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "{{ workflow_name }}"
+        description: "{{ workflow_description }}"
+        inventory: "{{ inventory_name }}"
+        ask_variables_on_launch: true
+        survey_enabled: true
+        state: present
+      register: workflow
+
+    - name: Display workflow job template
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Job Template Created"
+          - "   ID: {{ workflow.id }}"
+          - "   Name: {{ workflow_name }}"
+
+    # =========================================================================
+    # Workflow Survey: Cluster Configuration Parameters
+    # =========================================================================
+    - name: Create workflow survey specification
+      ansible.controller.workflow_job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "{{ workflow_name }}"
+        survey_enabled: true
+        survey_spec:
+          name: "OpenShift Cluster Configuration"
+          description: "Configure OpenShift cluster deployment parameters"
+          spec:
+            - question_name: "Cluster Name"
+              question_description: "Cluster identifier (e.g., ocp4-sno, ocp4-prod)"
+              required: true
+              type: "text"
+              variable: "cluster_name"
+              min: 3
+              max: 63
+              default: "ocp4-cluster"
+
+            - question_name: "Base Domain"
+              question_description: "DNS base domain (e.g., sandbox3377.opentlc.com)"
+              required: true
+              type: "text"
+              variable: "base_domain"
+              default: "sandbox3377.opentlc.com"
+
+            - question_name: "Cluster Topology"
+              question_description: "Cluster architecture pattern"
+              required: true
+              type: "multiplechoice"
+              variable: "cluster_topology"
+              choices:
+                - "sno"
+                - "compact"
+                - "ha"
+              default: "sno"
+
+            - question_name: "Registry Type"
+              question_description: "Container registry for mirror images"
+              required: true
+              type: "multiplechoice"
+              variable: "registry_type"
+              choices:
+                - "quay"
+                - "harbor"
+                - "jfrog"
+              default: "quay"
+
+            - question_name: "Registry URL"
+              question_description: "Mirror registry URL (e.g., registry.example.com:8443)"
+              required: true
+              type: "text"
+              variable: "registry_url"
+              default: "registry.sandbox3377.opentlc.com:8443"
+
+            - question_name: "OpenShift Version"
+              question_description: "OCP version to deploy"
+              required: true
+              type: "multiplechoice"
+              variable: "ocp_version"
+              choices:
+                - "4.21"
+                - "4.20"
+                - "4.19"
+              default: "4.21"
+
+            - question_name: "DNS Provider"
+              question_description: "DNS configuration method"
+              required: true
+              type: "multiplechoice"
+              variable: "dns_provider"
+              choices:
+                - "dnsmasq"
+                - "route53"
+                - "none"
+              default: "dnsmasq"
+
+            - question_name: "API VIP"
+              question_description: "Virtual IP for API endpoint (e.g., 192.168.10.100)"
+              required: true
+              type: "text"
+              variable: "api_vip"
+              default: "192.168.10.100"
+
+            - question_name: "Ingress VIP"
+              question_description: "Virtual IP for Ingress/apps (e.g., 192.168.10.101)"
+              required: true
+              type: "text"
+              variable: "ingress_vip"
+              default: "192.168.10.101"
+        state: present
+
+    - name: Display survey configuration
+      ansible.builtin.debug:
+        msg:
+          - "✅ Workflow Survey Configured"
+          - "   Parameters: 9 survey questions"
+          - "   - cluster_name, base_domain, cluster_topology"
+          - "   - registry_type, registry_url, ocp_version"
+          - "   - dns_provider, api_vip, ingress_vip"
+
+    # =========================================================================
+    # Workflow Nodes: Link Job Templates in Sequence
+    # =========================================================================
+    - name: Create workflow node 1 - Validate Prerequisites
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "OpenShift: Validate Prerequisites"
+        identifier: "node1_validate"
+        state: present
+      register: node1
+
+    - name: Create workflow node 2 - Generate ISO
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "OpenShift: Generate Bootable ISO"
+        identifier: "node2_iso"
+        state: present
+      register: node2
+
+    - name: Create workflow node 3 - Configure DNS
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "OpenShift: Configure DNS"
+        identifier: "node3_dns"
+        state: present
+      register: node3
+
+    - name: Create workflow node 4 - Provision VMs
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "OpenShift: Provision VMs"
+        identifier: "node4_vms"
+        state: present
+      register: node4
+
+    - name: Create workflow node 5 - Monitor Installation
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        unified_job_template: "OpenShift: Monitor Installation"
+        identifier: "node5_monitor"
+        state: present
+      register: node5
+
+    # =========================================================================
+    # Workflow Links: Define Sequential Execution (on_success)
+    # =========================================================================
+    - name: Link node 1 → node 2 (Validate → Generate ISO)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "node1_validate"
+        success_nodes:
+          - "node2_iso"
+        state: present
+
+    - name: Link node 2 → node 3 (Generate ISO → Configure DNS)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "node2_iso"
+        success_nodes:
+          - "node3_dns"
+        state: present
+
+    - name: Link node 3 → node 4 (Configure DNS → Provision VMs)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "node3_dns"
+        success_nodes:
+          - "node4_vms"
+        state: present
+
+    - name: Link node 4 → node 5 (Provision VMs → Monitor Installation)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "{{ workflow_name }}"
+        identifier: "node4_vms"
+        success_nodes:
+          - "node5_monitor"
+        state: present
+
+    # =========================================================================
+    # Final Summary
+    # =========================================================================
+    - name: Display workflow configuration complete
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ AAP Workflow 3 Configuration Complete"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Workflow: {{ workflow_name }}"
+          - "Workflow ID: {{ workflow.id }}"
+          - ""
+          - "Job Templates Created (5):"
+          - "  1. OpenShift: Validate Prerequisites (ID: {{ prereq_template.id }})"
+          - "  2. OpenShift: Generate Bootable ISO (ID: {{ iso_template.id }})"
+          - "  3. OpenShift: Configure DNS (ID: {{ dns_template.id }})"
+          - "  4. OpenShift: Provision VMs (ID: {{ vm_template.id }})"
+          - "  5. OpenShift: Monitor Installation (ID: {{ monitor_template.id }})"
+          - ""
+          - "Workflow Nodes (5):"
+          - "  node1_validate → node2_iso → node3_dns → node4_vms → node5_monitor"
+          - ""
+          - "Survey Parameters (9):"
+          - "  - cluster_name, base_domain, cluster_topology"
+          - "  - registry_type, registry_url, ocp_version"
+          - "  - dns_provider, api_vip, ingress_vip"
+          - ""
+          - "Supported Topologies:"
+          - "  - SNO: 1 node (35-70 min)"
+          - "  - Compact: 3 nodes (35-70 min)"
+          - "  - HA: 6+ nodes (45-90 min)"
+          - ""
+          - "Registry Support:"
+          - "  - Quay (primary)"
+          - "  - Harbor (community)"
+          - "  - JFrog (community)"
+          - ""
+          - "Access Workflow:"
+          - "  {{ aap_host }}/#/templates/workflow_job_template/{{ workflow.id }}/details"
+          - ""
+          - "Launch Deployment:"
+          - "  1. Open AAP Web UI"
+          - "  2. Navigate to Templates → {{ workflow_name }}"
+          - "  3. Click 'Launch'"
+          - "  4. Fill survey (cluster_name, topology, registry, etc.)"
+          - "  5. Submit and monitor workflow progress"
+          - ""
+          - "Related ADRs:"
+          - "  - ADR-0035: Adopt OpenShift Agent-Based Installer"
+          - "  - ADR-0032: AAP Workflow Orchestration"
+          - "  - ADR-0024: Roles and Collections Architecture"

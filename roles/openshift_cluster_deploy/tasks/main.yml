@@ -38,11 +38,3 @@
 - name: Phase 6 - Monitor Installation
   ansible.builtin.include_tasks: monitor_installation.yml
   tags: [monitor, phase6]
-
-- name: Phase 7 - Configure Cluster Access
-  ansible.builtin.include_tasks: configure_access.yml
-  tags: [access, phase7]
-
-- name: Display Cluster Information
-  ansible.builtin.include_tasks: display_cluster_info.yml
-  tags: [always]

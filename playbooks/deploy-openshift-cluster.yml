@@ -1,0 +1,118 @@
+---
+# Deploy OpenShift Cluster using Agent-Based Installer
+#
+# Main orchestration playbook for OpenShift cluster deployment across all topologies.
+# Implements ADR-0035: Adopt OpenShift Agent-Based Installer
+#
+# Usage:
+#   # Full deployment (all phases)
+#   ansible-playbook playbooks/deploy-openshift-cluster.yml \
+#     -e @extra_vars/cluster-configs/sno-quay.yml
+#
+#   # Specific phases
+#   ansible-playbook playbooks/deploy-openshift-cluster.yml \
+#     -e @extra_vars/cluster-configs/compact-3node-quay.yml \
+#     --tags phase3,phase5
+#
+# Topology Examples:
+#   - SNO (Single-Node): extra_vars/cluster-configs/sno-quay.yml
+#   - Compact (3-node): extra_vars/cluster-configs/compact-3node-quay.yml
+#   - HA (6+ nodes): extra_vars/cluster-configs/ha-cluster-quay.yml
+#
+# Registry Support:
+#   - Quay (primary): *-quay.yml configs
+#   - Harbor (community): *-harbor.yml configs
+#   - JFrog (community): *-jfrog.yml configs
+#
+# Created: 2026-06-16
+# Related: ADR-0035, ADR-0024 (roles architecture), ADR-0003 (oc-mirror)
+
+- name: Deploy OpenShift Cluster with Agent-Based Installer
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    # Default paths (can be overridden by cluster config)
+    openshift_install_dir: "/root/openshift-install-{{ cluster_name }}"
+    iso_output_path: "/data/iso"
+    credentials_export_dir: "/data/ocp-credentials"
+
+  pre_tasks:
+    - name: Display deployment start banner
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "OpenShift Cluster Deployment - Agent-Based Installer"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+          - "Topology: {{ cluster_topology | upper }}"
+          - "Registry: {{ registry_type | upper }} ({{ registry_url }})"
+          - "OpenShift Version: {{ ocp_version }}"
+          - ""
+          - "Resources:"
+          - "  Control Plane: {{ control_plane_replicas }} nodes"
+          - "  Workers: {{ compute_replicas }} nodes"
+          - "  {% if cluster_topology == 'sno' %}VM: {{ vm_memory_mb }}MB RAM, {{ vm_vcpus }} vCPU{% elif cluster_topology == 'ha' %}Control: {{ vm_memory_mb_control }}MB, Workers: {{ vm_memory_mb_worker }}MB{% else %}Per Node: {{ vm_memory_mb }}MB RAM, {{ vm_vcpus }} vCPU{% endif %}"
+          - ""
+          - "Deployment Phases:"
+          - "  Phase 0: Validate prerequisites"
+          - "  Phase 1: Prepare installation directory"
+          - "  Phase 2: Generate manifests"
+          - "  Phase 3: Create bootable ISO"
+          - "  Phase 4: Configure DNS"
+          - "  Phase 5: Provision VMs"
+          - "  Phase 6: Monitor installation"
+          - "  Phase 7: Export credentials"
+          - ""
+          - "Execution Mode: {{ 'Tag-filtered' if ansible_run_tags else 'Full deployment' }}"
+          - "{% if ansible_run_tags %}Active Tags: {{ ansible_run_tags | join(', ') }}{% endif %}"
+
+    - name: Load registry-specific variables
+      ansible.builtin.include_vars:
+        file: "roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+      tags: always
+
+  roles:
+    - role: openshift_cluster_deploy
+      tags:
+        - deploy
+        - openshift
+
+  post_tasks:
+    - name: Display deployment complete banner
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ OpenShift Cluster Deployment Complete"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+          - "Topology: {{ cluster_topology | upper }}"
+          - ""
+          - "Access Information:"
+          - "  API: https://api.{{ cluster_name }}.{{ base_domain }}:6443"
+          - "  Console: https://console-openshift-console.apps.{{ cluster_name }}.{{ base_domain }}"
+          - ""
+          - "Credentials:"
+          - "  Location: {{ credentials_export_dir }}/{{ cluster_name }}-*"
+          - "  Username: kubeadmin"
+          - "  Password: {{ credentials_export_dir }}/{{ cluster_name }}-kubeadmin-password"
+          - ""
+          - "Quick Start:"
+          - "  export KUBECONFIG={{ credentials_export_dir }}/{{ cluster_name }}-kubeconfig"
+          - "  oc whoami"
+          - "  oc get nodes"
+          - "  oc get co  # Check cluster operators"
+          - ""
+          - "Next Steps:"
+          - "  1. Configure authentication (htpasswd, LDAP, OAuth)"
+          - "  2. Create additional users and projects"
+          - "  3. Deploy operators from mirror registry"
+          - "  4. Configure monitoring and alerting"
+          - "  5. Delete kubeadmin after creating admin users"
+          - ""
+          - "Documentation:"
+          - "  Access Instructions: {{ credentials_export_dir }}/{{ cluster_name }}-access-instructions.txt"
+          - "  Deployment Guide: docs/how-to/deploy-openshift-cluster-agent-based.md"
+      tags: always
