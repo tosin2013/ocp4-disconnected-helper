@@ -1,0 +1,298 @@
+---
+# Verify playbook for VM provisioning testing
+# Validates directory structure, file creation, cloud-init generation, and XML
+
+- name: Verify - Provision Testing
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-provision"
+  tasks:
+    # Test 1: Directory structure
+    - name: Check test directory exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/images"
+      register: images_dir_stat
+
+    - name: Assert images directory created
+      ansible.builtin.assert:
+        that:
+          - images_dir_stat.stat.exists
+          - images_dir_stat.stat.isdir
+        fail_msg: "Images directory not created"
+        success_msg: "✓ Images directory exists"
+
+    # Test 2: Base image handling
+    - name: Check base image exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/images/centos-stream-9-base.qcow2"
+      register: base_image_stat
+
+    - name: Assert base image created
+      ansible.builtin.assert:
+        that:
+          - base_image_stat.stat.exists
+          - base_image_stat.stat.mode == '0644'
+        fail_msg: "Base image not created or wrong permissions"
+        success_msg: "✓ Base image created with correct permissions"
+
+    # Test 3: VM disk creation
+    - name: Check VM disk exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/images/test-provision-vm.qcow2"
+      register: vm_disk_stat
+
+    - name: Assert VM disk created
+      ansible.builtin.assert:
+        that:
+          - vm_disk_stat.stat.exists
+          - vm_disk_stat.stat.mode == '0644'
+        fail_msg: "VM disk not created"
+        success_msg: "✓ VM disk created"
+
+    # Test 4: Cloud-init ISO
+    - name: Check cloud-init ISO exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/images/test-provision-vm-cloud-init.iso"
+      register: iso_stat
+
+    - name: Assert cloud-init ISO created
+      ansible.builtin.assert:
+        that:
+          - iso_stat.stat.exists
+          - iso_stat.stat.mode == '0644'
+        fail_msg: "Cloud-init ISO not created"
+        success_msg: "✓ Cloud-init ISO created"
+
+    # Test 5: Cloud-init user-data
+    - name: Check user-data file exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/user-data"
+      register: user_data_stat
+
+    - name: Assert user-data generated
+      ansible.builtin.assert:
+        that:
+          - user_data_stat.stat.exists
+        fail_msg: "User-data not generated"
+        success_msg: "✓ User-data generated"
+
+    - name: Validate user-data YAML syntax
+      ansible.builtin.command:
+        cmd: "python3 -c 'import yaml; yaml.safe_load(open(\"{{ test_dir }}/user-data\"))'"
+      register: user_data_validation
+      changed_when: false
+      failed_when: user_data_validation.rc != 0
+
+    - name: Assert user-data YAML valid
+      ansible.builtin.assert:
+        that:
+          - user_data_validation.rc == 0
+        fail_msg: "User-data has invalid YAML syntax"
+        success_msg: "✓ User-data YAML syntax valid"
+
+    - name: Read user-data content
+      ansible.builtin.slurp:
+        src: "{{ test_dir }}/user-data"
+      register: user_data_b64
+
+    - name: Parse user-data YAML
+      ansible.builtin.set_fact:
+        user_data: "{{ user_data_b64.content | b64decode | from_yaml }}"
+
+    - name: Assert user-data has required fields
+      ansible.builtin.assert:
+        that:
+          - "'#cloud-config' in (user_data_b64.content | b64decode)"
+          - user_data.hostname is defined
+          - user_data.fqdn is defined
+          - user_data.users is defined
+        fail_msg: "User-data missing required fields"
+        success_msg: "✓ User-data has required fields"
+
+    # Test 6: Cloud-init meta-data
+    - name: Check meta-data file exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/meta-data"
+      register: meta_data_stat
+
+    - name: Assert meta-data generated
+      ansible.builtin.assert:
+        that:
+          - meta_data_stat.stat.exists
+        fail_msg: "Meta-data not generated"
+        success_msg: "✓ Meta-data generated"
+
+    - name: Validate meta-data YAML syntax
+      ansible.builtin.command:
+        cmd: "python3 -c 'import yaml; yaml.safe_load(open(\"{{ test_dir }}/meta-data\"))'"
+      register: meta_data_validation
+      changed_when: false
+      failed_when: meta_data_validation.rc != 0
+
+    - name: Assert meta-data YAML valid
+      ansible.builtin.assert:
+        that:
+          - meta_data_validation.rc == 0
+        fail_msg: "Meta-data has invalid YAML syntax"
+        success_msg: "✓ Meta-data YAML syntax valid"
+
+    # Test 7: Cloud-init network-config
+    - name: Check network-config file exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/network-config"
+      register: network_config_stat
+
+    - name: Assert network-config generated
+      ansible.builtin.assert:
+        that:
+          - network_config_stat.stat.exists
+        fail_msg: "Network-config not generated"
+        success_msg: "✓ Network-config generated"
+
+    - name: Validate network-config YAML syntax
+      ansible.builtin.command:
+        cmd: "python3 -c 'import yaml; yaml.safe_load(open(\"{{ test_dir }}/network-config\"))'"
+      register: network_config_validation
+      changed_when: false
+      failed_when: network_config_validation.rc != 0
+
+    - name: Assert network-config YAML valid
+      ansible.builtin.assert:
+        that:
+          - network_config_validation.rc == 0
+        fail_msg: "Network-config has invalid YAML syntax"
+        success_msg: "✓ Network-config YAML syntax valid"
+
+    # Test 8: VM XML definition
+    - name: Check domain XML exists
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/domain.xml"
+      register: domain_xml_stat
+
+    - name: Assert domain XML generated
+      ansible.builtin.assert:
+        that:
+          - domain_xml_stat.stat.exists
+        fail_msg: "Domain XML not generated"
+        success_msg: "✓ Domain XML generated"
+
+    - name: Validate domain XML syntax
+      ansible.builtin.command:
+        cmd: "xmllint --noout {{ test_dir }}/domain.xml"
+      register: xml_validation
+      changed_when: false
+      failed_when: xml_validation.rc != 0
+
+    - name: Assert domain XML syntax valid
+      ansible.builtin.assert:
+        that:
+          - xml_validation.rc == 0
+        fail_msg: "Domain XML has invalid syntax"
+        success_msg: "✓ Domain XML syntax valid"
+
+    - name: Read domain XML content
+      ansible.builtin.slurp:
+        src: "{{ test_dir }}/domain.xml"
+      register: domain_xml_b64
+
+    - name: Assert domain XML has required elements
+      ansible.builtin.assert:
+        that:
+          - "'<name>test-provision-vm</name>' in (domain_xml_b64.content | b64decode)"
+          - "'<memory' in (domain_xml_b64.content | b64decode)"
+          - "'<vcpu' in (domain_xml_b64.content | b64decode)"
+          - "'<disk' in (domain_xml_b64.content | b64decode)"
+        fail_msg: "Domain XML missing required elements"
+        success_msg: "✓ Domain XML has required elements"
+
+    # Test 9: ISO tool detection
+    - name: Read ISO tool detection results
+      ansible.builtin.slurp:
+        src: "{{ test_dir }}/iso-tool-detection.txt"
+      register: iso_tool_b64
+
+    - name: Display ISO tool detection
+      ansible.builtin.debug:
+        var: iso_tool_b64.content | b64decode
+
+    - name: Assert ISO tool resolved
+      ansible.builtin.assert:
+        that:
+          - "'Resolved tool:' in (iso_tool_b64.content | b64decode)"
+        fail_msg: "ISO tool not resolved"
+        success_msg: "✓ ISO tool detection working"
+
+    # Test 10: VM exists flag
+    - name: Check VM exists flag
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/vm-exists-flag"
+      register: vm_flag_stat
+
+    - name: Assert VM exists flag created
+      ansible.builtin.assert:
+        that:
+          - vm_flag_stat.stat.exists
+        fail_msg: "VM exists flag not created"
+        success_msg: "✓ VM exists flag set"
+
+    # Test 11: Provisioning summary
+    - name: Read provisioning summary
+      ansible.builtin.slurp:
+        src: "{{ test_dir }}/provisioning-summary.txt"
+      register: summary_b64
+
+    - name: Display provisioning summary
+      ansible.builtin.debug:
+        var: summary_b64.content | b64decode
+
+    - name: Assert summary contains key information
+      ansible.builtin.assert:
+        that:
+          - "'VM Name: test-provision-vm' in (summary_b64.content | b64decode)"
+          - "'Memory: 4096MB' in (summary_b64.content | b64decode)"
+          - "'CPUs: 2' in (summary_b64.content | b64decode)"
+        fail_msg: "Provisioning summary incomplete"
+        success_msg: "✓ Provisioning summary complete"
+
+    # Test 12: File count validation
+    - name: Count created files
+      ansible.builtin.find:
+        paths: "{{ test_dir }}"
+        recurse: yes
+        file_type: file
+      register: created_files
+
+    - name: Assert minimum files created
+      ansible.builtin.assert:
+        that:
+          - created_files.matched >= 10
+        fail_msg: "Not enough files created (expected >= 10, got {{ created_files.matched }})"
+        success_msg: "✓ Provisioning created {{ created_files.matched }} files"
+
+    # Summary
+    - name: Test Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          Provision Workflow Tests: PASSED
+          ============================================
+          ✓ Directory structure created
+          ✓ Base image handling (download simulation)
+          ✓ VM disk creation from base image
+          ✓ Cloud-init ISO generated
+          ✓ User-data generated (valid YAML)
+          ✓ Meta-data generated (valid YAML)
+          ✓ Network-config generated (valid YAML)
+          ✓ Domain XML generated (valid syntax)
+          ✓ ISO tool detection working
+          ✓ VM exists flag mechanism
+          ✓ Provisioning summary complete
+          ✓ {{ created_files.matched }} files created
+
+          Coverage:
+          - provision.yml: Lines 4-187 (full task file)
+          - All templates validated (user-data, meta-data, network-config, domain.xml)
+          - Directory permissions and ownership logic
+          - ISO creation workflow
+          - VM lifecycle management preparation

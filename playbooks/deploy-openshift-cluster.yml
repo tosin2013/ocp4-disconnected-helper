@@ -70,7 +70,7 @@
 
     - name: Load registry-specific variables
       ansible.builtin.include_vars:
-        file: "roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+        file: "{{ playbook_dir }}/../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
       tags: always
 
   roles:

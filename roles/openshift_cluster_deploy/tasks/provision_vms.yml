@@ -19,12 +19,6 @@
 - name: Provision SNO VM
   when: cluster_topology == 'sno'
   block:
-    - name: Set SNO VM variables
-      ansible.builtin.set_fact:
-        vm_name: "{{ cluster_name }}"
-        vm_ip: "{{ api_vip }}"
-        vm_mac: "{{ sno_mac_address | default('') }}"
-
     - name: Provision SNO VM with common_vm role
       ansible.builtin.include_role:
         name: common_vm
@@ -34,8 +28,8 @@
         vm_vcpus: "{{ vm_vcpus }}"
         vm_disk_size_gb: "{{ vm_disk_size_gb }}"
         vm_network: "{{ vm_network }}"
+        vm_use_static_ip: true
         vm_static_ip: "{{ api_vip }}"
-        vm_mac_address: "{{ sno_mac_address | default('') }}"
         vm_boot_iso: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
         vm_base_image: "{{ vm_base_image | default('/data/libvirt-images/centos-stream-9-base.qcow2') }}"
 
@@ -51,6 +45,7 @@
         vm_vcpus: "{{ vm_vcpus_control | default(vm_vcpus) }}"
         vm_disk_size_gb: "{{ vm_disk_size_gb_control | default(vm_disk_size_gb) }}"
         vm_network: "{{ vm_network }}"
+        vm_use_static_ip: true
         vm_static_ip: "{{ item.ip }}"
         vm_mac_address: "{{ item.mac }}"
         vm_boot_iso: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
@@ -71,6 +66,7 @@
         vm_vcpus: "{{ vm_vcpus_worker }}"
         vm_disk_size_gb: "{{ vm_disk_size_gb_worker }}"
         vm_network: "{{ vm_network }}"
+        vm_use_static_ip: true
         vm_static_ip: "{{ item.ip }}"
         vm_mac_address: "{{ item.mac }}"
         vm_boot_iso: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"

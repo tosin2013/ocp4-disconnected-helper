@@ -1,0 +1,227 @@
+---
+# Converge playbook for VM provisioning testing
+# Simulates provision.yml task logic without actual VM creation
+
+- name: Converge - Provision Testing
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-provision"
+    vm_name: "test-provision-vm"
+    vm_images_dir: "{{ test_dir }}/images"
+    vm_base_image_path: "{{ vm_images_dir }}/centos-stream-9-base.qcow2"
+    vm_disk_path_full: "{{ vm_images_dir }}/{{ vm_name }}.qcow2"
+    vm_cloud_init_iso: "{{ vm_images_dir }}/{{ vm_name }}-cloud-init.iso"
+    vm_boot_iso: ""  # Empty = generate cloud-init ISO
+    vm_disk_size: 50
+    vm_memory: 4096
+    vm_cpus: 2
+    iso_create_cmd: "xorrisofs"
+  tasks:
+    # Test 1: Directory and permission setup
+    - name: Create test directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ test_dir }}"
+        - "{{ vm_images_dir }}"
+
+    # Test 2: ISO tool detection logic
+    - name: Check for ISO creation tool (simulated)
+      ansible.builtin.command:
+        cmd: which xorrisofs
+      register: iso_tool_check
+      failed_when: false
+      changed_when: false
+
+    - name: Set ISO creation command
+      ansible.builtin.set_fact:
+        iso_create_cmd_resolved: "{{ iso_tool_check.stdout if iso_tool_check.rc == 0 else 'xorrisofs' }}"
+
+    - name: Save ISO tool detection result
+      ansible.builtin.copy:
+        content: |
+          ISO Tool Detection:
+          Command: which xorrisofs
+          Return code: {{ iso_tool_check.rc }}
+          Resolved tool: {{ iso_create_cmd_resolved }}
+        dest: "{{ test_dir }}/iso-tool-detection.txt"
+        mode: '0644'
+
+    # Test 3: VM existence check (simulated with file flag)
+    - name: Check if VM already exists (simulated)
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/vm-exists-flag"
+      register: vm_exists_check
+
+    - name: Set VM exists fact
+      ansible.builtin.set_fact:
+        vm_already_exists: "{{ vm_exists_check.stat.exists }}"
+
+    - name: Create VM exists flag (first run)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/vm-exists-flag"
+        state: touch
+        mode: '0644'
+      when: not vm_already_exists
+
+    # Test 4: Base image handling
+    - name: Check if base image exists
+      ansible.builtin.stat:
+        path: "{{ vm_base_image_path }}"
+      register: base_image_stat
+
+    - name: Create fake base image (simulate download)
+      ansible.builtin.command:
+        cmd: "dd if=/dev/zero of={{ vm_base_image_path }} bs=1M count=1"
+        creates: "{{ vm_base_image_path }}"
+      when: not base_image_stat.stat.exists
+
+    - name: Set base image permissions
+      ansible.builtin.file:
+        path: "{{ vm_base_image_path }}"
+        mode: '0644'
+
+    # Test 5: VM disk creation (qemu-img create simulation)
+    - name: Create VM disk from base image (simulated)
+      ansible.builtin.command:
+        cmd: "touch {{ vm_disk_path_full }}"
+        creates: "{{ vm_disk_path_full }}"
+
+    - name: Set VM disk permissions
+      ansible.builtin.file:
+        path: "{{ vm_disk_path_full }}"
+        mode: '0644'
+
+    # Test 6: Cloud-init ISO generation (full workflow)
+    - name: Cloud-init ISO generation workflow
+      when: not vm_boot_iso
+      block:
+        - name: Create temporary directory for cloud-init
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: cloud-init-
+          register: cloud_init_temp
+
+        - name: Generate cloud-init user-data
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/user-data.yml.j2"
+            dest: "{{ cloud_init_temp.path }}/user-data"
+            mode: '0600'
+          vars:
+            vm_hostname: "test-provision-vm"
+            vm_fqdn: "test-provision-vm.example.com"
+            vm_user: "admin"
+            vm_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ test@example.com"
+
+        - name: Generate cloud-init meta-data
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/meta-data.yml.j2"
+            dest: "{{ cloud_init_temp.path }}/meta-data"
+            mode: '0600'
+
+        - name: Generate cloud-init network-config
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/network-config.yml.j2"
+            dest: "{{ cloud_init_temp.path }}/network-config"
+            mode: '0600'
+          vars:
+            vm_use_static_ip: true
+            vm_static_ip: "192.168.10.100"
+            vm_gateway: "192.168.10.1"
+            vm_dns_servers:
+              - "192.168.10.1"
+              - "8.8.8.8"
+
+        - name: Create cloud-init ISO (simulated)
+          ansible.builtin.command:
+            cmd: "touch {{ vm_cloud_init_iso }}"
+            creates: "{{ vm_cloud_init_iso }}"
+
+        - name: Set cloud-init ISO permissions
+          ansible.builtin.file:
+            path: "{{ vm_cloud_init_iso }}"
+            mode: '0644'
+
+        - name: Copy cloud-init files for verification
+          ansible.builtin.copy:
+            src: "{{ cloud_init_temp.path }}/{{ item }}"
+            dest: "{{ test_dir }}/{{ item }}"
+            mode: '0644'
+            remote_src: yes
+          loop:
+            - user-data
+            - meta-data
+            - network-config
+
+        - name: Clean up temporary directory
+          ansible.builtin.file:
+            path: "{{ cloud_init_temp.path }}"
+            state: absent
+
+    # Test 7: Custom boot ISO path (skip cloud-init)
+    - name: Test custom boot ISO scenario
+      when: false  # Disabled for this scenario, tested separately
+      block:
+        - name: Display boot ISO message
+          ansible.builtin.debug:
+            msg:
+              - "Using custom boot ISO: {{ vm_boot_iso }}"
+              - "Skipping cloud-init generation"
+
+    # Test 8: VM XML definition generation
+    - name: Generate VM XML definition
+      ansible.builtin.set_fact:
+        vm_xml_generated: "{{ lookup('template', '../../templates/libvirt/domain.xml.j2') }}"
+      vars:
+        vm_name: "test-provision-vm"
+        vm_memory: 4096
+        vm_cpus: 2
+        vm_disk_path: "{{ vm_disk_path_full }}"
+        vm_boot_iso: ""
+        vm_cloud_init_iso: "{{ vm_cloud_init_iso }}"
+        vm_mac_address: ""
+        vm_network: "default"
+
+    - name: Save VM XML to file
+      ansible.builtin.copy:
+        content: "{{ vm_xml_generated }}"
+        dest: "{{ test_dir }}/domain.xml"
+        mode: '0644'
+
+    # Test 9: Provisioning summary
+    - name: Save provisioning summary
+      ansible.builtin.copy:
+        content: |
+          VM Provisioning Summary
+          =======================
+          VM Name: {{ vm_name }}
+          Memory: {{ vm_memory }}MB
+          CPUs: {{ vm_cpus }}
+          Disk Size: {{ vm_disk_size }}GB
+
+          Files Created:
+          - Base image: {{ vm_base_image_path }}
+          - VM disk: {{ vm_disk_path_full }}
+          - Cloud-init ISO: {{ vm_cloud_init_iso }}
+          - Domain XML: {{ test_dir }}/domain.xml
+
+          Cloud-init Configuration:
+          - User-data: {{ test_dir }}/user-data
+          - Meta-data: {{ test_dir }}/meta-data
+          - Network-config: {{ test_dir }}/network-config
+
+          VM Exists: {{ vm_already_exists }}
+          ISO Tool: {{ iso_create_cmd_resolved }}
+        dest: "{{ test_dir }}/provisioning-summary.txt"
+        mode: '0644'
+
+    - name: Display provisioning results
+      ansible.builtin.debug:
+        msg:
+          - "Provisioning workflow completed"
+          - "VM exists (before): {{ vm_already_exists }}"
+          - "Base image: {{ 'exists' if base_image_stat.stat.exists else 'created' }}"
+          - "ISO tool: {{ iso_create_cmd_resolved }}"

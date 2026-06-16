@@ -1,5 +1,7 @@
 ---
 galaxy_info:
+  role_name: common_vm
+  namespace: ocp4_disconnected
   author: Platform Team
   description: Common VM provisioning tasks using community.libvirt and cloud-init
   company: ocp4-disconnected-helper

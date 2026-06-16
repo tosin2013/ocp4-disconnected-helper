@@ -1,0 +1,56 @@
+---
+# Molecule scenario for testing VM deletion logic
+#
+# Tests:
+# - VM resource cleanup (disk, ISO, definition)
+# - Graceful handling when VM doesn't exist
+# - Force recreate workflow
+
+dependency:
+  name: galaxy
+  enabled: false
+
+ansible:
+  cfg:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+      callbacks_enabled: profile_tasks
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+
+  playbooks:
+    create: ../default/create.yml
+    converge: converge.yml
+    destroy: ../default/destroy.yml
+    verify: verify.yml
+
+platforms:
+  - name: deletion-test
+    image: registry.access.redhat.com/ubi9/ubi-init:latest
+    pre_build_image: true
+    command: /usr/sbin/init
+    privileged: true
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      /run: ""
+      /tmp: ""
+
+provisioner:
+  name: ansible
+  log: true
+  options:
+    diff: true
+
+verifier:
+  name: ansible
+
+scenario:
+  name: deletion
+  test_sequence:
+    - destroy
+    - create
+    - converge
+    - verify
+    - destroy

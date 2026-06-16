@@ -1,0 +1,166 @@
+---
+# Converge playbook for VM deletion testing
+# Simulates delete.yml task logic
+
+- name: Converge - Deletion Testing
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-deletion"
+    vm_name: "test-deletion-vm"
+    vm_images_dir: "{{ test_dir }}/images"
+    vm_disk_path_full: "{{ vm_images_dir }}/{{ vm_name }}.qcow2"
+    vm_cloud_init_iso: "{{ vm_images_dir }}/{{ vm_name }}-cloud-init.iso"
+  tasks:
+    # Setup: Create test resources to delete
+    - name: Create test directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ test_dir }}"
+        - "{{ vm_images_dir }}"
+
+    # Test 1: Create resources that will be deleted
+    - name: Create fake VM disk
+      ansible.builtin.file:
+        path: "{{ vm_disk_path_full }}"
+        state: touch
+        mode: '0644'
+
+    - name: Create fake cloud-init ISO
+      ansible.builtin.file:
+        path: "{{ vm_cloud_init_iso }}"
+        state: touch
+        mode: '0644'
+
+    - name: Create VM definition flag (simulates libvirt define)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/vm-defined-flag"
+        state: touch
+        mode: '0644'
+
+    - name: Create VM running flag (simulates VM state)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/vm-running-flag"
+        state: touch
+        mode: '0644'
+
+    # Test 2: Simulate delete.yml logic
+    - name: Check if VM exists (simulated)
+      ansible.builtin.find:
+        paths: "{{ test_dir }}"
+        patterns: "vm-*-flag"
+      register: vm_flags
+
+    - name: Set VM exists fact
+      ansible.builtin.set_fact:
+        vm_exists: "{{ vm_flags.matched > 0 }}"
+
+    - name: Display VM not exists message
+      ansible.builtin.debug:
+        msg: "VM {{ vm_name }} does not exist, nothing to delete"
+      when: not vm_exists
+
+    # Test 3: Delete workflow (when VM exists)
+    - name: Delete VM resources
+      when: vm_exists
+      block:
+        - name: Destroy VM if running (simulated)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/vm-running-flag"
+            state: absent
+          register: vm_destroyed
+          ignore_errors: yes
+
+        - name: Undefine VM (simulated)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/vm-defined-flag"
+            state: absent
+          register: vm_undefined
+
+        - name: Delete VM disk
+          ansible.builtin.file:
+            path: "{{ vm_disk_path_full }}"
+            state: absent
+          register: disk_deleted
+
+        - name: Delete cloud-init ISO
+          ansible.builtin.file:
+            path: "{{ vm_cloud_init_iso }}"
+            state: absent
+          register: iso_deleted
+
+        - name: Display delete result
+          ansible.builtin.debug:
+            msg: "✅ VM {{ vm_name }} deleted"
+
+    # Test 4: Verify cleanup completed
+    - name: Check VM disk deleted
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path_full }}"
+      register: disk_after_delete
+
+    - name: Check cloud-init ISO deleted
+      ansible.builtin.stat:
+        path: "{{ vm_cloud_init_iso }}"
+      register: iso_after_delete
+
+    - name: Check VM flags deleted
+      ansible.builtin.find:
+        paths: "{{ test_dir }}"
+        patterns: "vm-*-flag"
+      register: flags_after_delete
+
+    # Test 5: Test deletion when VM doesn't exist
+    - name: Attempt to delete non-existent VM (should be graceful)
+      ansible.builtin.find:
+        paths: "{{ test_dir }}"
+        patterns: "vm-*-flag"
+      register: nonexistent_vm_check
+
+    - name: Set nonexistent VM fact
+      ansible.builtin.set_fact:
+        vm_not_exists: "{{ nonexistent_vm_check.matched == 0 }}"
+
+    - name: Display graceful message for non-existent VM
+      ansible.builtin.debug:
+        msg: "VM test-nonexistent-vm does not exist, nothing to delete"
+      when: vm_not_exists
+
+    # Save results
+    - name: Save deletion test results
+      ansible.builtin.copy:
+        content: |
+          Deletion Test Results
+          =====================
+
+          Initial State:
+          - VM existed: {{ vm_exists }}
+          - Disk existed: true
+          - ISO existed: true
+          - VM flags: {{ vm_flags.matched }}
+
+          Deletion Actions:
+          - VM destroyed: {{ vm_destroyed.changed if vm_destroyed is defined else 'N/A' }}
+          - VM undefined: {{ vm_undefined.changed if vm_undefined is defined else 'N/A' }}
+          - Disk deleted: {{ disk_deleted.changed if disk_deleted is defined else 'N/A' }}
+          - ISO deleted: {{ iso_deleted.changed if iso_deleted is defined else 'N/A' }}
+
+          Final State:
+          - Disk exists: {{ disk_after_delete.stat.exists }}
+          - ISO exists: {{ iso_after_delete.stat.exists }}
+          - VM flags remaining: {{ flags_after_delete.matched }}
+
+          Graceful Handling:
+          - Non-existent VM handled: {{ vm_not_exists }}
+        dest: "{{ test_dir }}/deletion-results.txt"
+        mode: '0644'
+
+    - name: Display deletion summary
+      ansible.builtin.debug:
+        msg:
+          - "Deletion workflow completed"
+          - "Resources deleted: {{ 'disk, ISO, VM flags' if vm_exists else 'none (VM did not exist)' }}"
+          - "Final cleanup: {{ 'complete' if flags_after_delete.matched == 0 else 'incomplete' }}"
