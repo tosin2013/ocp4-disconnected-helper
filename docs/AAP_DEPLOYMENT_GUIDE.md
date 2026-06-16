@@ -1,6 +1,6 @@
 # Ansible Automation Platform Deployment Guide
 
-**Last Updated**: 2026-06-04  
+**Last Updated**: 2026-06-16  
 **AAP Versions Covered**: 2.5, 2.6  
 **Target OS**: RHEL 9.2+
 
@@ -13,7 +13,8 @@
 3. [AAP 2.6 Containerized Installation](#aap-26-containerized-installation)
 4. [VM Provisioning with cloud-init](#vm-provisioning-with-cloud-init)
 5. [Post-Installation Configuration](#post-installation-configuration)
-6. [Troubleshooting](#troubleshooting)
+6. [AAP Workflow Configuration](#aap-workflow-configuration)
+7. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -393,6 +394,69 @@ sudo firewall-cmd --permanent --add-service=https
 sudo firewall-cmd --permanent --add-port=5432/tcp  # PostgreSQL (if external)
 sudo firewall-cmd --reload
 ```
+
+---
+
+## AAP Workflow Configuration
+
+After AAP installation, configure workflows for OpenShift disconnected deployment.
+
+### Workflow Catalog Overview
+
+This project uses a **3-workflow architecture** for complete OpenShift deployment:
+
+1. **Workflow 1: Infrastructure Deployment** - Deploy network, DNS, registry, load balancer, certificates
+2. **Workflow 2: Image Mirroring** - Mirror OpenShift releases and operators to disconnected registry
+3. **Workflow 3: Cluster Deployment** - Deploy OpenShift cluster (planned for v1.4+)
+
+**Workflows must be executed in order** - prerequisite validation enforces correct execution sequence.
+
+### Deploying Workflows to AAP
+
+After AAP installation, deploy workflow configurations:
+
+```bash
+# Deploy Workflow 1 (Infrastructure Deployment)
+ansible-playbook -i inventory/ibm-cloud.yml \
+  playbooks/aap-configuration/configure-infrastructure-workflow.yml \
+  -e @extra_vars/rhel-subscription-secrets.yml \
+  --vault-password-file ~/.vault_pass
+
+# Deploy Workflow 2 (Image Mirroring) - already deployed in v1.3
+ansible-playbook -i inventory/ibm-cloud.yml \
+  playbooks/aap-configuration/configure-oc-mirror-workflow.yml \
+  -e @extra_vars/rhel-subscription-secrets.yml \
+  --vault-password-file ~/.vault_pass
+```
+
+### Using Workflows
+
+**Access AAP Web UI**:
+```
+URL: https://aap.sandbox3377.opentlc.com
+Username: admin
+Password: <automationgateway_admin_password from secrets file>
+```
+
+**Launch Workflow 1**:
+1. Navigate to: **Templates → Workflows**
+2. Select: **Workflow 1: OpenShift Infrastructure Deployment**
+3. Click: **Launch**
+4. Fill survey (deployment scenario, DNS provider, registry type, certificate mode)
+5. Monitor execution progress in real-time
+
+**Launch Workflow 2** (after Workflow 1 completes):
+1. Navigate to: **Templates → Workflows**
+2. Select: **Workflow 2: OpenShift Image Mirroring**
+3. Click: **Launch**
+4. Fill survey (operator preset, registry URL)
+5. Monitor mirroring progress
+
+### Complete Workflow Documentation
+
+For detailed workflow documentation, scenarios, troubleshooting, and execution order:
+
+📘 **[AAP Workflow Catalog](AAP_WORKFLOW_CATALOG.md)** - Complete workflow reference guide
 
 ---
 

@@ -1,25 +1,33 @@
 # OpenShift 4 Disconnected Helper
 
-[![Release](https://img.shields.io/badge/release-v1.2.0-blue.svg)](https://github.com/tosin2013/ocp4-disconnected-helper/releases/tag/v1.2.0)
+[![Release](https://img.shields.io/badge/release-v1.3.0-blue.svg)](https://github.com/tosin2013/ocp4-disconnected-helper/releases/tag/v1.3.0)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![OpenShift](https://img.shields.io/badge/OpenShift-4.21-red.svg)](https://docs.openshift.com/container-platform/4.21/)
+[![AAP](https://img.shields.io/badge/AAP-2.6-red.svg)](https://www.redhat.com/en/technologies/management/ansible)
 
-This repository provides automation and utilities for deploying OpenShift in disconnected (air-gapped) environments with comprehensive operator validation and AAP workflow orchestration.
+This repository provides automation and utilities for deploying OpenShift in disconnected (air-gapped) environments with multi-workflow orchestration, operator validation, and comprehensive infrastructure deployment.
 
-## ✨ What's New in v1.2.0 (June 11, 2026)
+## ✨ What's New in v1.3.0 (June 16, 2026)
 
-**Operator Catalog Validation Framework** (ADR-0034):
-- ✅ Pre-flight validation catches typos before expensive mirroring (<5s vs 10-30 min)
-- ✅ 8 curated operator presets (storage, RHACM, AI, virtualization, service mesh, observability, security, networking)
-- ✅ Fuzzy matching suggests correct operator names
-- ✅ Catalog caching (73 KB vs 50-100 GB) with 24h TTL
+**Multi-Workflow Architecture** (ADR-0032 v1.3):
+- ✅ **Workflow 1**: Infrastructure Deployment (8-step conditional execution for KVM/Existing/Cloud scenarios)
+- ✅ **Workflow 2**: Image Mirroring (4-step with prerequisite validation and operator presets)
+- ✅ **Workflow 3**: Cluster Deployment (planned for v1.4+)
+- ✅ Survey-driven conditional execution (workflows adapt to deployment scenario)
+- ✅ Prerequisite validation enforces correct execution order (Workflow 1 → 2 → 3)
 
-**AAP Workflow Orchestration** (ADR-0032, ADR-0033):
-- ✅ 3-node workflow with operator validation preflight (Workflow ID 36)
-- ✅ Production-validated in AAP 2.6 (Workflow Job #118)
-- ✅ Comprehensive validation framework with health checks
+**Infrastructure Deployment Capabilities**:
+- ✅ Conditional VyOS and DNS deployment (KVM environments only)
+- ✅ Multi-registry support (Quay, Harbor, JFrog - survey-driven selection)
+- ✅ Dual certificate modes (Let's Encrypt for cloud, self-signed for air-gapped)
+- ✅ Comprehensive infrastructure validation (registry, HAProxy, certificates, network)
 
-See [CHANGELOG.md](CHANGELOG.md) for full release notes.
+**Documentation Enhancements**:
+- ✅ Complete workflow catalog with execution order, scenarios, and troubleshooting
+- ✅ Deployment scenario decision matrix (when to use KVM/Existing/Cloud)
+- ✅ CLI fallback commands for AAP unavailability
+
+See [CHANGELOG.md](CHANGELOG.md) for full release notes and [AAP Workflow Catalog](docs/AAP_WORKFLOW_CATALOG.md) for complete workflow documentation.
 
 ## ⚠️ First-Time Setup - Install Git Hooks
 
@@ -30,6 +38,31 @@ See [CHANGELOG.md](CHANGELOG.md) for full release notes.
 ```
 
 This installs a pre-commit hook that **prevents accidentally committing credentials** (passwords, tokens, keys) to Git. See [docs/SECURITY.md](docs/SECURITY.md) for details.
+
+## 🚀 Quick Start - AAP Workflow Approach (Recommended)
+
+**Automated end-to-end deployment using AAP workflows:**
+
+1. **Deploy AAP 2.6** (one-time setup):
+   ```bash
+   ansible-playbook -i inventory/ibm-cloud.yml playbooks/deploy-aap-multi-node.yml
+   ```
+
+2. **Configure Workflows** (one-time setup):
+   ```bash
+   ansible-playbook -i inventory/ibm-cloud.yml playbooks/aap-configuration/configure-infrastructure-workflow.yml
+   ansible-playbook -i inventory/ibm-cloud.yml playbooks/aap-configuration/configure-oc-mirror-workflow.yml
+   ```
+
+3. **Launch Workflows via Web UI**:
+   - **Workflow 1**: Infrastructure Deployment → https://aap.sandbox3377.opentlc.com/#/templates/workflow
+   - **Workflow 2**: Image Mirroring (after Workflow 1 completes)
+
+📘 **Complete workflow documentation**: [AAP Workflow Catalog](docs/AAP_WORKFLOW_CATALOG.md)
+
+---
+
+## 📚 Manual CLI Approach (Alternative)
 
 Currently supports the following patterns:
 
