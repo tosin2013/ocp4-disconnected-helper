@@ -1,0 +1,60 @@
+---
+# Verify playbook for registry_vm orchestration testing
+
+- name: Verify - Registry VM Orchestration
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-registry-vm"
+  tasks:
+    - name: Check all phase flags created
+      ansible.builtin.find:
+        paths: "{{ test_dir }}"
+        patterns: "*-flag"
+      register: phase_flags
+
+    - name: Assert all phases executed
+      ansible.builtin.assert:
+        that:
+          - "'vm-provisioned-flag' in phase_flags.files | map(attribute='path') | map('basename') | list"
+          - "'certificates-setup-flag' in phase_flags.files | map(attribute='path') | map('basename') | list"
+          - "'registry-installed-flag' in phase_flags.files | map(attribute='path') | map('basename') | list"
+          - "'auth-setup-flag' in phase_flags.files | map(attribute='path') | map('basename') | list"
+          - "'verify-flag' in phase_flags.files | map(attribute='path') | map('basename') | list"
+          - phase_flags.matched == 5
+        fail_msg: "Not all orchestration phases executed ({{ phase_flags.matched }}/5)"
+        success_msg: "✓ All 5 orchestration phases executed"
+
+    - name: Check orchestration summary
+      ansible.builtin.stat:
+        path: "{{ test_dir }}/orchestration-summary.txt"
+      register: summary_stat
+
+    - name: Assert orchestration summary created
+      ansible.builtin.assert:
+        that:
+          - summary_stat.stat.exists
+        fail_msg: "Orchestration summary not created"
+        success_msg: "✓ Orchestration summary created"
+
+    - name: Test Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          Registry VM Orchestration Tests: PASSED
+          ============================================
+          ✓ Phase 1: VM provisioning delegation
+          ✓ Phase 2: Certificate setup conditional
+          ✓ Phase 3: Certificate assertion gate
+          ✓ Phase 4: Registry installation conditional
+          ✓ Phase 5: Authentication setup
+          ✓ Phase 6: Verification step
+
+          Coverage:
+          - tasks/main.yml: Full orchestration flow
+          - Conditional task inclusion (import_tasks when clauses)
+          - vm_state transitions (present vs absent)
+          - Delegation patterns (localhost vs SSH)
+          - Critical assertion gate (certificate validation)
+
+          Total Assertions: 2

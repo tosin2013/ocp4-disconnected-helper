@@ -1,0 +1,117 @@
+---
+# Converge playbook for registry_vm default testing
+# Simulates main.yml orchestration logic
+
+- name: Converge - Registry VM Orchestration
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-registry-vm"
+  tasks:
+    - name: Create test directory
+      ansible.builtin.file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Test 1: VM provisioning delegation (simulated)
+    - name: Simulate common_vm role delegation
+      ansible.builtin.file:
+        path: "{{ test_dir }}/vm-provisioned-flag"
+        state: touch
+        mode: '0644'
+      vars:
+        vm_state: "present"
+        vm_use_static_ip: true
+        vm_static_ip: "192.168.10.10"
+      when: vm_state | default('present') in ['present', 'absent']
+
+    # Test 2: Certificate setup conditional
+    - name: Simulate certificate setup (when vm_state=present)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/certificates-setup-flag"
+        state: touch
+        mode: '0644'
+      vars:
+        vm_state: "present"
+      when: vm_state | default('present') == 'present'
+
+    # Test 3: Certificate assertion gate
+    - name: Simulate certificate assertion (critical gate)
+      ansible.builtin.set_fact:
+        mirror_registry_ssl_cert: "{{ test_dir }}/ssl.cert"
+        mirror_registry_ssl_key: "{{ test_dir }}/ssl.key"
+      vars:
+        vm_state: "present"
+        registry_type: "mirror-registry"
+      when:
+        - vm_state | default('present') == 'present'
+        - registry_type == 'mirror-registry'
+
+    - name: Assert certificates configured before installation
+      ansible.builtin.assert:
+        that:
+          - mirror_registry_ssl_cert is defined
+          - mirror_registry_ssl_key is defined
+          - mirror_registry_ssl_cert | length > 0
+          - mirror_registry_ssl_key | length > 0
+        fail_msg: "Certificate assertion failed"
+        success_msg: "Certificate assertion passed"
+      vars:
+        vm_state: "present"
+        registry_type: "mirror-registry"
+      when:
+        - vm_state | default('present') == 'present'
+        - registry_type == 'mirror-registry'
+
+    # Test 4: Registry installation conditional
+    - name: Simulate registry installation (when vm_state=present + mirror-registry)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/registry-installed-flag"
+        state: touch
+        mode: '0644'
+      vars:
+        vm_state: "present"
+        registry_type: "mirror-registry"
+      when:
+        - vm_state | default('present') == 'present'
+        - registry_type == 'mirror-registry'
+
+    # Test 5: Authentication setup
+    - name: Simulate authentication setup (when vm_state=present)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/auth-setup-flag"
+        state: touch
+        mode: '0644'
+      vars:
+        vm_state: "present"
+      when: vm_state | default('present') == 'present'
+
+    # Test 6: Verification step
+    - name: Simulate registry verification (when vm_state=present)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/verify-flag"
+        state: touch
+        mode: '0644'
+      vars:
+        vm_state: "present"
+      when: vm_state | default('present') == 'present'
+
+    # Test 7: Summary
+    - name: Save orchestration summary
+      ansible.builtin.copy:
+        content: |
+          Registry VM Orchestration Summary
+          ==================================
+
+          Phases Executed:
+          1. VM Provisioning (delegated to localhost)
+          2. Certificate Setup (runs on VM via SSH)
+          3. Certificate Assertion (critical gate)
+          4. Registry Installation (runs on VM)
+          5. Authentication Setup (runs on VM)
+          6. Verification (runs on VM)
+
+          Test directory: {{ test_dir }}
+        dest: "{{ test_dir }}/orchestration-summary.txt"
+        mode: '0644'

@@ -1,9 +1,9 @@
 ---
 galaxy_info:
-  role_name: registry_vm
+  role_name: aap_vm
   namespace: ocp4_disconnected_helper
   author: Platform Team
-  description: Complete registry VM lifecycle (provision, install, configure)
+  description: AAP VM deployment and configuration
   company: ocp4-disconnected-helper
   license: MIT
   min_ansible_version: "2.15"
@@ -14,9 +14,8 @@ galaxy_info:
         - "9"
 
   galaxy_tags:
-    - registry
-    - quay
-    - mirror-registry
+    - aap
+    - ansible-automation-platform
     - openshift
     - disconnected
 

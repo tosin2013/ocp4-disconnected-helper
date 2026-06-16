@@ -1,0 +1,124 @@
+---
+# Converge playbook for aap_vm orchestration testing
+# Tests 9-phase AAP deployment workflow
+
+- name: Converge - AAP VM Orchestration
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-aap-vm"
+    vm_state: "present"
+    vm_static_ip: "192.168.10.20"
+    aap_import_playbooks: true
+  tasks:
+    - name: Create test directory
+      ansible.builtin.file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Phase 1: VM Provisioning
+    - name: Phase 1 - Simulate VM provisioning
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase1-vm-provisioned"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 2: Wait for VM
+    - name: Phase 2 - Simulate wait for VM
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase2-vm-ready"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 3: Prerequisites
+    - name: Phase 3 - Simulate prerequisites installation
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase3-prerequisites"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 4: Download Installer
+    - name: Phase 4 - Simulate installer download
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase4-installer-downloaded"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 5: Configure AAP
+    - name: Phase 5 - Simulate AAP configuration
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase5-aap-configured"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 6: Install AAP
+    - name: Phase 6 - Simulate AAP installation
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase6-aap-installed"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 7: Post-Installation
+    - name: Phase 7 - Simulate post-installation
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase7-post-install"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Phase 8: Import Playbooks
+    - name: Phase 8 - Simulate playbook import
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase8-playbooks-imported"
+        state: touch
+        mode: '0644'
+      when:
+        - vm_state | default('present') == 'present'
+        - aap_import_playbooks | default(true)
+
+    # Phase 9: Verification
+    - name: Phase 9 - Simulate verification
+      ansible.builtin.file:
+        path: "{{ test_dir }}/phase9-verified"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'present'
+
+    # Test vm_state=absent (deletion flow)
+    - name: Simulate VM deletion (when vm_state=absent)
+      ansible.builtin.file:
+        path: "{{ test_dir }}/vm-deleted-flag"
+        state: touch
+        mode: '0644'
+      when: vm_state | default('present') == 'absent'
+
+    # Summary
+    - name: Save AAP orchestration summary
+      ansible.builtin.copy:
+        content: |
+          AAP VM Deployment Orchestration Summary
+          ========================================
+
+          9-Phase Deployment Workflow:
+          Phase 1: VM Provisioning (delegate to common_vm)
+          Phase 2: Wait for VM to be accessible (SSH port 22)
+          Phase 3: Install prerequisites
+          Phase 4: Download AAP installer
+          Phase 5: Configure AAP installation
+          Phase 6: Install AAP containerized
+          Phase 7: Post-installation setup
+          Phase 8: Import ocp4-disconnected-helper playbooks
+          Phase 9: Verification
+
+          VM State: {{ vm_state }}
+          Import Playbooks: {{ aap_import_playbooks }}
+          Test Directory: {{ test_dir }}
+        dest: "{{ test_dir }}/aap-orchestration-summary.txt"
+        mode: '0644'

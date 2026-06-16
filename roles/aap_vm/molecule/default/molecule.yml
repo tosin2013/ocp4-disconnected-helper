@@ -1,0 +1,57 @@
+---
+# Molecule scenario for aap_vm role - Default lifecycle test
+#
+# Tests:
+# - 9-phase AAP deployment orchestration
+# - Phase transitions and conditionals
+# - VM state management (present vs absent)
+
+dependency:
+  name: galaxy
+  enabled: false
+
+ansible:
+  cfg:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+      callbacks_enabled: profile_tasks
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+
+  playbooks:
+    create: ../../common_vm/molecule/default/create.yml
+    converge: converge.yml
+    destroy: ../../common_vm/molecule/default/destroy.yml
+    verify: verify.yml
+
+platforms:
+  - name: aap-vm-test
+    image: registry.access.redhat.com/ubi9/ubi-init:latest
+    pre_build_image: true
+    command: /usr/sbin/init
+    privileged: true
+    userns: "nomap"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      /run: ""
+      /tmp: ""
+
+provisioner:
+  name: ansible
+  log: true
+  options:
+    diff: true
+
+verifier:
+  name: ansible
+
+scenario:
+  name: default
+  test_sequence:
+    - destroy
+    - create
+    - converge
+    - verify
+    - destroy

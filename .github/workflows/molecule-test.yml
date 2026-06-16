@@ -68,6 +68,7 @@ jobs:
       matrix:
         role: ${{ fromJson(needs.detect-changed-roles.outputs.roles) }}
         scenario:
+          # common_vm scenarios
           - default
           - static-ip
           - dhcp
@@ -75,6 +76,12 @@ jobs:
           - libvirt-xml
           - mac-address
           - idempotence
+          - provision
+          - deletion
+          - orchestration
+          # registry_vm scenarios
+          - certificates
+          # aap_vm scenarios (default shared with common_vm)
 
     steps:
       - name: Checkout code

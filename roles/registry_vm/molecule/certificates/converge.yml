@@ -1,0 +1,178 @@
+---
+# Converge playbook for certificate setup testing
+# Tests setup_certificates.yml decision logic
+
+- name: Converge - Certificate Setup Testing
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-certificates"
+    mirror_registry_install_dir: "{{ test_dir }}/opt/mirror-registry"
+  tasks:
+    - name: Create test directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ test_dir }}"
+        - "{{ mirror_registry_install_dir }}"
+
+    # =====================================================
+    # Test 1: Self-signed certificate path (default)
+    # =====================================================
+    - name: Test self-signed certificate strategy
+      block:
+        - name: Set self-signed strategy
+          ansible.builtin.set_fact:
+            ssl_cert_provider: "selfsigned"
+            registry_hostname: "registry.test.local"
+            use_letsencrypt: false
+
+        - name: Simulate self-signed certificate generation
+          ansible.builtin.command:
+            cmd: >
+              openssl req -newkey rsa:2048 -nodes
+              -sha256
+              -keyout {{ mirror_registry_install_dir }}/ssl.key
+              -x509
+              -days 825
+              -out {{ mirror_registry_install_dir }}/ssl.cert
+              -subj "/C=US/ST=VA/L=Reston/O=Test/CN={{ registry_hostname }}"
+            creates: "{{ mirror_registry_install_dir }}/ssl.cert"
+
+        - name: Set certificate permissions
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            mode: "{{ item.mode }}"
+          loop:
+            - { path: "{{ mirror_registry_install_dir }}/ssl.cert", mode: '0644' }
+            - { path: "{{ mirror_registry_install_dir }}/ssl.key", mode: '0600' }
+
+        - name: Set certificate facts
+          ansible.builtin.set_fact:
+            mirror_registry_ssl_cert: "{{ mirror_registry_install_dir }}/ssl.cert"
+            mirror_registry_ssl_key: "{{ mirror_registry_install_dir }}/ssl.key"
+
+        - name: Verify certificate files exist
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: cert_files
+          loop:
+            - "{{ mirror_registry_ssl_cert }}"
+            - "{{ mirror_registry_ssl_key }}"
+
+        - name: Save self-signed test result
+          ansible.builtin.copy:
+            content: |
+              Certificate Strategy: Self-signed
+              Provider: {{ ssl_cert_provider }}
+              Hostname: {{ registry_hostname }}
+              Certificate: {{ mirror_registry_ssl_cert }}
+              Key: {{ mirror_registry_ssl_key }}
+              Certificate exists: {{ cert_files.results[0].stat.exists }}
+              Key exists: {{ cert_files.results[1].stat.exists }}
+              Key permissions: {{ cert_files.results[1].stat.mode }}
+            dest: "{{ test_dir }}/self-signed-result.txt"
+            mode: '0644'
+
+    # =====================================================
+    # Test 2: AWS credentials detection logic
+    # =====================================================
+    - name: Test AWS credentials detection
+      block:
+        - name: Check for AWS credentials (simulated)
+          ansible.builtin.stat:
+            path: "{{ lookup('env', 'HOME') }}/.aws/credentials"
+          register: aws_creds_stat
+
+        - name: Save AWS detection result
+          ansible.builtin.copy:
+            content: |
+              AWS Credentials Detection
+              =========================
+              Path checked: {{ lookup('env', 'HOME') }}/.aws/credentials
+              Exists: {{ aws_creds_stat.stat.exists }}
+              Would trigger Let's Encrypt: {{ aws_creds_stat.stat.exists }}
+              Current ssl_cert_provider: {{ ssl_cert_provider }}
+            dest: "{{ test_dir }}/aws-detection-result.txt"
+            mode: '0644'
+
+    # =====================================================
+    # Test 3: Certificate provider validation logic
+    # =====================================================
+    - name: Test certificate provider validation
+      block:
+        - name: Simulate validation for selfsigned with AWS creds
+          ansible.builtin.set_fact:
+            validation_warning: |
+              ⚠️  PREFLIGHT WARNING: ssl_cert_provider='selfsigned' but AWS credentials found.
+              Let's Encrypt recommended for cloud deployments.
+          when:
+            - ssl_cert_provider == 'selfsigned'
+            - aws_creds_stat.stat.exists
+
+        - name: Simulate validation for letsencrypt without AWS creds
+          ansible.builtin.set_fact:
+            validation_error: |
+              ❌ PREFLIGHT FAILED: ssl_cert_provider='letsencrypt' but AWS credentials not found.
+          when:
+            - ssl_cert_provider == 'letsencrypt'
+            - not aws_creds_stat.stat.exists
+
+        - name: Save validation result
+          ansible.builtin.copy:
+            content: |
+              Certificate Provider Validation
+              ================================
+              Provider: {{ ssl_cert_provider }}
+              AWS credentials exist: {{ aws_creds_stat.stat.exists }}
+              Warning triggered: {{ validation_warning is defined }}
+              Error triggered: {{ validation_error is defined }}
+            dest: "{{ test_dir }}/validation-result.txt"
+            mode: '0644'
+
+    # =====================================================
+    # Test 4: Certificate facts assertion
+    # =====================================================
+    - name: Test certificate facts assertion (critical gate)
+      block:
+        - name: Assert certificate facts are set
+          ansible.builtin.assert:
+            that:
+              - mirror_registry_ssl_cert is defined
+              - mirror_registry_ssl_key is defined
+              - mirror_registry_ssl_cert | length > 0
+              - mirror_registry_ssl_key | length > 0
+            fail_msg: "Certificate facts not set correctly"
+            success_msg: "✓ Certificate facts validated"
+
+        - name: Save assertion result
+          ansible.builtin.copy:
+            content: |
+              Certificate Facts Assertion
+              ===========================
+              mirror_registry_ssl_cert: {{ mirror_registry_ssl_cert }}
+              mirror_registry_ssl_key: {{ mirror_registry_ssl_key }}
+              Assertion: PASSED
+            dest: "{{ test_dir }}/assertion-result.txt"
+            mode: '0644'
+
+    # Summary
+    - name: Save certificate testing summary
+      ansible.builtin.copy:
+        content: |
+          Certificate Setup Testing Summary
+          ==================================
+
+          Tests Executed:
+          1. Self-signed certificate generation
+          2. AWS credentials detection logic
+          3. Certificate provider validation
+          4. Certificate facts assertion (critical gate)
+
+          Provider: {{ ssl_cert_provider }}
+          Certificate: {{ mirror_registry_ssl_cert }}
+          Key: {{ mirror_registry_ssl_key }}
+        dest: "{{ test_dir }}/certificate-summary.txt"
+        mode: '0644'
