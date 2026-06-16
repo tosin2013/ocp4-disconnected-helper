@@ -489,10 +489,78 @@ oc get clusterversion
 # Expected: VERSION=4.21.x, AVAILABLE=True
 ```
 
-### Step 22: Install Storage Operators
+### Step 22: Configure Operator Catalog (Mirrored Operators)
+
+**This step connects your cluster to the mirrored operator images from Part 5.**
+
+**How it works**:
+1. **CatalogSource** — Points cluster to your registry's operator catalog index
+2. **ImageContentSourcePolicy** — Redirects operator image pulls from `registry.redhat.io` → `registry.example.com:8443`
+
+When you install an operator from OperatorHub, the cluster will pull images from your disconnected registry instead of the internet.
+
+---
+
+#### Step 22a: Apply ImageContentSourcePolicy for Operators
 
 ```bash
-# Storage operators already mirrored in Part 5
+# This was generated in Step 12 but applies to operators, not just OpenShift release
+# oc-mirror creates mappings.txt during mirroring - convert it to ICSP
+
+oc apply -f - <<EOF
+apiVersion: operator.openshift.io/v1alpha1
+kind: ImageContentSourcePolicy
+metadata:
+  name: operator-mirror-config
+spec:
+  repositoryDigestMirrors:
+  # Redirect Red Hat operator catalog
+  - mirrors:
+    - registry.example.com:8443/redhat/redhat-operator-index
+    source: registry.redhat.io/redhat/redhat-operator-index
+  
+  # Redirect certified operator catalog
+  - mirrors:
+    - registry.example.com:8443/redhat/certified-operator-index
+    source: registry.redhat.io/redhat/certified-operator-index
+  
+  # Redirect community operator catalog
+  - mirrors:
+    - registry.example.com:8443/redhat/community-operator-index
+    source: registry.redhat.io/redhat/community-operator-index
+  
+  # Redirect all operator images (wildcard for operator content)
+  - mirrors:
+    - registry.example.com:8443
+    source: registry.redhat.io
+  - mirrors:
+    - registry.example.com:8443
+    source: registry.connect.redhat.com
+EOF
+```
+
+**What happens next**:
+- Machine Config Operator applies ICSP to all nodes (5-10 minutes)
+- Nodes reboot one-by-one to update container runtime configuration
+- After reboot, image pulls are redirected to your registry
+
+**Monitor rollout**:
+```bash
+# Watch nodes rebooting
+oc get nodes
+
+# Watch MachineConfigPool status
+oc get mcp
+# Wait for: UPDATED=True, UPDATING=False, DEGRADED=False
+```
+
+---
+
+#### Step 22b: Create CatalogSource
+
+**After nodes finish rebooting**, create the catalog source:
+
+```bash
 oc apply -f - <<EOF
 apiVersion: operators.coreos.com/v1alpha1
 kind: CatalogSource
@@ -505,10 +573,51 @@ spec:
   displayName: Red Hat Operators (Mirrored)
   publisher: Red Hat
 EOF
-
-# Wait for catalog source ready
-oc get catalogsource -n openshift-marketplace
 ```
+
+**Verify catalog is ready**:
+```bash
+# Wait for catalog source to become READY
+oc get catalogsource -n openshift-marketplace
+# Expected: redhat-operator-index   grpc   Red Hat   READY
+
+# Check catalog pod is running
+oc get pods -n openshift-marketplace | grep redhat-operator
+# Expected: redhat-operator-index-xxxxx   1/1   Running
+```
+
+---
+
+#### Step 22c: Verify Operators Appear in OperatorHub
+
+```bash
+# List available operators from your mirrored catalog
+oc get packagemanifests -n openshift-marketplace | grep -v "redhat-operators"
+
+# Example operators (if you mirrored storage-operators preset):
+# - odf-operator (OpenShift Data Foundation)
+# - lvms-operator (Logical Volume Manager Storage)
+# - local-storage-operator (Local Storage)
+```
+
+**Test in Web Console**:
+1. Navigate to **Operators → OperatorHub**
+2. Search for "storage"
+3. You should see: ODF, LVMS, Local Storage (depending on what you mirrored)
+4. Click on an operator → **Source: Red Hat Operators (Mirrored)**
+
+**What you can do now**:
+- Install operators from OperatorHub (pulls images from your registry)
+- Deploy stateful apps requiring persistent storage
+- No internet connection needed for operator installation
+
+---
+
+**If you mirrored additional presets** (networking, observability, security):
+They're already in the same catalog! Just search for them in OperatorHub:
+- `networking-operators` → MetalLB, NMState, SR-IOV
+- `observability-operators` → Cluster Logging, Loki, Tempo
+- `security-operators` → Compliance Operator, File Integrity, Quay
 
 ### Step 23: Access OpenShift Console
 
