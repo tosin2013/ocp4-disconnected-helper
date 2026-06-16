@@ -1,0 +1,248 @@
+---
+# Converge playbook for task orchestration testing
+# Simulates main.yml conditional task inclusion logic
+
+- name: Converge - Task Orchestration
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_dir: "/tmp/molecule-test-orchestration"
+  tasks:
+    - name: Create test directory
+      ansible.builtin.file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Test 1: vm_state=absent → delete flow
+    - name: Test deletion flow (vm_state=absent)
+      block:
+        - name: Set deletion state
+          ansible.builtin.set_fact:
+            vm_state: "absent"
+            test_scenario: "deletion"
+
+        - name: Simulate delete tasks (when vm_state=absent)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/delete-executed-flag"
+            state: touch
+            mode: '0644'
+          when: vm_state == 'absent'
+
+        - name: Verify delete was called
+          ansible.builtin.stat:
+            path: "{{ test_dir }}/delete-executed-flag"
+          register: delete_flag
+
+        - name: Save deletion test result
+          ansible.builtin.copy:
+            content: |
+              Scenario: vm_state=absent
+              Delete tasks executed: {{ delete_flag.stat.exists }}
+            dest: "{{ test_dir }}/test1-deletion.txt"
+            mode: '0644'
+
+    # Test 2: vm_state=present + static IP → full workflow
+    - name: Test static IP workflow (vm_state=present)
+      block:
+        - name: Set static IP state
+          ansible.builtin.set_fact:
+            vm_state: "present"
+            vm_use_static_ip: true
+            vm_static_ip: "192.168.10.100"
+            vyos_managed_network: false
+            test_scenario: "static_ip_full"
+
+        - name: Simulate setup_static_dhcp (when static IP conditions met)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/setup-static-dhcp-flag"
+            state: touch
+            mode: '0644'
+          when:
+            - vm_state == 'present'
+            - vm_use_static_ip | bool
+            - vm_static_ip | length > 0
+            - not (vyos_managed_network | default(false))
+
+        - name: Simulate provision tasks (when vm_state=present)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/provision-flag"
+            state: touch
+            mode: '0644'
+          when: vm_state == 'present'
+
+        - name: Simulate configure_static_ip (post-boot)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/configure-static-ip-flag"
+            state: touch
+            mode: '0644'
+          when:
+            - vm_state == 'present'
+            - vm_use_static_ip | bool
+            - vm_static_ip | length > 0
+            - not (vyos_managed_network | default(false))
+
+        - name: Check all flags created
+          ansible.builtin.find:
+            paths: "{{ test_dir }}"
+            patterns: "*-flag"
+          register: static_ip_flags
+
+        - name: Save static IP test result
+          ansible.builtin.copy:
+            content: |
+              Scenario: vm_state=present + static IP
+              setup_static_dhcp executed: {{ 'setup-static-dhcp-flag' in static_ip_flags.files | map(attribute='path') | map('basename') | list }}
+              provision executed: {{ 'provision-flag' in static_ip_flags.files | map(attribute='path') | map('basename') | list }}
+              configure_static_ip executed: {{ 'configure-static-ip-flag' in static_ip_flags.files | map(attribute='path') | map('basename') | list }}
+              Total flags: {{ static_ip_flags.matched }}
+            dest: "{{ test_dir }}/test2-static-ip.txt"
+            mode: '0644'
+
+    # Test 3: vm_state=present + DHCP → provision only
+    - name: Test DHCP workflow (no static IP setup)
+      block:
+        - name: Clean flags from previous test
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ test_dir }}/setup-static-dhcp-flag"
+            - "{{ test_dir }}/configure-static-ip-flag"
+            - "{{ test_dir }}/provision-flag"
+
+        - name: Set DHCP state
+          ansible.builtin.set_fact:
+            vm_state: "present"
+            vm_use_static_ip: false
+            vm_static_ip: ""
+            vyos_managed_network: false
+            test_scenario: "dhcp_only"
+
+        - name: Simulate setup_static_dhcp (should SKIP)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/setup-static-dhcp-flag"
+            state: touch
+            mode: '0644'
+          when:
+            - vm_state == 'present'
+            - vm_use_static_ip | bool
+            - vm_static_ip | length > 0
+            - not (vyos_managed_network | default(false))
+
+        - name: Simulate provision tasks (should EXECUTE)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/provision-flag"
+            state: touch
+            mode: '0644'
+          when: vm_state == 'present'
+
+        - name: Simulate configure_static_ip (should SKIP)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/configure-static-ip-flag"
+            state: touch
+            mode: '0644'
+          when:
+            - vm_state == 'present'
+            - vm_use_static_ip | bool
+            - vm_static_ip | length > 0
+            - not (vyos_managed_network | default(false))
+
+        - name: Check DHCP flags
+          ansible.builtin.find:
+            paths: "{{ test_dir }}"
+            patterns: "*-flag"
+          register: dhcp_flags
+
+        - name: Save DHCP test result
+          ansible.builtin.copy:
+            content: |
+              Scenario: vm_state=present + DHCP
+              setup_static_dhcp skipped: {{ 'setup-static-dhcp-flag' not in dhcp_flags.files | map(attribute='path') | map('basename') | list }}
+              provision executed: {{ 'provision-flag' in dhcp_flags.files | map(attribute='path') | map('basename') | list }}
+              configure_static_ip skipped: {{ 'configure-static-ip-flag' not in dhcp_flags.files | map(attribute='path') | map('basename') | list }}
+              Total flags: {{ dhcp_flags.matched }}
+            dest: "{{ test_dir }}/test3-dhcp.txt"
+            mode: '0644'
+
+    # Test 4: VyOS-managed network (skip dnsmasq-specific tasks)
+    - name: Test VyOS-managed network (skip static IP setup)
+      block:
+        - name: Clean all flags
+          ansible.builtin.file:
+            path: "{{ test_dir }}/{{ item }}"
+            state: absent
+          loop:
+            - setup-static-dhcp-flag
+            - configure-static-ip-flag
+            - provision-flag
+
+        - name: Set VyOS-managed state
+          ansible.builtin.set_fact:
+            vm_state: "present"
+            vm_use_static_ip: true
+            vm_static_ip: "192.168.10.100"
+            vyos_managed_network: true
+            test_scenario: "vyos_managed"
+
+        - name: Simulate setup_static_dhcp (should SKIP for VyOS)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/setup-static-dhcp-flag"
+            state: touch
+            mode: '0644'
+          when:
+            - vm_state == 'present'
+            - vm_use_static_ip | bool
+            - vm_static_ip | length > 0
+            - not (vyos_managed_network | default(false))
+
+        - name: Simulate provision (should EXECUTE)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/provision-flag"
+            state: touch
+            mode: '0644'
+          when: vm_state == 'present'
+
+        - name: Simulate configure_static_ip (should SKIP for VyOS)
+          ansible.builtin.file:
+            path: "{{ test_dir }}/configure-static-ip-flag"
+            state: touch
+            mode: '0644'
+          when:
+            - vm_state == 'present'
+            - vm_use_static_ip | bool
+            - vm_static_ip | length > 0
+            - not (vyos_managed_network | default(false))
+
+        - name: Check VyOS flags
+          ansible.builtin.find:
+            paths: "{{ test_dir }}"
+            patterns: "*-flag"
+          register: vyos_flags
+
+        - name: Save VyOS test result
+          ansible.builtin.copy:
+            content: |
+              Scenario: VyOS-managed network
+              setup_static_dhcp skipped: {{ 'setup-static-dhcp-flag' not in vyos_flags.files | map(attribute='path') | map('basename') | list }}
+              provision executed: {{ 'provision-flag' in vyos_flags.files | map(attribute='path') | map('basename') | list }}
+              configure_static_ip skipped: {{ 'configure-static-ip-flag' not in vyos_flags.files | map(attribute='path') | map('basename') | list }}
+              Total flags: {{ vyos_flags.matched }}
+            dest: "{{ test_dir }}/test4-vyos.txt"
+            mode: '0644'
+
+    # Summary
+    - name: Save orchestration summary
+      ansible.builtin.copy:
+        content: |
+          Task Orchestration Test Summary
+          ================================
+
+          Test 1: vm_state=absent → Delete flow
+          Test 2: vm_state=present + static IP → Full workflow (setup + provision + configure)
+          Test 3: vm_state=present + DHCP → Provision only
+          Test 4: VyOS-managed network → Provision only (skip dnsmasq tasks)
+
+          All test results saved in {{ test_dir }}/test*.txt
+        dest: "{{ test_dir }}/orchestration-summary.txt"
+        mode: '0644'

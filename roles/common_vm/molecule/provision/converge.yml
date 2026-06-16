@@ -121,6 +121,8 @@
             src: "../../templates/cloud-init/meta-data.yml.j2"
             dest: "{{ cloud_init_temp.path }}/meta-data"
             mode: '0600'
+          vars:
+            vm_hostname: "test-provision-vm"
 
         - name: Generate cloud-init network-config
           ansible.builtin.template:
@@ -172,16 +174,22 @@
               - "Skipping cloud-init generation"
 
     # Test 8: VM XML definition generation
+    - name: Set XML template variables
+      ansible.builtin.set_fact:
+        xml_vm_name: "test-provision-vm"
+        xml_disk_path: "{{ vm_disk_path_full }}"
+        xml_cloud_init_iso: "{{ vm_cloud_init_iso }}"
+
     - name: Generate VM XML definition
       ansible.builtin.set_fact:
         vm_xml_generated: "{{ lookup('template', '../../templates/libvirt/domain.xml.j2') }}"
       vars:
-        vm_name: "test-provision-vm"
+        vm_name: "{{ xml_vm_name }}"
         vm_memory: 4096
         vm_cpus: 2
-        vm_disk_path: "{{ vm_disk_path_full }}"
+        vm_disk_path: "{{ xml_disk_path }}"
         vm_boot_iso: ""
-        vm_cloud_init_iso: "{{ vm_cloud_init_iso }}"
+        vm_cloud_init_iso: "{{ xml_cloud_init_iso }}"
         vm_mac_address: ""
         vm_network: "default"
 
