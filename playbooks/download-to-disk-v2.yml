@@ -29,6 +29,34 @@
   gather_facts: true
   become: true
 
+  pre_tasks:
+    - name: Load operator preset if specified (AAP survey integration)
+      when: operator_preset is defined and operator_preset != "custom"
+      block:
+        - name: Build preset file path
+          ansible.builtin.set_fact:
+            preset_file_path: "{{ playbook_dir }}/../extra_vars/operators/{{ operator_preset }}.yml"
+
+        - name: Load preset extra_vars
+          ansible.builtin.include_vars:
+            file: "{{ preset_file_path }}"
+
+        - name: Display loaded preset
+          ansible.builtin.debug:
+            msg:
+              - "✅ Loaded operator preset: {{ operator_preset }}"
+              - "   OpenShift Releases: {{ openshift_releases | length }}"
+              - "   Operator Catalogs: {{ operators | length }}"
+              - "   Total Packages: {{ operators | map(attribute='packages') | flatten | length }}"
+
+    - name: Load custom preset if specified
+      when:
+        - operator_preset is defined
+        - operator_preset == "custom"
+        - custom_preset_path is defined
+      ansible.builtin.include_vars:
+        file: "{{ custom_preset_path }}"
+
   vars:
     # Default values (override in inventory or extra_vars)
     target_mirror_path: "/data/ocp-mirror"
