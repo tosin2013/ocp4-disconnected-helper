@@ -1,0 +1,145 @@
+---
+# NMState Network Configuration for Agent-Based Installer
+# Supports static IP, VLAN, bonding, and DNS configuration
+
+{% for node in control_plane_nodes %}
+---
+apiVersion: agent-install.openshift.io/v1beta1
+kind: NMStateConfig
+metadata:
+  name: {{ node.name }}
+  namespace: {{ cluster_name }}
+  labels:
+    cluster-name: {{ cluster_name }}
+    node-role: control-plane
+spec:
+  config:
+    interfaces:
+      - name: {{ node.interface | default('enp1s0') }}
+        type: ethernet
+        state: up
+        {% if node.vlan_id is defined %}
+        vlan:
+          id: {{ node.vlan_id }}
+          base-iface: {{ node.base_interface | default('enp1s0') }}
+        {% endif %}
+        ipv4:
+          enabled: true
+          address:
+            - ip: {{ node.ip }}
+              prefix-length: {{ node.prefix_length | default(24) }}
+          dhcp: false
+        {% if node.ipv6 is defined %}
+        ipv6:
+          enabled: true
+          address:
+            - ip: {{ node.ipv6 }}
+              prefix-length: {{ node.ipv6_prefix_length | default(64) }}
+          dhcp: false
+        {% endif %}
+      {% if node.bond is defined %}
+      - name: {{ node.bond.name }}
+        type: bond
+        state: up
+        link-aggregation:
+          mode: {{ node.bond.mode | default('802.3ad') }}
+          port:
+            {% for port in node.bond.ports %}
+            - {{ port }}
+            {% endfor %}
+        ipv4:
+          enabled: true
+          address:
+            - ip: {{ node.ip }}
+              prefix-length: {{ node.prefix_length | default(24) }}
+          dhcp: false
+      {% endif %}
+    dns-resolver:
+      config:
+        server:
+          {% if dns_servers is defined %}
+          {% for dns in dns_servers %}
+          - {{ dns }}
+          {% endfor %}
+          {% else %}
+          - 8.8.8.8
+          - 8.8.4.4
+          {% endif %}
+    routes:
+      config:
+        - destination: 0.0.0.0/0
+          next-hop-address: {{ node.gateway | default('192.168.10.1') }}
+          next-hop-interface: {{ node.interface | default('enp1s0') }}
+          table-id: 254
+  interfaces:
+    - name: {{ node.interface | default('enp1s0') }}
+      macAddress: "{{ node.mac }}"
+{% endfor %}
+
+{% if worker_nodes is defined %}
+{% for node in worker_nodes %}
+---
+apiVersion: agent-install.openshift.io/v1beta1
+kind: NMStateConfig
+metadata:
+  name: {{ node.name }}
+  namespace: {{ cluster_name }}
+  labels:
+    cluster-name: {{ cluster_name }}
+    node-role: worker
+spec:
+  config:
+    interfaces:
+      - name: {{ node.interface | default('enp1s0') }}
+        type: ethernet
+        state: up
+        {% if node.vlan_id is defined %}
+        vlan:
+          id: {{ node.vlan_id }}
+          base-iface: {{ node.base_interface | default('enp1s0') }}
+        {% endif %}
+        ipv4:
+          enabled: true
+          address:
+            - ip: {{ node.ip }}
+              prefix-length: {{ node.prefix_length | default(24) }}
+          dhcp: false
+      {% if node.bond is defined %}
+      - name: {{ node.bond.name }}
+        type: bond
+        state: up
+        link-aggregation:
+          mode: {{ node.bond.mode | default('802.3ad') }}
+          port:
+            {% for port in node.bond.ports %}
+            - {{ port }}
+            {% endfor %}
+        ipv4:
+          enabled: true
+          address:
+            - ip: {{ node.ip }}
+              prefix-length: {{ node.prefix_length | default(24) }}
+          dhcp: false
+      {% endif %}
+    dns-resolver:
+      config:
+        server:
+          {% if dns_servers is defined %}
+          {% for dns in dns_servers %}
+          - {{ dns }}
+          {% endfor %}
+          {% else %}
+          - 8.8.8.8
+          - 8.8.4.4
+          {% endif %}
+    routes:
+      config:
+        - destination: 0.0.0.0/0
+          next-hop-address: {{ node.gateway | default('192.168.10.1') }}
+          next-hop-interface: {{ node.interface | default('enp1s0') }}
+          table-id: 254
+  interfaces:
+    - name: {{ node.interface | default('enp1s0') }}
+      macAddress: "{{ node.mac }}"
+{% endfor %}
+{% endif %}

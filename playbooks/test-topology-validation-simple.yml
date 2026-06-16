@@ -1,0 +1,79 @@
+---
+# Simple Topology Validation Test (Direct Task Inclusion)
+
+- name: Test SNO Topology Validation
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/sno-quay.yml
+
+  tasks:
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run topology validation
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/validate_topology.yml
+
+- name: Test Compact Topology Validation (Quay)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/compact-3node-quay.yml
+
+  tasks:
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run topology validation
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/validate_topology.yml
+
+- name: Test Compact Topology Validation (Harbor)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/compact-3node-harbor.yml
+
+  tasks:
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run topology validation
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/validate_topology.yml
+
+- name: Test HA Topology Validation (Quay)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/ha-cluster-quay.yml
+
+  tasks:
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run topology validation
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/validate_topology.yml
+
+- name: Test Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ Topology Validation Testing Complete"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Tested configurations:"
+          - "  ✅ SNO (Quay) - 1 control, 0 workers, 32GB RAM, 8 vCPU"
+          - "  ✅ Compact (Quay) - 3 control schedulable, 0 workers, 72GB RAM total"
+          - "  ✅ Compact (Harbor) - 3 control schedulable, 0 workers, 72GB RAM total"
+          - "  ✅ HA (Quay) - 3 control + 3 workers, 168GB RAM total"
+          - ""
+          - "All topology requirements validated:"
+          - "  • Replica counts match topology"
+          - "  • VIP configurations correct"
+          - "  • Node definitions complete"
+          - "  • Resource minimums met"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

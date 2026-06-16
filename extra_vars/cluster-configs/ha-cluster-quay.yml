@@ -1,0 +1,86 @@
+---
+# HA Cluster Configuration with Quay Mirror Registry (Primary)
+
+# Cluster Identity
+cluster_name: "ocp4-ha"
+base_domain: "sandbox3377.opentlc.com"
+
+# Topology: HA (3 control plane + 3 workers)
+cluster_topology: "ha"
+control_plane_replicas: 3
+compute_replicas: 3
+
+# OpenShift Version
+ocp_version: "4.21"
+
+# Registry Configuration (Quay - Primary)
+registry_type: "quay"
+registry_url: "registry.ocp4.sandbox3377.opentlc.com:8443"
+registry_username: "init"
+# registry_password: Set via vault or survey
+
+# Network Configuration
+cluster_network_cidr: "10.128.0.0/14"
+cluster_network_host_prefix: 23
+service_network_cidr: "172.30.0.0/16"
+machine_network_cidr: "192.168.10.0/24"
+
+# VIPs (HA requires separate VIPs)
+api_vip: "192.168.10.40"
+ingress_vip: "192.168.10.41"
+rendezvous_ip: "192.168.10.50"  # First control plane node
+
+# DNS Provider
+dns_provider: "dnsmasq"
+
+# VM Configuration (control plane)
+provision_vms: true
+vm_memory_mb_control: 24576  # 24GB per control plane
+vm_vcpus_control: 6          # 6 vCPU per control plane
+vm_disk_size_gb_control: 130
+
+# VM Configuration (workers)
+vm_memory_mb_worker: 32768   # 32GB per worker
+vm_vcpus_worker: 12          # 12 vCPU per worker
+vm_disk_size_gb_worker: 200
+vm_network: "ocp-network"
+
+# Control Plane Node Network Configuration
+control_plane_nodes:
+  - name: "master-0"
+    ip: "192.168.10.50"
+    mac: "52:54:00:10:50:01"
+  - name: "master-1"
+    ip: "192.168.10.51"
+    mac: "52:54:00:10:50:02"
+  - name: "master-2"
+    ip: "192.168.10.52"
+    mac: "52:54:00:10:50:03"
+
+# Worker Node Network Configuration
+worker_nodes:
+  - name: "worker-0"
+    ip: "192.168.10.60"
+    mac: "52:54:00:10:60:01"
+  - name: "worker-1"
+    ip: "192.168.10.61"
+    mac: "52:54:00:10:60:02"
+  - name: "worker-2"
+    ip: "192.168.10.62"
+    mac: "52:54:00:10:60:03"
+
+# Installation Settings
+install_timeout_minutes: 150  # Longer for HA cluster
+validate_manifests: true
+
+# Paths
+pull_secret_path: "/root/pull-secret.json"
+openshift_install_dir: "/root/openshift-install-ha-quay"
+iso_output_path: "/data/iso/ha-quay"
+
+# HA Cluster Notes:
+# - Total resources: 18 vCPU + 36 vCPU = 54 vCPU
+# - Total memory: 72GB (control) + 96GB (workers) = 168GB RAM
+# - Dedicated workers for application workloads
+# - Control plane not schedulable (best practice for production)
+# - Suitable for production deployments with high availability requirements

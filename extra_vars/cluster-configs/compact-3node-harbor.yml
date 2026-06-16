@@ -1,0 +1,67 @@
+---
+# 3-Node Compact Cluster Configuration with Harbor Mirror Registry (Community)
+
+# Cluster Identity
+cluster_name: "ocp4-compact-harbor"
+base_domain: "sandbox3377.opentlc.com"
+
+# Topology: 3-Node Compact (3 control plane schedulable, 0 workers)
+cluster_topology: "compact"
+control_plane_replicas: 3
+compute_replicas: 0
+
+# OpenShift Version
+ocp_version: "4.21"
+
+# Registry Configuration (Harbor - Community)
+registry_type: "harbor"
+registry_url: "harbor.sandbox3377.opentlc.com"
+registry_username: "admin"
+# registry_password: Set via vault or survey
+
+# Network Configuration
+cluster_network_cidr: "10.128.0.0/14"
+cluster_network_host_prefix: 23
+service_network_cidr: "172.30.0.0/16"
+machine_network_cidr: "192.168.10.0/24"
+
+# VIPs (different IPs from Quay example)
+api_vip: "192.168.10.22"
+ingress_vip: "192.168.10.23"
+rendezvous_ip: "192.168.10.33"
+
+# DNS Provider
+dns_provider: "dnsmasq"
+
+# VM Configuration
+provision_vms: true
+vm_memory_mb: 24576
+vm_vcpus: 6
+vm_disk_size_gb: 130
+vm_network: "ocp-network"
+
+# Node Network Configuration
+control_plane_nodes:
+  - name: "master-0"
+    ip: "192.168.10.33"
+    mac: "52:54:00:10:33:01"
+  - name: "master-1"
+    ip: "192.168.10.34"
+    mac: "52:54:00:10:33:02"
+  - name: "master-2"
+    ip: "192.168.10.35"
+    mac: "52:54:00:10:33:03"
+
+# Installation Settings
+install_timeout_minutes: 120
+validate_manifests: true
+
+# Paths
+pull_secret_path: "/root/pull-secret.json"
+openshift_install_dir: "/root/openshift-install-compact-harbor"
+iso_output_path: "/data/iso/compact-harbor"
+
+# Harbor-Specific Notes:
+# - Ensure ocp4-project and redhat-project exist in Harbor
+# - Robot account needs read access to both projects
+# - Harbor uses HTTPS on port 443 by default (no :8443)

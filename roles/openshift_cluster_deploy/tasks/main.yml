@@ -10,6 +10,10 @@
   ansible.builtin.include_tasks: validate_prerequisites.yml
   tags: [validate, phase0]
 
+- name: Phase 0 - Validate Topology Requirements
+  ansible.builtin.include_tasks: validate_topology.yml
+  tags: [validate, phase0, topology]
+
 - name: Phase 1 - Prepare Installation Directory
   ansible.builtin.include_tasks: prepare_installation.yml
   tags: [prepare, phase1]

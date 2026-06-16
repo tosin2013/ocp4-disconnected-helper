@@ -1,0 +1,153 @@
+---
+# Topology Validation - Enforce SNO/Compact/HA Requirements
+
+- name: Validate cluster topology value
+  ansible.builtin.assert:
+    that:
+      - cluster_topology in ['sno', 'compact', 'ha']
+    fail_msg: "cluster_topology must be 'sno', 'compact', or 'ha'"
+    success_msg: "✅ Valid cluster topology: {{ cluster_topology }}"
+
+- name: SNO Topology Validation
+  when: cluster_topology == 'sno'
+  block:
+    - name: Validate SNO control plane replicas
+      ansible.builtin.assert:
+        that:
+          - control_plane_replicas == 1
+        fail_msg: "SNO requires exactly 1 control plane replica (got {{ control_plane_replicas }})"
+        success_msg: "✅ SNO control plane replicas correct: 1"
+
+    - name: Validate SNO compute replicas
+      ansible.builtin.assert:
+        that:
+          - compute_replicas == 0
+        fail_msg: "SNO requires 0 compute replicas (got {{ compute_replicas }})"
+        success_msg: "✅ SNO compute replicas correct: 0"
+
+    - name: Validate SNO VIP configuration (same IP)
+      ansible.builtin.assert:
+        that:
+          - api_vip == ingress_vip
+          - api_vip == rendezvous_ip
+        fail_msg: "SNO requires api_vip, ingress_vip, and rendezvous_ip to be the same"
+        success_msg: "✅ SNO VIP configuration correct (single IP)"
+
+    - name: Validate SNO VM resources (minimum requirements)
+      ansible.builtin.assert:
+        that:
+          - vm_memory_mb >= 32768  # 32GB minimum
+          - vm_vcpus >= 8          # 8 vCPU minimum
+        fail_msg: "SNO requires minimum 32GB RAM and 8 vCPU (got {{ vm_memory_mb }}MB, {{ vm_vcpus }} vCPU)"
+        success_msg: "✅ SNO VM resources meet minimum requirements"
+
+- name: Compact Topology Validation
+  when: cluster_topology == 'compact'
+  block:
+    - name: Validate Compact control plane replicas
+      ansible.builtin.assert:
+        that:
+          - control_plane_replicas == 3
+        fail_msg: "Compact requires exactly 3 control plane replicas (got {{ control_plane_replicas }})"
+        success_msg: "✅ Compact control plane replicas correct: 3"
+
+    - name: Validate Compact compute replicas
+      ansible.builtin.assert:
+        that:
+          - compute_replicas == 0
+        fail_msg: "Compact requires 0 compute replicas (got {{ compute_replicas }})"
+        success_msg: "✅ Compact compute replicas correct: 0 (schedulable control plane)"
+
+    - name: Validate Compact VIP configuration (separate from node IPs)
+      ansible.builtin.assert:
+        that:
+          - api_vip != rendezvous_ip
+          - ingress_vip != rendezvous_ip
+        fail_msg: "Compact requires VIPs separate from rendezvous IP"
+        success_msg: "✅ Compact VIP configuration correct (separate IPs)"
+
+    - name: Validate Compact node definitions
+      ansible.builtin.assert:
+        that:
+          - control_plane_nodes is defined
+          - control_plane_nodes | length == 3
+        fail_msg: "Compact requires 3 control_plane_nodes defined in configuration"
+        success_msg: "✅ Compact node definitions correct: 3 nodes"
+
+    - name: Validate Compact VM resources per node
+      ansible.builtin.assert:
+        that:
+          - vm_memory_mb >= 24576  # 24GB minimum per node
+          - vm_vcpus >= 6          # 6 vCPU minimum per node
+        fail_msg: "Compact requires minimum 24GB RAM and 6 vCPU per node"
+        success_msg: "✅ Compact VM resources meet minimum requirements per node"
+
+- name: HA Topology Validation
+  when: cluster_topology == 'ha'
+  block:
+    - name: Validate HA control plane replicas
+      ansible.builtin.assert:
+        that:
+          - control_plane_replicas == 3
+        fail_msg: "HA requires exactly 3 control plane replicas (got {{ control_plane_replicas }})"
+        success_msg: "✅ HA control plane replicas correct: 3"
+
+    - name: Validate HA compute replicas
+      ansible.builtin.assert:
+        that:
+          - compute_replicas >= 2
+        fail_msg: "HA requires minimum 2 compute replicas (got {{ compute_replicas }})"
+        success_msg: "✅ HA compute replicas valid: {{ compute_replicas }}"
+
+    - name: Validate HA VIP configuration
+      ansible.builtin.assert:
+        that:
+          - api_vip != rendezvous_ip
+          - ingress_vip != rendezvous_ip
+          - api_vip != ingress_vip
+        fail_msg: "HA requires separate VIPs for API, Ingress, and rendezvous IP"
+        success_msg: "✅ HA VIP configuration correct (all separate IPs)"
+
+    - name: Validate HA node definitions
+      ansible.builtin.assert:
+        that:
+          - control_plane_nodes is defined
+          - control_plane_nodes | length == 3
+          - worker_nodes is defined
+          - worker_nodes | length >= 2
+        fail_msg: "HA requires 3 control_plane_nodes and >= 2 worker_nodes defined"
+        success_msg: "✅ HA node definitions correct: 3 control + {{ worker_nodes | length }} workers"
+
+    - name: Validate HA control plane VM resources
+      ansible.builtin.assert:
+        that:
+          - vm_memory_mb_control >= 24576  # 24GB minimum
+          - vm_vcpus_control >= 6          # 6 vCPU minimum
+        fail_msg: "HA control plane requires minimum 24GB RAM and 6 vCPU per node"
+        success_msg: "✅ HA control plane VM resources meet minimum requirements"
+
+    - name: Validate HA worker VM resources
+      ansible.builtin.assert:
+        that:
+          - vm_memory_mb_worker >= 16384   # 16GB minimum (32GB recommended)
+          - vm_vcpus_worker >= 4           # 4 vCPU minimum
+        fail_msg: "HA workers require minimum 16GB RAM and 4 vCPU per node"
+        success_msg: "✅ HA worker VM resources meet minimum requirements"
+
+- name: Display topology validation summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ Topology Validation Complete: {{ cluster_topology | upper }}"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - "Topology: {{ cluster_topology }}"
+      - "Control Plane: {{ control_plane_replicas }} replicas"
+      - "Workers: {{ compute_replicas }} replicas"
+      - "Total Nodes: {{ control_plane_replicas + compute_replicas }}"
+      - ""
+      - "{% if cluster_topology == 'sno' %}Resources: {{ vm_vcpus }} vCPU, {{ vm_memory_mb }}MB RAM{% elif cluster_topology == 'compact' %}Resources: {{ vm_vcpus * 3 }} vCPU (total), {{ (vm_memory_mb * 3) // 1024 }}GB RAM (total){% else %}Resources: Control ({{ vm_vcpus_control * 3 }} vCPU, {{ (vm_memory_mb_control * 3) // 1024 }}GB RAM) + Workers ({{ vm_vcpus_worker * compute_replicas }} vCPU, {{ (vm_memory_mb_worker * compute_replicas) // 1024 }}GB RAM){% endif %}"
+      - ""
+      - "All topology requirements validated successfully"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

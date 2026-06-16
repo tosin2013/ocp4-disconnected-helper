@@ -1,0 +1,105 @@
+---
+# Test Topology Validation for SNO, Compact, and HA Configurations
+# Validates that topology requirements are correctly enforced
+
+- name: Test Topology Validation - SNO
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/sno-quay.yml
+
+  tasks:
+    - name: Include topology validation
+      ansible.builtin.include_role:
+        name: openshift_cluster_deploy
+        tasks_from: validate_topology
+      tags: [validate-sno]
+
+- name: Test Topology Validation - Compact (Quay)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/compact-3node-quay.yml
+
+  tasks:
+    - name: Include topology validation
+      ansible.builtin.include_role:
+        name: openshift_cluster_deploy
+        tasks_from: validate_topology
+      tags: [validate-compact-quay]
+
+- name: Test Topology Validation - Compact (Harbor)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/compact-3node-harbor.yml
+
+  tasks:
+    - name: Include topology validation
+      ansible.builtin.include_role:
+        name: openshift_cluster_deploy
+        tasks_from: validate_topology
+      tags: [validate-compact-harbor]
+
+- name: Test Topology Validation - Compact (JFrog)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/compact-3node-jfrog.yml
+
+  tasks:
+    - name: Include topology validation
+      ansible.builtin.include_role:
+        name: openshift_cluster_deploy
+        tasks_from: validate_topology
+      tags: [validate-compact-jfrog]
+
+- name: Test Topology Validation - HA (Quay)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/ha-cluster-quay.yml
+
+  tasks:
+    - name: Include topology validation
+      ansible.builtin.include_role:
+        name: openshift_cluster_deploy
+        tasks_from: validate_topology
+      tags: [validate-ha-quay]
+
+- name: Test Topology Validation - HA (Harbor)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/ha-cluster-harbor.yml
+
+  tasks:
+    - name: Include topology validation
+      ansible.builtin.include_role:
+        name: openshift_cluster_deploy
+        tasks_from: validate_topology
+      tags: [validate-ha-harbor]
+
+- name: Test Validation Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ Topology Validation Testing Complete"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Tested topologies:"
+          - "  ✅ SNO (Quay) - 1 control plane, 0 workers"
+          - "  ✅ Compact (Quay) - 3 control plane schedulable, 0 workers"
+          - "  ✅ Compact (Harbor) - 3 control plane schedulable, 0 workers"
+          - "  ✅ Compact (JFrog) - 3 control plane schedulable, 0 workers"
+          - "  ✅ HA (Quay) - 3 control plane + 3 workers"
+          - "  ✅ HA (Harbor) - 3 control plane + 3 workers"
+          - ""
+          - "All topology validations passed successfully"
+          - "Multi-registry support validated (Quay, Harbor, JFrog)"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

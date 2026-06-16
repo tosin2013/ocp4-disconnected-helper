@@ -9,3 +9,81 @@ additionalNTPSources:
 - time.cloudflare.com
 - time.google.com
 {% endif %}
+{% if control_plane_nodes is defined %}
+# Multi-node cluster configuration (compact or HA)
+hosts:
+{% for node in control_plane_nodes %}
+  - hostname: {{ node.name }}.{{ cluster_name }}.{{ base_domain }}
+    role: master
+    rootDeviceHints:
+      deviceName: /dev/vda
+    interfaces:
+      - name: {{ node.interface | default('enp1s0') }}
+        macAddress: "{{ node.mac }}"
+    networkConfig:
+      interfaces:
+        - name: {{ node.interface | default('enp1s0') }}
+          type: ethernet
+          state: up
+          ipv4:
+            enabled: true
+            address:
+              - ip: {{ node.ip }}
+                prefix-length: {{ node.prefix_length | default(24) }}
+            dhcp: false
+      dns-resolver:
+        config:
+          server:
+            {% if dns_servers is defined %}
+            {% for dns in dns_servers %}
+            - {{ dns }}
+            {% endfor %}
+            {% else %}
+            - 8.8.8.8
+            - 8.8.4.4
+            {% endif %}
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: {{ node.gateway | default('192.168.10.1') }}
+            next-hop-interface: {{ node.interface | default('enp1s0') }}
+{% endfor %}
+{% if worker_nodes is defined %}
+{% for node in worker_nodes %}
+  - hostname: {{ node.name }}.{{ cluster_name }}.{{ base_domain }}
+    role: worker
+    rootDeviceHints:
+      deviceName: /dev/vda
+    interfaces:
+      - name: {{ node.interface | default('enp1s0') }}
+        macAddress: "{{ node.mac }}"
+    networkConfig:
+      interfaces:
+        - name: {{ node.interface | default('enp1s0') }}
+          type: ethernet
+          state: up
+          ipv4:
+            enabled: true
+            address:
+              - ip: {{ node.ip }}
+                prefix-length: {{ node.prefix_length | default(24) }}
+            dhcp: false
+      dns-resolver:
+        config:
+          server:
+            {% if dns_servers is defined %}
+            {% for dns in dns_servers %}
+            - {{ dns }}
+            {% endfor %}
+            {% else %}
+            - 8.8.8.8
+            - 8.8.4.4
+            {% endif %}
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: {{ node.gateway | default('192.168.10.1') }}
+            next-hop-interface: {{ node.interface | default('enp1s0') }}
+{% endfor %}
+{% endif %}
+{% endif %}

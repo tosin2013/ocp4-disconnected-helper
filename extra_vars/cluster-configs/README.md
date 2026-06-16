@@ -6,7 +6,7 @@ This directory contains declarative YAML configurations for OpenShift cluster de
 
 ### SNO (Single-Node OpenShift)
 
-**File**: `sno-quay.yml`, `sno-harbor.yml`, `sno-jfrog.yml`
+**Files**: `sno-quay.yml`, `sno-harbor.yml`, `sno-jfrog.yml`
 
 **Resources**:
 - 1 node (combined control plane + worker)
@@ -19,31 +19,61 @@ This directory contains declarative YAML configurations for OpenShift cluster de
 - Edge deployments
 - Resource-constrained environments
 
-### 3-Node Compact (Coming Soon)
+**VIP Configuration**:
+- Single IP for API, Ingress, and Rendezvous
+
+---
+
+### 3-Node Compact
+
+**Files**: `compact-3node-quay.yml`, `compact-3node-harbor.yml`, `compact-3node-jfrog.yml`
 
 **Resources**:
 - 3 control plane nodes (schedulable)
 - 0 dedicated workers
 - 6 vCPU per node
 - 24GB RAM per node
+- Total: 18 vCPU, 72GB RAM
 
 **Use Cases**:
 - Small production clusters
 - Lab environments
 - Proof of concept
 
-### HA Cluster (Coming Soon)
+**VIP Configuration**:
+- Separate VIPs for API and Ingress
+- First control plane node as rendezvous IP
+
+**Network Configuration**:
+- Static IP per node via NMState
+- MAC address binding for consistent provisioning
+
+---
+
+### HA Cluster
+
+**Files**: `ha-cluster-quay.yml`, `ha-cluster-harbor.yml`
 
 **Resources**:
-- 3 control plane nodes
-- 2+ worker nodes
-- 6 vCPU (control) / 12+ vCPU (workers)
-- 24GB RAM (control) / 32-48GB (workers)
+- 3 control plane nodes (not schedulable)
+- 3+ worker nodes (dedicated for workloads)
+- Control: 6 vCPU, 24GB RAM per node
+- Workers: 12 vCPU, 32GB RAM per node
+- Total: 18 vCPU (control) + 36 vCPU (workers) = 54+ vCPU
 
 **Use Cases**:
 - Production deployments
 - High availability requirements
 - Large-scale workloads
+
+**VIP Configuration**:
+- Separate VIPs for API, Ingress, and Rendezvous
+- Load balancing across control plane nodes
+
+**Network Configuration**:
+- Static IP per node (6 total)
+- MAC address binding
+- Supports VLAN and bonding configurations
 
 ## Multi-Registry Support
 
@@ -60,25 +90,46 @@ All configuration examples include variants for:
 ansible-playbook playbooks/deploy-openshift-cluster.yml \
   -e @extra_vars/cluster-configs/sno-quay.yml
 
-# Deploy SNO cluster with Harbor registry
+# Deploy 3-node compact cluster with Quay
 ansible-playbook playbooks/deploy-openshift-cluster.yml \
-  -e @extra_vars/cluster-configs/sno-harbor.yml
+  -e @extra_vars/cluster-configs/compact-3node-quay.yml
 
-# Deploy SNO cluster with JFrog registry
+# Deploy HA cluster with Harbor registry
 ansible-playbook playbooks/deploy-openshift-cluster.yml \
-  -e @extra_vars/cluster-configs/sno-jfrog.yml
+  -e @extra_vars/cluster-configs/ha-cluster-harbor.yml
+
+# Test topology validation (without deployment)
+ansible-playbook playbooks/test-topology-validation.yml
 ```
 
 ## Required Variables
 
-All configs must define:
-- `cluster_name`
-- `base_domain`
-- `cluster_topology`
-- `ocp_version`
-- `registry_type`
-- `registry_url`
-- `pull_secret_path`
+### Common (All Topologies)
+- `cluster_name` - Cluster identifier
+- `base_domain` - DNS base domain
+- `cluster_topology` - `sno` | `compact` | `ha`
+- `ocp_version` - OpenShift version (e.g., "4.21")
+- `registry_type` - `quay` | `harbor` | `jfrog`
+- `registry_url` - Mirror registry URL
+- `pull_secret_path` - Path to pull secret JSON
+
+### SNO Specific
+- `api_vip` - Single IP for API, Ingress, Rendezvous
+- `vm_memory_mb` - Minimum 32768 (32GB)
+- `vm_vcpus` - Minimum 8
+
+### Compact/HA Specific
+- `api_vip` - Separate VIP for API
+- `ingress_vip` - Separate VIP for Ingress
+- `rendezvous_ip` - First control plane node IP
+- `control_plane_nodes` - List of 3 nodes with `name`, `ip`, `mac`
+
+### HA Specific (Additional)
+- `worker_nodes` - List of 2+ nodes with `name`, `ip`, `mac`
+- `vm_memory_mb_control` - Control plane node memory
+- `vm_vcpus_control` - Control plane node vCPU
+- `vm_memory_mb_worker` - Worker node memory
+- `vm_vcpus_worker` - Worker node vCPU
 
 ## Community Contributions
 
