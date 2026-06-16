@@ -97,12 +97,12 @@
         job_type: "run"
         inventory: "{{ inventory_name }}"
         project: "{{ project_name }}"
-        playbook: "playbooks/install-mirror-registry.yml"
+        playbook: "playbooks/setup-mirror-registry.yml"
         credentials:
           - "{{ credential_name }}"
-          - "Red Hat Registry Credentials"
         execution_environment: "{{ execution_environment }}"
         ask_variables_on_launch: true
+        ask_credential_on_launch: true
         extra_vars:
           registry_type: "{{ registry_type | default('quay') }}"
         state: present
@@ -126,7 +126,7 @@
         job_type: "run"
         inventory: "{{ inventory_name }}"
         project: "{{ project_name }}"
-        playbook: "playbooks/configure-haproxy.yml"
+        playbook: "playbooks/setup-haproxy.yml"
         credentials:
           - "{{ credential_name }}"
         execution_environment: "{{ execution_environment }}"
@@ -154,9 +154,9 @@
         playbook: "playbooks/setup-certificates.yml"
         credentials:
           - "{{ credential_name }}"
-          - "AWS Credentials"
         execution_environment: "{{ execution_environment }}"
         ask_variables_on_launch: true
+        ask_credential_on_launch: true
         extra_vars:
           certificate_mode: "{{ certificate_mode | default('selfsigned') }}"
         state: present
