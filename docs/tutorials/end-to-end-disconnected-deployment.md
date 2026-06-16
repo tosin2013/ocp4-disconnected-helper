@@ -1,3 +1,10 @@
+---
+layout: default
+title: End-to-End Disconnected Deployment
+parent: Tutorials
+nav_order: 3
+---
+
 # End-to-End Disconnected OpenShift Deployment
 
 Complete tutorial from bare hypervisor to working disconnected OpenShift cluster.
@@ -238,6 +245,45 @@ echo "SecureQuayPassword456!" | podman login --username init \
 
 ## Part 5: Image Mirroring (60-90 minutes)
 
+### Understanding Operator Presets
+
+Before mirroring, understand what operators enable on your cluster:
+
+**Atomic Presets** (Single Focus):
+- `storage-operators` (~15 GB) — Persistent storage (ODF, LVMS) for stateful apps
+- `networking-operators` (~16 GB) — Load balancers (MetalLB), advanced networking
+- `observability-operators` (~22 GB) — Logging, metrics, tracing
+- `security-operators` (~20 GB) — Compliance scanning, vulnerability detection
+- `rhacm-operators` (~20 GB) — Multi-cluster management (hub-spoke)
+- `virtualization-operators` (~25 GB) — Run VMs + containers unified platform
+- `service-mesh-operators` (~18 GB) — Microservices traffic management (Istio)
+- `openshift-ai-operators` (~35 GB) — AI/ML model training and serving
+
+**Combination Presets** (Multi-Capability):
+- `full-platform` (~70 GB) — Storage + Observability + Security + Networking (complete enterprise)
+- `enterprise-ready` (~65 GB) — RHACM + Storage + Security (hub cluster)
+- `developer-stack` (~60 GB) — Service Mesh + AI + Observability (dev workloads)
+- `vm-platform` (~55 GB) — Virtualization + Storage + Security (VMware replacement)
+
+**What you can actually do with each preset**:
+
+| Preset | Cluster Capabilities After Installation |
+|--------|----------------------------------------|
+| **storage-operators** | Deploy databases (PostgreSQL, MongoDB), persistent apps (Jenkins, GitLab), stateful workloads |
+| **networking-operators** | Expose services via LoadBalancer type, configure static IPs, multi-homed networking |
+| **observability-operators** | Centralized logging across namespaces, custom dashboards, distributed tracing |
+| **security-operators** | Automated CVE scanning, compliance reports (CIS, PCI-DSS), image signing enforcement |
+| **rhacm-operators** | Manage 10+ spoke clusters from one hub, policy enforcement, app lifecycle across clusters |
+| **virtualization-operators** | Run Windows/Linux VMs alongside containers, VM live migration, desktop workloads |
+| **full-platform** | All above capabilities unified — production-ready enterprise cluster |
+
+**Start with**: `storage-operators` for first deployment (small, fast, enables databases).  
+**Scale to**: `full-platform` or `enterprise-ready` for production multi-cluster environments.
+
+For complete preset details and operator lists, see: [Operator Preset Catalog](../reference/operator-preset-catalog.md)
+
+---
+
 ### Step 11: Execute Workflow 2
 
 **Via AAP Web UI**:
@@ -245,7 +291,8 @@ echo "SecureQuayPassword456!" | podman login --username init \
 2. Click **Workflow 2: OpenShift Image Mirroring**
 3. Click **Launch**
 4. Fill survey:
-   - **Operator Preset**: `storage-operators` (start with essentials)
+   - **Operator Preset**: Select from dropdown (see table above for capabilities)
+   - **Start with**: `storage-operators` (15 GB, 20-30 min)
    - **Target Registry**: `registry.example.com:8443`
 5. Select credentials when prompted:
    - Red Hat Registry Credentials
@@ -254,15 +301,17 @@ echo "SecureQuayPassword456!" | podman login --username init \
 
 **Progress monitoring**:
 - Node 0: Verify Prerequisites (30 seconds)
-- Node 1: Download Images (20-40 minutes)
-- Node 2: Push to Registry (15-30 minutes)
+- Node 1: Download Images (5-60 minutes depending on preset)
+- Node 2: Push to Registry (10-90 minutes depending on preset)
 - Node 3: Verify Mirror (2-5 minutes)
 
-**Mirror additional operator sets**:
+**Mirror additional presets**:
+After `storage-operators` succeeds, you can mirror additional presets to add capabilities:
 ```bash
-# Repeat Workflow 2 with different presets
-- networking-operators (for Multus, SR-IOV, MetalLB)
-- observability-operators (for Prometheus, Grafana, Loki)
+# Launch Workflow 2 again with different preset
+- networking-operators (adds MetalLB, NMState)
+- observability-operators (adds Loki, Tempo, cluster logging)
+- security-operators (adds compliance operator, Quay registry)
 ```
 
 ### Step 12: Generate Pull Secret and ICSP

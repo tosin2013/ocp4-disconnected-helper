@@ -1,4 +1,10 @@
-# RHEL 9 KVM Guest Image - Direct Download Methods
+---
+layout: default
+title: Download RHEL9 ISO
+parent: How-To Guides
+nav_order: 9
+---
+
 
 **Goal**: Download RHEL 9 KVM guest image directly to hypervisor (no SCP)  
 **Target**: `/var/lib/libvirt/images/rhel9-kvm-guest.qcow2`

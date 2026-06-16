@@ -1,3 +1,10 @@
+---
+layout: default
+title: Getting Started with AAP Workflows
+parent: Tutorials
+nav_order: 1
+---
+
 # Tutorial: Getting Started with AAP Workflows
 
 **Time to Complete**: 60-90 minutes  

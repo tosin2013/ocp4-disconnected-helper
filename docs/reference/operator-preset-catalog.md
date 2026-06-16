@@ -1,4 +1,10 @@
-# AAP Operator Preset Survey Guide
+---
+layout: default
+title: Operator Preset Catalog
+parent: Reference
+nav_order: 2
+---
+
 
 **Version**: 1.3  
 **Created**: 2026-06-16  

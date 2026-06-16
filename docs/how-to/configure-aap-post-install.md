@@ -1,4 +1,10 @@
-# AAP 2.6 Post-Installation Configuration
+---
+layout: default
+title: Configure AAP Post-Install
+parent: How-To Guides
+nav_order: 2
+---
+
 
 **Last Updated**: 2026-06-05  
 **AAP Version**: 2.6  

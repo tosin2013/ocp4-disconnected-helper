@@ -1,4 +1,10 @@
-# Quay Robot Account Setup for Custom Execution Environment
+---
+layout: default
+title: Create Quay Robot Accounts
+parent: How-To Guides
+nav_order: 8
+---
+
 
 **Best Practice**: Use robot accounts instead of personal credentials for automated builds and AAP authentication.
 

@@ -1,4 +1,10 @@
-# VyOS Router Deployment Guide
+---
+layout: default
+title: Deploy VyOS Router
+parent: How-To Guides
+nav_order: 10
+---
+
 
 **Reference**: ADR 0025 - VyOS Router as Network Infrastructure Prerequisite  
 **Source**: https://tosin2013.github.io/openshift-agent-install/vyos-manual-configuration.html

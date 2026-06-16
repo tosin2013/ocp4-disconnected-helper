@@ -1,4 +1,10 @@
-# Cockpit + Libvirt Setup for Headless KVM Management
+---
+layout: default
+title: Setup Cockpit for VM Management
+parent: How-To Guides
+nav_order: 5
+---
+
 
 **Approach**: Use **Cockpit web console** for libvirt/KVM management on headless servers.
 

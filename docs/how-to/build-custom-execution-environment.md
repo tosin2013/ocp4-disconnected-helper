@@ -1,4 +1,10 @@
-# Custom Execution Environment for AAP - Quick Start Guide
+---
+layout: default
+title: Build Custom Execution Environment
+parent: How-To Guides
+nav_order: 6
+---
+
 
 **ADR Reference**: [ADR 0029](adrs/0029-custom-execution-environment-for-aap-registry-authentication.md)
 

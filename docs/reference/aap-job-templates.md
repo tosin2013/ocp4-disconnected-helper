@@ -1,4 +1,10 @@
-# AAP Job Templates - OpenShift Disconnected Deployment
+---
+layout: default
+title: AAP Job Templates
+parent: Reference
+nav_order: 1
+---
+
 
 **Prerequisites**: VyOS router deployed and configured (ADR 0025)
 

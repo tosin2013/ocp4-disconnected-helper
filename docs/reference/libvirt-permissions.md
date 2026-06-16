@@ -1,4 +1,10 @@
-# Libvirt Permissions Setup
+---
+layout: default
+title: Libvirt Permissions
+parent: Reference
+nav_order: 3
+---
+
 
 ## Problem
 By default, `vpcuser` cannot run `virsh` commands without `sudo`, which breaks Ansible automation.

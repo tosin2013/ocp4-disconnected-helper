@@ -1,4 +1,10 @@
-# Ansible Roles and Collections Architecture
+---
+layout: default
+title: Ansible Roles Structure
+parent: Reference
+nav_order: 4
+---
+
 
 **ADR:** [0024](adrs/0024-ansible-roles-collections-architecture.md)  
 **Status:** In Progress  

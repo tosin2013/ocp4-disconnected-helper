@@ -1,4 +1,10 @@
-# AAP Project Import Guide: ocp4-disconnected-helper
+---
+layout: default
+title: Import GitHub Projects to AAP
+parent: How-To Guides
+nav_order: 3
+---
+
 
 **Goal**: Import this repository into AAP 2.6 and create job templates for automation workflows
 

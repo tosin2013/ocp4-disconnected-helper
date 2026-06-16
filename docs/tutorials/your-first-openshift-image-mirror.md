@@ -1,3 +1,10 @@
+---
+layout: default
+title: Your First OpenShift Image Mirror
+parent: Tutorials
+nav_order: 2
+---
+
 # Tutorial: Your First OpenShift Image Mirror
 
 **Time to Complete**: 45-60 minutes  

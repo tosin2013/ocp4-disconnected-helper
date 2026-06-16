@@ -1,4 +1,10 @@
-# Ansible Automation Platform Deployment Guide
+---
+layout: default
+title: Deploy AAP Multi-Node
+parent: How-To Guides
+nav_order: 1
+---
+
 
 **Last Updated**: 2026-06-16  
 **AAP Versions Covered**: 2.5, 2.6  

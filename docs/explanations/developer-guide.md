@@ -1,4 +1,10 @@
-# Developer Guide - KVM Development Environment
+---
+layout: default
+title: Developer Guide
+parent: Explanations
+nav_order: 7
+---
+
 
 **ocp4-disconnected-helper** | Developer Onboarding & Workflow Guide
 

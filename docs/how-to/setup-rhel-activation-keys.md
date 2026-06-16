@@ -1,4 +1,10 @@
-# Red Hat Activation Key Setup Guide
+---
+layout: default
+title: Setup RHEL Activation Keys
+parent: How-To Guides
+nav_order: 4
+---
+
 
 **Quick Reference**: ADR 0027 - RHEL Subscription Activation Keys
 
