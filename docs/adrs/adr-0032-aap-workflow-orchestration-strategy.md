@@ -70,22 +70,24 @@ AAP workflow orchestration provides:
 The complete deployment lifecycle is organized into **3 numbered workflows** with clear dependencies and execution order:
 
 #### **Workflow 1: OpenShift Infrastructure Deployment**
-**Purpose**: Deploy foundational infrastructure (network, DNS, registry, load balancer, certificates)  
-**Execution Model**: Conditional (adapts to deployment scenario)  
+**Purpose**: Deploy container registry infrastructure for disconnected OpenShift  
+**Execution Model**: Sequential (5-step deployment)  
 **Components**:
-- VyOS Router (conditional - KVM environments only)
-- DNS Services (conditional - if not already configured)
-- Registry VM (Quay/Harbor/JFrog) (always)
-- HAProxy Load Balancer (always)
-- SSL/TLS Certificates (always)
-- Infrastructure verification (always)
+- Registry VM (Quay/Harbor/JFrog) - KVM guest provisioning
+- Registry Installation - Container registry setup and configuration
+- HAProxy Load Balancer - SNI routing and SSL termination
+- SSL/TLS Certificates - Let's Encrypt or self-signed CA
+- Infrastructure Verification - Health checks and validation
 
-**Survey-Driven Scenarios**:
-- **KVM Full Deployment**: VyOS + DNS + Registry + HAProxy + Certificates
-- **Existing Infrastructure**: Skip VyOS/DNS, deploy Registry + HAProxy + Certificates
-- **Cloud Deployment**: Minimal deployment (Registry + HAProxy + Certificates)
+**Survey Options**:
+- Registry Type: quay / harbor / jfrog
+- Certificate Mode: letsencrypt / selfsigned
 
-**Prerequisites**: None (this is the entry point)
+**Prerequisites**: 
+- **Bootstrap Layer Complete** (VyOS, DNS, AAP deployed via manual playbooks)
+- VyOS router accessible at 192.168.122.2
+- DNS resolving (Route53 or FreeIPA)
+- AAP 2.6 operational at https://aap.sandbox3377.opentlc.com
 
 ---
 
@@ -145,16 +147,51 @@ The complete deployment lifecycle is organized into **3 numbered workflows** wit
 
 ---
 
-### Included in Workflow Orchestration
+### Bootstrap vs Workflow Layers
 
-Components are managed via workflows based on the 3-workflow catalog:
+The deployment architecture is organized into two distinct layers:
+
+#### **Bootstrap Layer** (Manual Playbook Execution - Prerequisites for AAP)
+
+Components that MUST be deployed BEFORE AAP can function:
+
+| Component | Rationale | Deployment Method |
+|-----------|-----------|-------------------|
+| **VyOS Router** | Network infrastructure required for AAP communication | `playbooks/deploy-vyos.yml` |
+| **DNS Services** | Name resolution required for AAP Web UI and API | `playbooks/setup-route53-dns.yml` or `playbooks/setup-freeipa-dns.yml` |
+| **AAP 2.6** | Automation platform itself (bootstrap paradox) | `playbooks/deploy-aap-multi-node.yml` |
+| **Hypervisor** | KVM/libvirt or cloud infrastructure | One-time provisioning |
+
+**Why Bootstrap Layer Exists**: Circular dependency prevention
+- VyOS provides network routing for AAP communication
+- DNS provides name resolution for `aap.sandbox3377.opentlc.com`
+- AAP cannot deploy itself (bootstrap paradox)
+- These must exist BEFORE workflows can run
+
+**Deployment Order**:
+```
+1. Hypervisor Setup (IBM Cloud VSI or bare metal KVM)
+2. VyOS Router (playbooks/deploy-vyos.yml)
+3. DNS Services (playbooks/setup-route53-dns.yml)
+4. AAP 2.6 (playbooks/deploy-aap-multi-node.yml)
+--- AAP Workflows become available after this point ---
+5. Workflow 1 (Infrastructure)
+6. Workflow 2 (Image Mirroring)
+7. Workflow 3 (Cluster Deployment - future)
+```
+
+---
+
+#### **Workflow Layer** (AAP Workflow Orchestration)
+
+Components managed via AAP workflows AFTER bootstrap layer is operational:
 
 **Workflow 1 Components** (Infrastructure):
-- **VyOS Router** (conditional - KVM only)
-- **DNS Services** (conditional - if needed)
-- **Registry VMs**: Quay, Harbor, JFrog (deploy + teardown)
+- **Registry VMs**: Quay, Harbor, JFrog (KVM guest provisioning)
+- **Registry Installation**: Container registry setup and configuration
 - **HAProxy Load Balancer**: SNI routing, SSL termination
 - **Certificate Management**: Let's Encrypt or self-signed CA
+- **Infrastructure Verification**: Health checks and validation
 
 **Workflow 2 Components** (Mirroring):
 - **oc-mirror Operations**: operator validation, download-to-disk, push-to-registry
@@ -167,18 +204,23 @@ Components are managed via workflows based on the 3-workflow catalog:
 - **Monitoring Stack**: Prometheus, Grafana, Loki
 - **Backup/Restore**: Infrastructure state backup and recovery
 
-### Excluded from Workflow Orchestration (Manual Playbook Only)
+---
 
-The following components MUST remain manual playbook execution:
-- **AAP Deployment**: Bootstrap paradox (cannot use AAP to deploy itself)
-- **Hypervisor Setup**: One-time IBM Cloud VSI provisioning
+### Why This Separation Matters
 
-**Rationale for Exclusions**: These components create circular dependencies (AAP deploying itself) or are one-time cloud infrastructure provisioning.
+**Bootstrap Layer**:
+- Required for AAP to function
+- Must be deployed manually (CLI playbooks)
+- Cannot be managed by AAP (circular dependency)
+- Deployed once per environment
 
-**NOTE**: VyOS and DNS are now **conditionally included** in Workflow 1:
-- **VyOS**: Deployed by Workflow 1 in KVM environments (conditional step)
-- **DNS**: Deployed by Workflow 1 if not already configured (conditional step)
-- **Rationale**: Survey-driven conditional execution allows Workflow 1 to adapt to different scenarios (KVM vs Existing vs Cloud)
+**Workflow Layer**:
+- Managed by AAP Web UI
+- Visual progress tracking, RBAC, audit logs
+- Survey-driven configuration
+- Can be re-run, torn down, redeployed
+
+**Anti-Pattern to Avoid**: Attempting to deploy VyOS or DNS via AAP workflows creates a "chicken and egg" problem - AAP needs these components to work, so AAP cannot deploy them.
 
 ### Workflow Design Principles
 

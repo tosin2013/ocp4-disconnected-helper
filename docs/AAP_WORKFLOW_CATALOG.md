@@ -18,66 +18,77 @@ This catalog documents the complete set of AAP workflows for OpenShift disconnec
 
 ### **Workflow 1: OpenShift Infrastructure Deployment**
 
-**Purpose**: Deploy foundational infrastructure for OpenShift disconnected environments
+**Purpose**: Deploy container registry infrastructure for disconnected OpenShift
 
 **Status**: ✅ Configured (v1.3) - Ready for deployment  
 **Workflow ID**: TBD (not yet deployed to AAP)  
-**Execution Model**: Conditional (adapts to deployment scenario)
+**Execution Model**: Sequential (5-step deployment)
 
-#### Components Deployed
+#### ⚠️ Bootstrap Prerequisites (Manual Deployment Required)
 
-| Component | Deployment Condition | Description |
-|-----------|---------------------|-------------|
-| VyOS Router | KVM environments only | Network infrastructure with VLAN segmentation |
-| DNS Services | If not already configured | Route53 (cloud) or FreeIPA (on-premise) |
-| Registry VM | Always | KVM guest for container registry (4 vCPU, 16 GiB RAM, 200 GiB disk) |
-| Container Registry | Always | Quay, Harbor, or JFrog (survey-driven selection) |
-| HAProxy Load Balancer | Always | SNI routing and SSL termination |
-| SSL/TLS Certificates | Always | Let's Encrypt (cloud) or self-signed CA (disconnected) |
+**CRITICAL**: The following components MUST be deployed BEFORE Workflow 1 can run:
 
-#### Workflow Execution Graph (8 Steps)
+| Component | Why Required | Deployment Method |
+|-----------|--------------|-------------------|
+| **VyOS Router** | Network routing for AAP communication | `ansible-playbook playbooks/deploy-vyos.yml` |
+| **DNS Services** | Name resolution for `aap.sandbox3377.opentlc.com` | `ansible-playbook playbooks/setup-route53-dns.yml` |
+| **AAP 2.6** | Workflow execution platform (bootstrap paradox) | `ansible-playbook playbooks/deploy-aap-multi-node.yml` |
+
+**Why Bootstrap Layer Exists**: **Circular Dependency Prevention**
+- VyOS provides network infrastructure for AAP to communicate
+- DNS provides name resolution for AAP Web UI (`https://aap.sandbox3377.opentlc.com`)
+- AAP cannot deploy itself (bootstrap paradox)
+- **These MUST exist before AAP workflows can run**
+
+**Deployment Order**:
+```
+1. Hypervisor (IBM Cloud VSI or KVM/libvirt)
+2. VyOS Router (manual playbook)
+3. DNS Services (manual playbook)
+4. AAP 2.6 (manual playbook)
+--- AAP Workflows Available After This Point ---
+5. Workflow 1 (Infrastructure - THIS WORKFLOW)
+6. Workflow 2 (Image Mirroring)
+```
+
+---
+
+#### Components Deployed by Workflow 1
+
+| Component | Description |
+|-----------|-------------|
+| Registry VM | KVM guest for container registry (4 vCPU, 16 GiB RAM, 200 GiB disk) |
+| Container Registry | Quay, Harbor, or JFrog (survey-driven selection) |
+| HAProxy Load Balancer | SNI routing and SSL termination |
+| SSL/TLS Certificates | Let's Encrypt (cloud) or self-signed CA (disconnected) |
+| Infrastructure Verification | Health checks and validation |
+
+#### Workflow Execution Graph (5 Steps)
 
 ```
 ┌─────────────────────────────────────────┐
-│ Step 1: Assess Deployment Environment  │
-│ (Auto-detect or survey-driven)          │
-└─────────────┬───────────────────────────┘
-              ▼
-        ┌─────┴─────┐
-        │           │
-     (KVM)     (Existing/Cloud)
-        │           │
-        ▼           │
-┌──────────────┐    │
-│ Step 2:      │    │
-│ Deploy VyOS  │    │ (skip)
-└──────┬───────┘    │
-        ▼           │
-┌──────────────┐    │
-│ Step 3:      │    │
-│ Configure DNS│    │ (skip if not needed)
-└──────┬───────┘    │
-        └─────┬─────┘
-              ▼
-┌─────────────────────────────────────────┐
-│ Step 4: Deploy Registry VM              │
+│ Step 1: Deploy Registry VM              │
+│ (KVM guest provisioning with cloud-init)│
 └─────────────┬───────────────────────────┘
               ▼
 ┌─────────────────────────────────────────┐
-│ Step 5: Setup Registry (Quay/Harbor)    │
+│ Step 2: Setup Registry                  │
+│ (Quay/Harbor/JFrog - survey-driven)     │
 └─────────────┬───────────────────────────┘
               ▼
 ┌─────────────────────────────────────────┐
-│ Step 6: Configure HAProxy               │
+│ Step 3: Configure HAProxy               │
+│ (SNI routing + SSL termination)         │
 └─────────────┬───────────────────────────┘
               ▼
 ┌─────────────────────────────────────────┐
-│ Step 7: Setup SSL/TLS Certificates      │
+│ Step 4: Setup SSL/TLS Certificates      │
+│ (Let's Encrypt or self-signed)          │
 └─────────────┬───────────────────────────┘
               ▼
 ┌─────────────────────────────────────────┐
-│ Step 8: Verify Infrastructure           │
-│ (Comprehensive validation)               │
+│ Step 5: Verify Infrastructure           │
+│ (Registry + HAProxy + Cert validation)  │
 └─────────────────────────────────────────┘
 ```
 
@@ -85,58 +96,45 @@ This catalog documents the complete set of AAP workflows for OpenShift disconnec
 
 | Question | Options | Default | Description |
 |----------|---------|---------|-------------|
-| **Deployment Scenario** | `kvm_full` / `existing_infrastructure` / `cloud_deployment` | `kvm_full` | Determines which components to deploy |
-| **DNS Provider** | `auto-detect` / `route53` / `freeipa` / `none` | `auto-detect` | DNS service selection |
 | **Registry Type** | `quay` / `harbor` / `jfrog` | `quay` | Container registry to deploy |
-| **Certificate Mode** | `auto-detect` / `letsencrypt` / `selfsigned` | `auto-detect` | Certificate generation method |
+| **Certificate Mode** | `letsencrypt` / `selfsigned` | `selfsigned` | Certificate generation method |
 
-#### Deployment Scenarios
+**Note**: No deployment scenario selection needed - VyOS and DNS are bootstrap prerequisites that must already exist.
 
-##### **Scenario 1: KVM Full Deployment**
-- **When to use**: Starting from scratch on IBM Cloud or bare metal with KVM
-- **Components deployed**: All 8 steps execute (VyOS + DNS + Registry + HAProxy + Certificates)
-- **Prerequisites**: KVM/libvirt installed, sufficient disk space (300+ GiB)
-- **Duration**: ~45-60 minutes
+#### Certificate Mode Selection
 
-**Survey Selections**:
+##### **Let's Encrypt (Cloud Deployments)**
+- **When to use**: Cloud environments with Route53 DNS
+- **Requirements**: AWS credentials configured, Route53 hosted zone exists
+- **Validation Method**: DNS-01 (no port 80/443 challenge needed)
+- **Certificate Validity**: 90 days (auto-renewal supported)
+
+**Survey Selection**:
 ```yaml
-deployment_scenario: kvm_full
-dns_provider: auto-detect  # Will use Route53 if AWS creds available
 registry_type: quay
-certificate_mode: auto-detect  # Will use Let's Encrypt if AWS creds available
+certificate_mode: letsencrypt
 ```
 
-##### **Scenario 2: Existing Infrastructure**
-- **When to use**: Network and DNS already configured, only need registry
-- **Components deployed**: Steps 1, 4-8 (skip VyOS and DNS)
-- **Prerequisites**: VyOS router accessible, DNS resolving, network connectivity
-- **Duration**: ~25-35 minutes
+##### **Self-Signed CA (Air-Gapped Deployments)**
+- **When to use**: On-premise disconnected environments
+- **Requirements**: None (generates local CA)
+- **Certificate Validity**: 10 years (no auto-renewal)
+- **Distribution**: Manual trust on OpenShift nodes
 
-**Survey Selections**:
+**Survey Selection**:
 ```yaml
-deployment_scenario: existing_infrastructure
-dns_provider: none  # DNS already configured externally
 registry_type: quay
-certificate_mode: selfsigned  # On-premise deployment
+certificate_mode: selfsigned
 ```
 
-##### **Scenario 3: Cloud Deployment**
-- **When to use**: Deploying on AWS/GCP/Azure with cloud-native networking
-- **Components deployed**: Steps 1, 4-8 (skip VyOS and DNS, use cloud DNS)
-- **Prerequisites**: Cloud credentials configured, Route53 hosted zone exists
-- **Duration**: ~20-30 minutes
+#### Workflow 1 Prerequisites
 
-**Survey Selections**:
-```yaml
-deployment_scenario: cloud_deployment
-dns_provider: route53  # AWS Route53
-registry_type: quay
-certificate_mode: letsencrypt  # Let's Encrypt DNS-01 validation
-```
-
-#### Prerequisites
-
-**None** - This is the entry point for deployment.
+✅ **Bootstrap Layer Complete**:
+- VyOS router deployed and accessible (`ssh vyos@192.168.122.2`)
+- DNS resolving (Route53 or FreeIPA configured)
+- AAP 2.6 operational (`https://aap.sandbox3377.opentlc.com`)
+- KVM/libvirt accessible (`virsh list`)
+- Disk space available (`/data/libvirt-images/` with 300+ GiB free)
 
 #### Output
 
@@ -286,10 +284,18 @@ certificate_mode: letsencrypt  # Let's Encrypt DNS-01 validation
 
 ```
 ┌────────────────────────────────────────┐
-│ Workflow 1: Infrastructure Deployment  │
-│ (Conditional: KVM/Existing/Cloud)      │
+│ Bootstrap Layer (Manual Playbooks)     │
+│ - VyOS Router                          │
+│ - DNS Services (Route53/FreeIPA)       │
+│ - AAP 2.6 Multi-Node                   │
 └───────────────┬────────────────────────┘
-                │ ✅ Infrastructure Ready
+                │ ✅ AAP Operational
+                ▼
+┌────────────────────────────────────────┐
+│ Workflow 1: Infrastructure Deployment  │
+│ (Registry + HAProxy + Certificates)    │
+└───────────────┬────────────────────────┘
+                │ ✅ Registry Ready
                 │ (validated by Workflow 2 Step 0)
                 ▼
 ┌────────────────────────────────────────┐
@@ -335,15 +341,30 @@ HTTP Status: Connection refused
 
 ---
 
-## Deployment Scenario Decision Matrix
+## Bootstrap Prerequisites Checklist
 
-| Your Situation | Recommended Workflow 1 Scenario | Survey Selections |
-|----------------|--------------------------------|-------------------|
-| Fresh KVM hypervisor, no infrastructure | `kvm_full` | VyOS + DNS + Registry + HAProxy + Certs (all steps) |
-| KVM with existing VyOS and DNS | `existing_infrastructure` | Skip VyOS/DNS, deploy Registry + HAProxy + Certs |
-| AWS/GCP/Azure cloud environment | `cloud_deployment` | Skip VyOS, use Route53 DNS, Let's Encrypt certs |
-| On-premise with existing network | `existing_infrastructure` | Skip VyOS/DNS, self-signed certs |
-| Bare metal with no network infrastructure | `kvm_full` | Deploy all components |
+Before running Workflow 1, ensure the bootstrap layer is complete:
+
+| Component | Verification Command | Expected Result |
+|-----------|---------------------|-----------------|
+| **VyOS Router** | `ssh vyos@192.168.122.2 "show version"` | VyOS version displayed |
+| **DNS Resolution** | `dig aap.sandbox3377.opentlc.com +short` | IP address returned |
+| **AAP Web UI** | `curl -k https://aap.sandbox3377.opentlc.com/api/v2/ping/` | `{"ha": false, "version": "4.7.12"}` |
+| **KVM Access** | `virsh list --all` | VM list displayed |
+| **Disk Space** | `df -h /data/libvirt-images/` | 300+ GiB available |
+
+**If any check fails**, deploy the missing component via manual playbook BEFORE launching Workflow 1:
+```bash
+# Deploy VyOS Router
+ansible-playbook -i inventory/ibm-cloud.yml playbooks/deploy-vyos.yml
+
+# Deploy DNS Services (Route53 or FreeIPA)
+ansible-playbook -i inventory/ibm-cloud.yml playbooks/setup-route53-dns.yml
+
+# Deploy AAP 2.6 Multi-Node
+ansible-playbook -i inventory/ibm-cloud.yml playbooks/deploy-aap-multi-node.yml \
+  -e @extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
+```
 
 ---
 
@@ -351,25 +372,16 @@ HTTP Status: Connection refused
 
 ### Workflow 1 Failures
 
-#### **Step 1 (Assessment) Fails**
-**Symptom**: Assessment playbook errors or incorrect detection
+#### **Bootstrap Prerequisites Not Met**
+**Symptom**: Workflow 1 won't launch or fails immediately
 
 **Solutions**:
-1. Verify libvirt connection: `virsh list --all`
-2. Check AWS credentials (if using Route53): `ls ~/.aws/credentials`
-3. Review assessment output in `/tmp/workflow1-assessment.yml`
-4. Override auto-detection with survey selections
+1. Verify VyOS router: `ssh vyos@192.168.122.2 "show version"`
+2. Verify DNS resolution: `dig aap.sandbox3377.opentlc.com +short`
+3. Verify AAP accessible: `curl -k https://aap.sandbox3377.opentlc.com/api/v2/ping/`
+4. Deploy missing components via manual playbooks (see Bootstrap Prerequisites Checklist above)
 
-#### **Step 2 (VyOS) Fails**
-**Symptom**: VyOS VM deployment fails or SSH not accessible
-
-**Solutions**:
-1. Check KVM resources: `virsh nodeinfo`
-2. Verify VyOS ISO exists: `ls /data/libvirt-images/vyos-*.iso`
-3. Check libvirt network: `virsh net-list --all`
-4. Review VyOS console: `virsh console vyos`
-
-#### **Step 4 (Registry VM) Fails**
+#### **Step 1 (Registry VM) Fails**
 **Symptom**: Registry VM provisioning fails
 
 **Solutions**:
