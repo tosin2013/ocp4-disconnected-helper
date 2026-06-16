@@ -1,0 +1,86 @@
+---
+# Test ISO Generation (without VM provisioning)
+# Tests openshift-install agent create image
+
+- name: Test ISO Generation - SNO
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../extra_vars/cluster-configs/sno-quay.yml
+
+  vars:
+    # Override paths for test
+    openshift_install_dir: "/tmp/test-ocp-install-sno"
+    iso_output_path: "/tmp/test-iso"
+
+  tasks:
+    - name: Load registry variables
+      ansible.builtin.include_vars: "../roles/openshift_cluster_deploy/vars/{{ registry_type }}.yml"
+
+    - name: Run prerequisite validation
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/validate_prerequisites.yml
+
+    - name: Run topology validation
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/validate_topology.yml
+
+    - name: Prepare installation directory
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/prepare_installation.yml
+
+    - name: Generate manifests
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/generate_manifests.yml
+
+    - name: Check if openshift-install exists
+      ansible.builtin.stat:
+        path: "{{ openshift_install_binary | default('/usr/local/bin/openshift-install') }}"
+      register: openshift_install_check
+
+    - name: Display openshift-install status
+      ansible.builtin.debug:
+        msg:
+          - "openshift-install binary: {{ 'Found' if openshift_install_check.stat.exists else 'Not found' }}"
+          - "Path: {{ openshift_install_binary | default('/usr/local/bin/openshift-install') }}"
+          - ""
+          - "{% if not openshift_install_check.stat.exists %}⚠️  ISO generation will be skipped (binary not found){% else %}✅ Ready to generate ISO{% endif %}"
+
+    - name: Create ISO (if openshift-install exists)
+      ansible.builtin.include_tasks: ../roles/openshift_cluster_deploy/tasks/create_iso.yml
+      when: openshift_install_check.stat.exists
+
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "ISO Generation Test Summary"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+          - "Topology: {{ cluster_topology }}"
+          - ""
+          - "{% if openshift_install_check.stat.exists %}"
+          - "ISO Location: {{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+          - "Installation Dir: {{ openshift_install_dir }}"
+          - "  • install-config.yaml (consumed)"
+          - "  • agent-config.yaml (consumed)"
+          - "  • manifests/ (embedded in ISO)"
+          - "  • auth/kubeconfig"
+          - "  • auth/kubeadmin-password"
+          - "{% else %}"
+          - "⚠️  openshift-install not found - ISO generation skipped"
+          - ""
+          - "To install openshift-install:"
+          - "  1. Download from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
+          - "  2. Extract: tar -xzf openshift-install-linux.tar.gz"
+          - "  3. Move: sudo mv openshift-install /usr/local/bin/"
+          - "  4. Verify: openshift-install version"
+          - "{% endif %}"
+          - ""
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    - name: Cleanup test directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ openshift_install_dir }}"
+        - "{{ iso_output_path }}"
+      when: cleanup_test_dirs | default(true)

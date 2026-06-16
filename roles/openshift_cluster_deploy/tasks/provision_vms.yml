@@ -1,7 +1,105 @@
 ---
-# Provision_vms - Placeholder
-# TODO: Full implementation in later phases
+# Provision OpenShift Cluster VMs
+# Uses common_vm role for VM provisioning with Agent-Based Installer ISO
 
-- name: Placeholder - provision_vms will be implemented later
+- name: Display VM provisioning info
   ansible.builtin.debug:
-    msg: "provision_vms - To be implemented"
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "Provisioning OpenShift Cluster VMs"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - "Topology: {{ cluster_topology }}"
+      - "{% if cluster_topology == 'sno' %}Nodes: 1 (SNO){% elif cluster_topology == 'compact' %}Nodes: 3 (compact control plane){% else %}Nodes: {{ control_plane_replicas + compute_replicas }} ({{ control_plane_replicas }} control + {{ compute_replicas }} workers){% endif %}"
+      - ""
+      - "Boot ISO: {{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+- name: Provision SNO VM
+  when: cluster_topology == 'sno'
+  block:
+    - name: Set SNO VM variables
+      ansible.builtin.set_fact:
+        vm_name: "{{ cluster_name }}"
+        vm_ip: "{{ api_vip }}"
+        vm_mac: "{{ sno_mac_address | default('') }}"
+
+    - name: Provision SNO VM with common_vm role
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_name: "{{ cluster_name }}"
+        vm_memory_mb: "{{ vm_memory_mb }}"
+        vm_vcpus: "{{ vm_vcpus }}"
+        vm_disk_size_gb: "{{ vm_disk_size_gb }}"
+        vm_network: "{{ vm_network }}"
+        vm_static_ip: "{{ api_vip }}"
+        vm_mac_address: "{{ sno_mac_address | default('') }}"
+        vm_boot_iso: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+        vm_base_image: "{{ vm_base_image | default('/data/libvirt-images/centos-stream-9-base.qcow2') }}"
+
+- name: Provision Compact/HA Control Plane VMs
+  when: cluster_topology in ['compact', 'ha']
+  block:
+    - name: Provision control plane VMs
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_name: "{{ cluster_name }}-{{ item.name }}"
+        vm_memory_mb: "{{ vm_memory_mb_control | default(vm_memory_mb) }}"
+        vm_vcpus: "{{ vm_vcpus_control | default(vm_vcpus) }}"
+        vm_disk_size_gb: "{{ vm_disk_size_gb_control | default(vm_disk_size_gb) }}"
+        vm_network: "{{ vm_network }}"
+        vm_static_ip: "{{ item.ip }}"
+        vm_mac_address: "{{ item.mac }}"
+        vm_boot_iso: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+        vm_base_image: "{{ vm_base_image | default('/data/libvirt-images/centos-stream-9-base.qcow2') }}"
+      loop: "{{ control_plane_nodes }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.ip }})"
+
+- name: Provision HA Worker VMs
+  when: cluster_topology == 'ha' and worker_nodes is defined
+  block:
+    - name: Provision worker VMs
+      ansible.builtin.include_role:
+        name: common_vm
+      vars:
+        vm_name: "{{ cluster_name }}-{{ item.name }}"
+        vm_memory_mb: "{{ vm_memory_mb_worker }}"
+        vm_vcpus: "{{ vm_vcpus_worker }}"
+        vm_disk_size_gb: "{{ vm_disk_size_gb_worker }}"
+        vm_network: "{{ vm_network }}"
+        vm_static_ip: "{{ item.ip }}"
+        vm_mac_address: "{{ item.mac }}"
+        vm_boot_iso: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+        vm_base_image: "{{ vm_base_image | default('/data/libvirt-images/centos-stream-9-base.qcow2') }}"
+      loop: "{{ worker_nodes }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.ip }})"
+
+- name: Wait for VMs to boot from ISO
+  ansible.builtin.pause:
+    seconds: 30
+    prompt: "Waiting 30 seconds for VMs to boot from ISO..."
+
+- name: Display VM provisioning summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ VM Provisioning Complete"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "{% if cluster_topology == 'sno' %}SNO VM: {{ cluster_name }} ({{ api_vip }}){% endif %}"
+      - "{% if cluster_topology == 'compact' %}Control Plane VMs: {{ control_plane_nodes | length }} nodes{% endif %}"
+      - "{% if cluster_topology == 'ha' %}Control Plane VMs: {{ control_plane_nodes | length }} nodes{% endif %}"
+      - "{% if cluster_topology == 'ha' and worker_nodes is defined %}Worker VMs: {{ worker_nodes | length }} nodes{% endif %}"
+      - ""
+      - "VMs are booting from Agent-Based Installer ISO"
+      - "Installation will begin automatically"
+      - ""
+      - "Monitor progress:"
+      - "  virsh list --all"
+      - "  virsh console {{ cluster_name }}{% if cluster_topology == 'sno' %}{% else %}-master-0{% endif %}"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

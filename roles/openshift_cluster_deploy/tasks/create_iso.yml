@@ -1,7 +1,104 @@
 ---
-# Phase 3: Create Bootable ISO
-# TODO: Full implementation in Phase 5 (Task 85)
+# Create Bootable ISO with Agent-Based Installer
+# Uses openshift-install to generate ISO with embedded manifests
 
-- name: Placeholder - ISO creation will be implemented in Phase 5
+- name: Ensure ISO output directory exists
+  ansible.builtin.file:
+    path: "{{ iso_output_path }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+
+- name: Check if openshift-install binary exists
+  ansible.builtin.stat:
+    path: "{{ openshift_install_binary | default('/usr/local/bin/openshift-install') }}"
+  register: openshift_install_stat
+  delegate_to: localhost
+
+- name: Fail if openshift-install not found
+  ansible.builtin.fail:
+    msg: "openshift-install binary not found at {{ openshift_install_binary | default('/usr/local/bin/openshift-install') }}"
+  when: not openshift_install_stat.stat.exists
+
+- name: Display ISO generation info
   ansible.builtin.debug:
-    msg: "Phase 3: ISO creation - To be implemented"
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "Generating Agent-Based Installer ISO"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - "Topology: {{ cluster_topology }} ({{ control_plane_replicas }} control, {{ compute_replicas }} workers)"
+      - "Install Dir: {{ openshift_install_dir }}"
+      - "ISO Output: {{ iso_output_path }}"
+      - ""
+      - "This will generate:"
+      - "  • agent.x86_64.iso (bootable ISO with embedded config)"
+      - "  • auth/kubeconfig (cluster access)"
+      - "  • auth/kubeadmin-password (admin password)"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+- name: Generate agent ISO with openshift-install
+  ansible.builtin.command:
+    cmd: "{{ openshift_install_binary | default('/usr/local/bin/openshift-install') }} agent create image --dir {{ openshift_install_dir }} --log-level=info"
+  register: iso_generation
+  delegate_to: localhost
+  changed_when: true
+  async: 1800  # 30 minutes timeout
+  poll: 10
+  environment:
+    OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE: "{{ ocp_release_image | default('') }}"
+
+- name: Display ISO generation output
+  ansible.builtin.debug:
+    var: iso_generation.stdout_lines
+  when: iso_generation.stdout_lines is defined
+
+- name: Check if agent ISO was created
+  ansible.builtin.stat:
+    path: "{{ openshift_install_dir }}/agent.x86_64.iso"
+  register: agent_iso_stat
+  delegate_to: localhost
+
+- name: Fail if ISO not created
+  ansible.builtin.fail:
+    msg: "Agent ISO not found at {{ openshift_install_dir }}/agent.x86_64.iso"
+  when: not agent_iso_stat.stat.exists
+
+- name: Copy ISO to output directory
+  ansible.builtin.copy:
+    src: "{{ openshift_install_dir }}/agent.x86_64.iso"
+    dest: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+    mode: '0644'
+    remote_src: true
+  delegate_to: localhost
+
+- name: Get ISO file size
+  ansible.builtin.stat:
+    path: "{{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+  register: iso_file_stat
+  delegate_to: localhost
+
+- name: Calculate ISO size in MB
+  ansible.builtin.set_fact:
+    iso_size_mb: "{{ (iso_file_stat.stat.size / 1024 / 1024) | round(2) }}"
+
+- name: Display ISO creation summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ Agent ISO Created Successfully"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "ISO File: {{ iso_output_path }}/{{ cluster_name }}-agent.x86_64.iso"
+      - "ISO Size: {{ iso_size_mb }} MB"
+      - ""
+      - "Installation Directory: {{ openshift_install_dir }}"
+      - "  • install-config.yaml (consumed)"
+      - "  • agent-config.yaml (consumed)"
+      - "  • manifests/ (embedded in ISO)"
+      - "  • auth/kubeconfig (for cluster access)"
+      - "  • auth/kubeadmin-password (admin password)"
+      - ""
+      - "Next: Boot VMs from this ISO to begin installation"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

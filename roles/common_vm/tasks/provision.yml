@@ -85,60 +85,70 @@
       delegate_to: localhost
       become: yes
 
-    - name: Create temporary directory for cloud-init
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: cloud-init-
-      register: cloud_init_temp
-      delegate_to: localhost
+    - name: Cloud-init ISO generation (skip if vm_boot_iso provided)
+      when: not vm_boot_iso
+      block:
+        - name: Create temporary directory for cloud-init
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: cloud-init-
+          register: cloud_init_temp
+          delegate_to: localhost
 
-    - name: Generate cloud-init user-data
-      ansible.builtin.template:
-        src: cloud-init/user-data.yml.j2
-        dest: "{{ cloud_init_temp.path }}/user-data"
-        mode: '0600'
-      delegate_to: localhost
+        - name: Generate cloud-init user-data
+          ansible.builtin.template:
+            src: cloud-init/user-data.yml.j2
+            dest: "{{ cloud_init_temp.path }}/user-data"
+            mode: '0600'
+          delegate_to: localhost
 
-    - name: Generate cloud-init meta-data
-      ansible.builtin.template:
-        src: cloud-init/meta-data.yml.j2
-        dest: "{{ cloud_init_temp.path }}/meta-data"
-        mode: '0600'
-      delegate_to: localhost
+        - name: Generate cloud-init meta-data
+          ansible.builtin.template:
+            src: cloud-init/meta-data.yml.j2
+            dest: "{{ cloud_init_temp.path }}/meta-data"
+            mode: '0600'
+          delegate_to: localhost
 
-    - name: Generate cloud-init network-config
-      ansible.builtin.template:
-        src: cloud-init/network-config.yml.j2
-        dest: "{{ cloud_init_temp.path }}/network-config"
-        mode: '0600'
-      delegate_to: localhost
+        - name: Generate cloud-init network-config
+          ansible.builtin.template:
+            src: cloud-init/network-config.yml.j2
+            dest: "{{ cloud_init_temp.path }}/network-config"
+            mode: '0600'
+          delegate_to: localhost
 
-    - name: Create cloud-init ISO
-      ansible.builtin.command:
-        cmd: >
-          {{ iso_create_cmd }} -output {{ vm_cloud_init_iso }}
-          -volid cidata -joliet -rock
-          {{ cloud_init_temp.path }}/user-data
-          {{ cloud_init_temp.path }}/meta-data
-          {{ cloud_init_temp.path }}/network-config
-        creates: "{{ vm_cloud_init_iso }}"
-      delegate_to: localhost
+        - name: Create cloud-init ISO
+          ansible.builtin.command:
+            cmd: >
+              {{ iso_create_cmd }} -output {{ vm_cloud_init_iso }}
+              -volid cidata -joliet -rock
+              {{ cloud_init_temp.path }}/user-data
+              {{ cloud_init_temp.path }}/meta-data
+              {{ cloud_init_temp.path }}/network-config
+            creates: "{{ vm_cloud_init_iso }}"
+          delegate_to: localhost
 
-    - name: Set cloud-init ISO permissions, ownership, and SELinux context
-      ansible.builtin.file:
-        path: "{{ vm_cloud_init_iso }}"
-        mode: '0644'
-        owner: qemu
-        group: qemu
-        setype: virt_content_t
-      delegate_to: localhost
-      become: yes
+        - name: Set cloud-init ISO permissions, ownership, and SELinux context
+          ansible.builtin.file:
+            path: "{{ vm_cloud_init_iso }}"
+            mode: '0644'
+            owner: qemu
+            group: qemu
+            setype: virt_content_t
+          delegate_to: localhost
+          become: yes
 
-    - name: Clean up temporary directory
-      ansible.builtin.file:
-        path: "{{ cloud_init_temp.path }}"
-        state: absent
-      delegate_to: localhost
+        - name: Clean up temporary directory
+          ansible.builtin.file:
+            path: "{{ cloud_init_temp.path }}"
+            state: absent
+          delegate_to: localhost
+
+    - name: Display boot ISO info (when using custom boot ISO)
+      ansible.builtin.debug:
+        msg:
+          - "Using custom boot ISO: {{ vm_boot_iso }}"
+          - "Skipping cloud-init generation"
+      when: vm_boot_iso
 
     - name: Generate VM XML definition
       ansible.builtin.set_fact:

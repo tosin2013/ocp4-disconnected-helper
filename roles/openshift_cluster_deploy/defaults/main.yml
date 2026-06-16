@@ -58,6 +58,10 @@ bootstrap_timeout_minutes: 30
 openshift_install_dir: "/root/openshift-install"
 iso_output_path: "/data/iso"
 manifests_dir: "{{ openshift_install_dir }}/manifests"
+openshift_install_binary: "/usr/local/bin/openshift-install"
+
+# VM Base Image (for provisioning)
+vm_base_image: "/data/libvirt-images/centos-stream-9-base.qcow2"
 
 # Agent-Based Installer Configuration
 rendezvous_ip: "{{ api_vip }}"  # First control plane node for rendezvous

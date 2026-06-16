@@ -31,6 +31,10 @@ vm_base_image_path: "{{ vm_images_dir }}/centos-stream-9-base.qcow2"
 vm_disk_path_full: "{{ vm_images_dir }}/{{ vm_name }}.qcow2"
 vm_cloud_init_iso: "{{ vm_images_dir }}/{{ vm_name }}-cloud-init.iso"
 
+# Boot ISO (for Agent-Based Installer or other bootable ISOs)
+# If set, this ISO will be used instead of cloud-init ISO
+vm_boot_iso: ""  # Path to bootable ISO (e.g., OpenShift agent.x86_64.iso)
+
 # Timeouts
 vm_boot_timeout: 60            # Seconds to wait after VM start
 vm_ssh_timeout: 300            # Seconds to wait for SSH

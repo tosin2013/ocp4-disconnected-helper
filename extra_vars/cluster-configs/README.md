@@ -103,20 +103,19 @@ See [DNS Configuration Guide](../../docs/how-to/configure-dns-for-openshift-clus
 ## Usage
 
 ```bash
-# Deploy SNO cluster with Quay registry
+# Full cluster deployment (all phases)
 ansible-playbook playbooks/deploy-openshift-cluster.yml \
   -e @extra_vars/cluster-configs/sno-quay.yml
 
-# Deploy 3-node compact cluster with Quay
-ansible-playbook playbooks/deploy-openshift-cluster.yml \
-  -e @extra_vars/cluster-configs/compact-3node-quay.yml
+# Test individual phases
+ansible-playbook playbooks/test-topology-validation.yml  # Phase 0
+ansible-playbook playbooks/test-dns-configuration.yml     # Phase 4
+ansible-playbook playbooks/test-iso-generation.yml        # Phase 5
 
-# Deploy HA cluster with Harbor registry
+# Phase-specific deployment
 ansible-playbook playbooks/deploy-openshift-cluster.yml \
-  -e @extra_vars/cluster-configs/ha-cluster-harbor.yml
-
-# Test topology validation (without deployment)
-ansible-playbook playbooks/test-topology-validation.yml
+  -e @extra_vars/cluster-configs/compact-3node-quay.yml \
+  --tags phase3  # ISO generation only
 ```
 
 ## Required Variables
