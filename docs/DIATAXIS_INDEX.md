@@ -28,9 +28,9 @@ This project follows the [Diátaxis documentation framework](https://diataxis.fr
 |-------|----------|--------|
 | [Deploy Workflow 1 (Registry Infrastructure)](how-to/deploy-workflow-1-registry-infrastructure.md) | Deployment | ✅ Complete |
 | Deploy Workflow 2 (Image Mirroring) | Deployment | 🚧 Planned |
-| Troubleshoot Workflow Failures | Troubleshooting | 🚧 Planned |
-| Resolve: AAP Login Failure | Troubleshooting | 🚧 Planned |
-| Resolve: oc-mirror Async Cache Errors | Troubleshooting | 🚧 Planned |
+| [Troubleshoot Workflow Failures](how-to/troubleshoot-workflow-failures.md) | Troubleshooting | ✅ Complete |
+| [Resolve: AAP Login Failure](how-to/resolve-aap-login-failure.md) | Troubleshooting | ✅ Complete |
+| [Resolve: oc-mirror Async Cache](how-to/resolve-oc-mirror-async-cache.md) | Troubleshooting | ✅ Complete |
 | Resolve: Registry TLS Authentication Failure | Troubleshooting | 🚧 Planned |
 | Add Custom Operators | Configuration | 🚧 Planned |
 | Switch Registry Types | Configuration | 🚧 Planned |
@@ -49,7 +49,7 @@ This project follows the [Diátaxis documentation framework](https://diataxis.fr
 | Playbook Parameter Reference | 🚧 Planned |
 | [ADR Status Reference](adrs/README.md) | ✅ Complete (36 ADRs) |
 | Environment Variables Reference | 🚧 Planned |
-| Survey Parameter Reference | 🚧 Planned |
+| [Workflow Survey Parameters](reference/workflow-survey-parameters.md) | ✅ Complete |
 | Bootstrap Prerequisites Reference | 🚧 Planned |
 
 **When to use**: You need to look up exact syntax, parameters, or system facts.
@@ -62,7 +62,7 @@ This project follows the [Diátaxis documentation framework](https://diataxis.fr
 
 | Explanation | Status |
 |-------------|--------|
-| Bootstrap vs Workflow Layers | 🚧 Planned |
+| [Bootstrap vs Workflow Layers](explanations/bootstrap-vs-workflow-layers.md) | ✅ Complete |
 | Multi-Workflow Architecture | 🚧 Planned |
 | Certificate Management Decisions | 🚧 Planned |
 | Operator Validation Framework | 🚧 Planned |
@@ -93,9 +93,9 @@ This project follows the [Diátaxis documentation framework](https://diataxis.fr
 
 **v1.3.0 Coverage**:
 - ✅ Tutorials: 2/3 complete (66%)
-- 🚧 How-To Guides: 1/8 complete (12%)
-- ✅ Reference: 2/6 complete (33%)
-- 🚧 Explanations: 0/6 complete (0%)
+- ✅ How-To Guides: 4/8 complete (50%)
+- ✅ Reference: 3/6 complete (50%)
+- ✅ Explanations: 1/6 complete (17%)
 
 **Next Release (v1.4)**:
 - Complete all How-To Guides
