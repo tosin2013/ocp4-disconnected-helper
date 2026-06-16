@@ -1,0 +1,116 @@
+---
+# Process Operator Preset Selection from AAP Survey
+#
+# This playbook translates the AAP survey selection into the proper extra_vars
+# file path for oc-mirror workflows.
+#
+# Created: 2026-06-16 (v1.3)
+# Purpose: AAP survey integration for operator preset selection
+#
+# Variables (from survey):
+#   - operator_preset: Selected preset name (e.g., "storage-operators", "full-platform")
+#   - custom_preset_path: Custom extra_vars path (if operator_preset == "custom")
+#   - target_registry: Target registry URL
+#   - target_namespace: Registry namespace
+#
+# Output:
+#   - preset_extra_vars_path: Full path to extra_vars file
+
+- name: Process Operator Preset Selection
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Base directory for operator presets
+    preset_base_dir: "{{ playbook_dir }}/../extra_vars/operators"
+
+  tasks:
+    - name: Validate operator_preset variable is defined
+      ansible.builtin.assert:
+        that:
+          - operator_preset is defined
+          - operator_preset | length > 0
+        fail_msg: "operator_preset variable must be provided from AAP survey"
+
+    - name: Determine extra_vars file path
+      ansible.builtin.set_fact:
+        preset_extra_vars_path: >-
+          {%- if operator_preset == "custom" -%}
+            {{ custom_preset_path }}
+          {%- else -%}
+            {{ preset_base_dir }}/{{ operator_preset }}.yml
+          {%- endif -%}
+
+    - name: Display selected preset
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Operator Preset Selection"
+          - "============================================"
+          - ""
+          - "Selected Preset: {{ operator_preset }}"
+          - "Extra Vars Path: {{ preset_extra_vars_path }}"
+          - "Target Registry: {{ target_registry | default('Not specified') }}"
+          - "Target Namespace: {{ target_namespace | default('Not specified') }}"
+          - ""
+          - "{% if operator_preset == 'custom' %}"
+          - "⚠️  Using custom preset - ensure path is correct"
+          - "{% else %}"
+          - "✅ Using curated preset from extra_vars/operators/"
+          - "{% endif %}"
+          - ""
+          - "============================================"
+
+    - name: Verify preset file exists (non-custom only)
+      ansible.builtin.stat:
+        path: "{{ preset_extra_vars_path }}"
+      register: preset_file_check
+      when: operator_preset != "custom"
+
+    - name: Fail if preset file not found
+      ansible.builtin.fail:
+        msg: |
+          Preset file not found: {{ preset_extra_vars_path }}
+
+          Available presets:
+          - storage-operators
+          - rhacm-operators
+          - openshift-ai-operators
+          - virtualization-operators
+          - service-mesh-operators
+          - observability-operators
+          - security-operators
+          - networking-operators
+          - full-platform (NEW)
+          - enterprise-ready (NEW)
+          - developer-stack (NEW)
+          - vm-platform (NEW)
+      when:
+        - operator_preset != "custom"
+        - not preset_file_check.stat.exists
+
+    - name: Load preset extra_vars
+      ansible.builtin.include_vars:
+        file: "{{ preset_extra_vars_path }}"
+      register: loaded_vars
+
+    - name: Display preset summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Preset Configuration Summary"
+          - "============================================"
+          - ""
+          - "OpenShift Releases: {{ openshift_releases | length }}"
+          - "Operator Catalogs: {{ operators | length }}"
+          - "Total Packages: {{ operators | map(attribute='packages') | flatten | length }}"
+          - ""
+          - "Mirroring Configuration:"
+          - "  Parallel Images: {{ parallel_images | default(4) }}"
+          - "  Parallel Layers: {{ parallel_layers | default(5) }}"
+          - "  Max Retries: {{ max_retries | default(5) }}"
+          - ""
+          - "✅ Preset loaded successfully"
+          - "   Ready for validation and mirroring"
+          - ""
+          - "============================================"

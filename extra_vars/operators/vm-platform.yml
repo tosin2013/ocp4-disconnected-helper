@@ -1,0 +1,88 @@
+---
+# VM Platform Preset - Virtualization + Storage + Networking
+# Combines: OpenShift Virtualization + Storage + Advanced Networking
+# Use Case: VMs + containers on unified platform (VMware replacement)
+
+# =========================================================================
+# OpenShift Releases (Required)
+# =========================================================================
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+# =========================================================================
+# Operators - VM Platform Bundle
+# =========================================================================
+operators:
+  # Red Hat Operator Catalog
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # ===== VIRTUALIZATION (from virtualization-operators.yml) =====
+      - name: kubevirt-hyperconverged
+        channels:
+          - name: stable
+
+      # ===== STORAGE (from storage-operators.yml + virtualization-operators.yml) =====
+      - name: odf-operator
+        channels:
+          - name: stable-4.21
+
+      - name: local-storage-operator
+        channels:
+          - name: stable
+
+      - name: lvms-operator
+        channels:
+          - name: stable-4.21
+
+      # ===== NETWORKING (from networking-operators.yml + virtualization-operators.yml) =====
+      - name: kubernetes-nmstate-operator
+        channels:
+          - name: stable
+
+      - name: metallb-operator
+        channels:
+          - name: stable
+
+      - name: servicemeshoperator
+        channels:
+          - name: stable
+
+      # ===== OBSERVABILITY (minimal for VM monitoring) =====
+      - name: cluster-logging
+        channels:
+          - name: stable-6.5
+
+      - name: loki-operator
+        channels:
+          - name: stable-6.5
+
+      # ===== SECURITY (for VM compliance scanning) =====
+      - name: compliance-operator
+        channels:
+          - name: stable
+
+      - name: file-integrity-operator
+        channels:
+          - name: stable
+
+# =========================================================================
+# Mirroring Configuration
+# =========================================================================
+target_mirror_path: "/data/ocp-mirror"
+clean_mirror_path: false
+
+target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
+target_namespace: "openshift4"
+skip_tls_verify: false
+
+parallel_images: 4
+parallel_layers: 5
+max_retries: 5

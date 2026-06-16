@@ -1,0 +1,96 @@
+---
+# Developer Stack Preset - Modern Application Development Platform
+# Combines: Service Mesh + Observability + OpenShift AI + GitOps
+# Use Case: Microservices development with AI/ML capabilities
+
+# =========================================================================
+# OpenShift Releases (Required)
+# =========================================================================
+openshift_releases:
+  - name: stable-4.21
+    minVersion: 4.21.0
+    maxVersion: 4.21.0
+    shortestPath: true
+
+architectures:
+  - amd64
+
+enable_graph: true
+
+# =========================================================================
+# Operators - Developer Stack Bundle
+# =========================================================================
+operators:
+  # Red Hat Operator Catalog
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.21
+    packages:
+      # ===== SERVICE MESH (from service-mesh-operators.yml) =====
+      - name: servicemeshoperator
+        channels:
+          - name: stable
+
+      - name: kiali-ossm
+        channels:
+          - name: stable
+
+      - name: tempo-product
+        channels:
+          - name: stable
+
+      # ===== OBSERVABILITY (from observability-operators.yml) =====
+      - name: cluster-logging
+        channels:
+          - name: stable-6.5
+
+      - name: loki-operator
+        channels:
+          - name: stable-6.5
+
+      - name: cluster-observability-operator
+        channels:
+          - name: development
+
+      # ===== OPENSHIFT AI (from openshift-ai-operators.yml) =====
+      - name: rhods-operator
+        channels:
+          - name: stable
+
+      - name: authorino-operator
+        channels:
+          - name: stable
+
+      - name: serverless-operator
+        channels:
+          - name: stable
+
+      # ===== GITOPS (from rhacm-operators.yml) =====
+      - name: openshift-gitops-operator
+        channels:
+          - name: latest
+
+      # ===== STORAGE (minimal for persistent notebooks) =====
+      - name: odf-operator
+        channels:
+          - name: stable-4.21
+
+  # Certified Operator Catalog
+  - catalog: registry.redhat.io/redhat/certified-operator-index:v4.21
+    packages:
+      # AI/ML - GPU support (from openshift-ai-operators.yml)
+      - name: gpu-operator-certified
+        channels:
+          - name: stable
+
+# =========================================================================
+# Mirroring Configuration
+# =========================================================================
+target_mirror_path: "/data/ocp-mirror"
+clean_mirror_path: false
+
+target_registry: "registry.ocp4.sandbox3377.opentlc.com:8443"
+target_namespace: "openshift4"
+skip_tls_verify: false
+
+parallel_images: 4
+parallel_layers: 5
+max_retries: 5

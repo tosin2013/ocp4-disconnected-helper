@@ -232,6 +232,71 @@
           - target_namespace: openshift4
         inventory: "{{ inventory_name }}"
         ask_variables_on_launch: true
+        survey_enabled: true
+        survey_spec:
+          name: "Operator Preset Selection"
+          description: "Select an operator preset or provide custom extra_vars"
+          spec:
+            - type: multiplechoice
+              question_name: "Operator Preset"
+              question_description: |
+                Choose a curated operator preset or "Custom" to provide your own extra_vars.
+
+                Atomic Presets (Single Focus):
+                - Storage (~15 GB)
+                - RHACM Multi-Cluster (~20 GB)
+                - OpenShift AI/ML (~35 GB)
+                - Virtualization (~25 GB)
+                - Service Mesh (~18 GB)
+                - Observability (~22 GB)
+                - Security/Compliance (~20 GB)
+                - Advanced Networking (~16 GB)
+
+                Combination Presets (Multi-Capability):
+                - Full Platform (~70 GB) - Storage + Observability + Security + Networking
+                - Enterprise Ready (~65 GB) - RHACM + Storage + Security + Observability
+                - Developer Stack (~60 GB) - Service Mesh + AI + Observability + GitOps
+                - VM Platform (~55 GB) - Virtualization + Storage + Networking + Security
+
+                Custom: Provide your own @extra_vars/operators/my-custom.yml
+              variable: operator_preset
+              required: true
+              default: "storage-operators"
+              choices:
+                # Atomic Presets
+                - storage-operators
+                - rhacm-operators
+                - openshift-ai-operators
+                - virtualization-operators
+                - service-mesh-operators
+                - observability-operators
+                - security-operators
+                - networking-operators
+                # Combination Presets (NEW in v1.3)
+                - full-platform
+                - enterprise-ready
+                - developer-stack
+                - vm-platform
+                # Custom option
+                - custom
+            - type: text
+              question_name: "Custom Preset Path (if Custom selected)"
+              question_description: "If you selected 'custom' above, provide the full path to your extra_vars file (e.g., @extra_vars/operators/my-custom.yml)"
+              variable: custom_preset_path
+              required: false
+              default: ""
+            - type: text
+              question_name: "Target Registry"
+              question_description: "Container registry URL (e.g., registry.example.com:8443)"
+              variable: target_registry
+              required: true
+              default: "registry.ocp4.sandbox3377.opentlc.com:8443"
+            - type: text
+              question_name: "Target Namespace"
+              question_description: "Registry namespace for mirrored images"
+              variable: target_namespace
+              required: true
+              default: "openshift4"
         state: present
       register: workflow_template
 
@@ -340,9 +405,18 @@
           - "  ✅ Clear error messages with suggestions"
           - "  ✅ Two-phase workflow for air-gapped transfers"
           - ""
+          - "Survey Options (v1.3 NEW):"
+          - "  📋 12 Operator Presets Available:"
+          - "     • 8 Atomic Presets (storage, RHACM, AI, virtualization, etc.)"
+          - "     • 4 Combination Presets (full-platform, enterprise-ready, etc.)"
+          - "     • Custom preset path option"
+          - "  🎯 Dropdown selection in AAP Web UI"
+          - "  📝 No manual extra_vars editing required"
+          - ""
           - "Next Steps:"
-          - "  1. Test workflow with storage-operators.yml preset"
-          - "  2. Monitor validation node performance"
-          - "  3. Adjust cache TTL if needed (default: 24h)"
+          - "  1. Launch workflow from AAP Web UI"
+          - "  2. Select preset from dropdown (default: storage-operators)"
+          - "  3. Provide target registry URL"
+          - "  4. Submit and monitor 3-node execution"
           - ""
           - "============================================"

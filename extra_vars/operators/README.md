@@ -33,6 +33,8 @@ ansible-playbook playbooks/push-to-registry-v2.yml \
 
 ## Available Presets
 
+### Atomic Presets (Single Focus Area)
+
 | Preset | Use Case | Operators | Size Est. |
 |--------|----------|-----------|-----------|
 | [storage-operators.yml](storage-operators.yml) | Storage (local, ODF, LVMS) | 4 | ~15 GB |
@@ -43,6 +45,15 @@ ansible-playbook playbooks/push-to-registry-v2.yml \
 | [observability-operators.yml](observability-operators.yml) | Logging, metrics, traces | 5 | ~22 GB |
 | [security-operators.yml](security-operators.yml) | Compliance, FIM, registry | 4 | ~20 GB |
 | [networking-operators.yml](networking-operators.yml) | Load balancing, multi-network | 4 | ~16 GB |
+
+### Combination Presets (Multi-Capability Bundles)
+
+| Preset | Use Case | Combines | Operators | Size Est. |
+|--------|----------|----------|-----------|-----------|
+| [full-platform.yml](full-platform.yml) | Complete enterprise platform | Storage + Observability + Security + Networking | 20 | ~70 GB |
+| [enterprise-ready.yml](enterprise-ready.yml) | Multi-cluster production platform | RHACM + Storage + Security + Observability | 16 | ~65 GB |
+| [developer-stack.yml](developer-stack.yml) | Modern app development + AI/ML | Service Mesh + Observability + AI + GitOps | 13 | ~60 GB |
+| [vm-platform.yml](vm-platform.yml) | VMs + containers unified platform | Virtualization + Storage + Networking + Security | 13 | ~55 GB |
 
 ---
 
@@ -226,6 +237,105 @@ ansible-playbook playbooks/push-to-registry-v2.yml \
 
 ---
 
+## Combination Preset Details
+
+### 1. Full Platform (Complete Enterprise)
+**File**: `full-platform.yml`  
+**Use Case**: Comprehensive OpenShift deployment with all foundational capabilities
+
+**Includes**:
+- **Storage**: ODF, LVMS, Local Storage, Portworx
+- **Observability**: Logging, Loki, Tempo, Cluster Observability
+- **Security**: Compliance, FIM, Quay Registry
+- **Networking**: MetalLB, NMState, Submariner, Service Mesh
+
+**When to Use**:
+- New large-scale production deployment
+- Enterprise platform with broad requirements
+- Multi-tenant environments needing full capabilities
+- Replacing legacy infrastructure with OpenShift
+
+**Requirements**:
+- 64 GB RAM minimum per worker
+- 500 GB+ persistent storage
+- 200 GB+ for operator images
+
+---
+
+### 2. Enterprise Ready (Multi-Cluster Production)
+**File**: `enterprise-ready.yml`  
+**Use Case**: Hub cluster managing multiple spoke clusters with governance
+
+**Includes**:
+- **RHACM**: Advanced Cluster Management, Multi-cluster Engine
+- **Storage**: ODF, LVMS, Local Storage
+- **Security**: Compliance, FIM, Quay Registry
+- **Observability**: Logging, Loki, Cluster Observability
+- **GitOps**: OpenShift GitOps (ArgoCD)
+
+**When to Use**:
+- Managing 3+ OpenShift clusters
+- Enterprise governance and compliance requirements
+- GitOps-based application delivery
+- Multi-datacenter deployments
+
+**Requirements**:
+- Hub cluster: 64 GB RAM, 500 GB storage
+- Spoke clusters: OpenShift 4.10+ or Kubernetes 1.19+
+- S3-compatible object storage recommended
+
+---
+
+### 3. Developer Stack (Modern App Development)
+**File**: `developer-stack.yml`  
+**Use Case**: Microservices development with AI/ML capabilities
+
+**Includes**:
+- **Service Mesh**: Istio, Kiali, distributed tracing
+- **Observability**: Logging, Loki, Cluster Observability
+- **AI/ML**: OpenShift AI, GPU operator, Serverless
+- **GitOps**: OpenShift GitOps (ArgoCD)
+- **Storage**: ODF for notebooks and model storage
+
+**When to Use**:
+- Microservices architecture development
+- Machine learning model training and serving
+- Cloud-native application platform
+- DevOps teams needing full observability
+
+**Requirements**:
+- 48 GB RAM minimum per worker
+- NVIDIA GPUs (optional, for AI workloads)
+- 200 GB+ persistent storage
+- S3-compatible object storage for AI
+
+---
+
+### 4. VM Platform (Virtualization + Containers)
+**File**: `vm-platform.yml`  
+**Use Case**: Unified platform for VMs and containers (VMware replacement)
+
+**Includes**:
+- **Virtualization**: KubeVirt hyperconverged platform
+- **Storage**: ODF, LVMS, Local Storage
+- **Networking**: NMState, MetalLB, Service Mesh
+- **Observability**: Logging, Loki (VM monitoring)
+- **Security**: Compliance, FIM (VM security scanning)
+
+**When to Use**:
+- Migrating from VMware/KVM to OpenShift
+- Running Windows + Linux VMs alongside containers
+- Hybrid VM + container applications
+- Legacy application modernization path
+
+**Requirements**:
+- CPU with Intel VT-x or AMD-V
+- 64 GB RAM minimum per worker
+- 500 GB+ storage per worker for VM disks
+- Bare metal or nested virtualization support
+
+---
+
 ## Combining Presets
 
 You can combine multiple presets by merging their operator lists:
@@ -352,15 +462,29 @@ Invalid Channels:
 
 ## Size Estimates
 
+### Atomic Presets
 | Operator Category | Typical Size | Notes |
 |-------------------|--------------|-------|
 | Single operator | 2-5 GB | Varies by operator complexity |
 | Storage bundle | ~15 GB | 4 operators |
 | RHACM bundle | ~20 GB | 4 operators + multi-cluster images |
 | OpenShift AI | ~35 GB | Includes GPU operator and ML frameworks |
-| Full suite (all 8 presets) | ~150 GB+ | Not recommended - mirror only what you need |
+| Service Mesh | ~18 GB | 3 operators |
+| Observability | ~22 GB | 5 operators |
+| Security | ~20 GB | 4 operators |
+| Networking | ~16 GB | 4 operators |
 
-**Storage Planning**: Allocate 3x the estimated size for workspace + registry storage.
+### Combination Presets
+| Combination | Size | Operators | Bandwidth Savings vs Individual |
+|-------------|------|-----------|----------------------------------|
+| Full Platform | ~70 GB | 20 | ~40% (vs mirroring 4 presets separately) |
+| Enterprise Ready | ~65 GB | 16 | ~35% (vs mirroring 4 presets separately) |
+| Developer Stack | ~60 GB | 13 | ~30% (vs mirroring 4 presets separately) |
+| VM Platform | ~55 GB | 13 | ~30% (vs mirroring 4 presets separately) |
+
+**Bandwidth Savings**: Combination presets deduplicate shared dependencies (e.g., GitOps appears in multiple atomic presets but is mirrored once in combinations).
+
+**Storage Planning**: Allocate 3x the estimated size for workspace + registry storage (e.g., 70 GB preset requires ~210 GB total disk space).
 
 ---
 
