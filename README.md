@@ -12,9 +12,18 @@ This repository provides automation and utilities for deploying OpenShift in dis
 **Multi-Workflow Architecture** (ADR-0032 v1.3):
 - ✅ **Workflow 1**: Infrastructure Deployment (8-step conditional execution for KVM/Existing/Cloud scenarios)
 - ✅ **Workflow 2**: Image Mirroring (4-step with prerequisite validation and operator presets)
-- ✅ **Workflow 3**: Cluster Deployment (planned for v1.4+)
+- ✅ **Workflow 3**: OpenShift Cluster Deployment (Agent-Based Installer, ADR-0035) **NEW**
 - ✅ Survey-driven conditional execution (workflows adapt to deployment scenario)
 - ✅ Prerequisite validation enforces correct execution order (Workflow 1 → 2 → 3)
+
+**OpenShift Cluster Deployment** (ADR-0035):
+- ✅ **Agent-Based Installer integration** - Bootable ISO for SNO, Compact (3-node), HA (6+ node) topologies
+- ✅ **KVM automation** - Fully automated VM provisioning and installation monitoring
+- ✅ **Bare metal support** - Manual boot workflow with guided instructions
+- ✅ **Multi-registry support** - Quay, Harbor, JFrog with ImageDigestMirrorSet
+- ✅ **DNS integration** - Automated (dnsmasq, Route53) or manual external DNS
+- ✅ **Installation monitoring** - Bootstrap → Control Plane → Workers → Operators
+- ✅ **Deployment time**: 35-90 minutes (topology-dependent)
 
 **Infrastructure Deployment Capabilities**:
 - ✅ Conditional VyOS and DNS deployment (KVM environments only)

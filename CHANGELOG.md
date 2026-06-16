@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### 🚀 OpenShift Cluster Deployment - Agent-Based Installer (ADR-0035)
+
+- **Complete Agent-Based Installer Integration**:
+  - Deploys SNO, Compact (3-node), and HA (6+ node) topologies
+  - Bootable ISO generation with embedded cluster configuration
+  - Multi-registry support: Quay (primary), Harbor, JFrog
+  - DNS integration: dnsmasq (automated), Route53 (cloud), manual
+  - Installation monitoring: Bootstrap → Control Plane → Workers → Operators
+  - Credential export with access instructions
+
+- **New Ansible Role**: `openshift_cluster_deploy`
+  - Atomic task structure following ADR-0024 pattern
+  - 6-phase deployment workflow:
+    - Phase 0: Prerequisites validation
+    - Phase 1-2: Installation preparation and manifest generation
+    - Phase 3: Bootable ISO creation (agent.x86_64.iso)
+    - Phase 4: DNS configuration
+    - Phase 5: VM provisioning (KVM) or manual boot instructions (bare metal)
+    - Phase 6: Installation monitoring to completion
+
+- **Main Orchestration Playbook**: `playbooks/deploy-openshift-cluster.yml`
+  - Tag-based execution support (phase0-phase6)
+  - Pre-task banner with deployment details
+  - Post-task summary with cluster access instructions
+  - Full automation for KVM environments
+  - Guided workflow for bare metal deployments
+
+- **AAP Workflow 3**: OpenShift Cluster Deployment
+  - 5 job templates (one per deployment phase)
+  - Sequential workflow with on_success links
+  - 9 survey parameters (cluster_name, topology, registry, etc.)
+  - 35-90 minute total deployment time (topology-dependent)
+  - 2-hour timeout for full installation monitoring
+
+- **Cluster Configuration Examples** (`extra_vars/cluster-configs/`):
+  - SNO: sno-quay.yml, sno-harbor.yml, sno-jfrog.yml
+  - Compact: compact-3node-quay.yml, compact-3node-harbor.yml, compact-3node-jfrog.yml
+  - HA: ha-cluster-quay.yml, ha-cluster-harbor.yml
+  - All with comprehensive README and validation
+
+- **Comprehensive Documentation**:
+  - How-to: `docs/how-to/deploy-openshift-cluster-agent-based.md`
+    - Complete guide for KVM and bare metal deployments
+    - Clear distinction between automated (KVM) and manual (bare metal) workflows
+    - Environment-specific requirements and limitations
+    - Troubleshooting section
+  - Tutorial: `docs/tutorials/your-first-openshift-cluster.md`
+    - Step-by-step SNO deployment on KVM
+    - First application deployment
+    - Web Console access and exploration
+  - Reference: `docs/reference/cluster-topologies.md`
+    - SNO, Compact, HA comparison and decision matrix
+    - Resource requirements and availability characteristics
+    - Use case recommendations
+  - Reference: `docs/reference/registry-integration.md`
+    - Quay, Harbor, JFrog integration details
+    - ImageDigestMirrorSet configuration
+    - Certificate management
+    - Switching between registries
+
+- **Test Playbooks**:
+  - `playbooks/test-iso-generation.yml` - ISO generation simulation
+  - `playbooks/test-installation-monitoring.yml` - Monitoring workflow validation
+  - `playbooks/test-main-playbook.yml` - Main playbook structure verification
+
 ---
 
 ## [1.2.0] - 2026-06-11
