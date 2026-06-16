@@ -1,0 +1,54 @@
+---
+# YAML linting configuration for ansible-playbooks
+# Based on Ansible best practices
+
+extends: default
+
+rules:
+  # Line length (Ansible templates can be long)
+  line-length:
+    max: 160
+    level: warning
+
+  # Indentation (2 spaces standard for YAML)
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # Comments
+  comments:
+    min-spaces-from-content: 1
+
+  # Truthy values (allow yes/no for Ansible compatibility)
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+
+  # Document start (allow files without ---)
+  document-start:
+    present: false
+
+  # Empty lines
+  empty-lines:
+    max: 2
+
+  # Brackets
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Braces
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+ignore: |
+  .github/
+  .git/
+  venv/
+  .venv/
+  __pycache__/
+  *.pyc
+  .pytest_cache/
+  .molecule/
+  dist/
+  build/

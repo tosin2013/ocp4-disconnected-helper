@@ -1,0 +1,154 @@
+---
+# GitHub Actions workflow for Ansible sanity checks
+# Validates playbook syntax, YAML linting, and best practices
+
+name: Ansible Sanity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'playbooks/**'
+      - 'roles/**'
+      - 'inventory/**'
+      - '.github/workflows/ansible-sanity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'playbooks/**'
+      - 'roles/**'
+      - 'inventory/**'
+      - '.github/workflows/ansible-sanity.yml'
+  workflow_dispatch:
+
+jobs:
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        run: |
+          yamllint -c .yamllint.yml \
+            playbooks/ \
+            roles/ \
+            inventory/ \
+            || true  # Don't fail on warnings initially
+
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy collection install community.libvirt
+          ansible-galaxy collection install ansible.posix
+          ansible-galaxy collection install containers.podman
+
+      - name: Run ansible-lint
+        run: ansible-lint playbooks/ roles/
+        continue-on-error: true  # Don't block PRs initially
+
+  syntax-check:
+    name: Playbook Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible-core
+          ansible-galaxy collection install community.libvirt
+          ansible-galaxy collection install ansible.posix
+          ansible-galaxy collection install containers.podman
+
+      - name: Check playbook syntax
+        run: |
+          for playbook in playbooks/*.yml; do
+            echo "Checking $playbook..."
+            ansible-playbook --syntax-check "$playbook" \
+              -i inventory/ibm-cloud.yml \
+              || exit 1
+          done
+
+  role-metadata:
+    name: Role Metadata Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate role metadata
+        run: |
+          for role in roles/*/meta/main.yml; do
+            role_name=$(dirname $(dirname "$role"))
+            echo "Validating metadata for $role_name..."
+
+            # Check required fields
+            if ! grep -q "galaxy_info:" "$role"; then
+              echo "❌ Missing galaxy_info in $role"
+              exit 1
+            fi
+
+            if ! grep -q "dependencies:" "$role"; then
+              echo "❌ Missing dependencies in $role"
+              exit 1
+            fi
+
+            echo "✅ $role_name metadata valid"
+          done
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets
+        run: |
+          # Check for common secret patterns
+          if grep -r -E "(password|secret|token|api_key):\s*['\"]?[a-zA-Z0-9]{8,}" \
+             --include="*.yml" --include="*.yaml" \
+             playbooks/ roles/ inventory/ 2>/dev/null; then
+            echo "❌ Potential hardcoded secrets found"
+            echo "Use Ansible Vault or environment variables instead"
+            exit 1
+          fi
+          echo "✅ No hardcoded secrets detected"
+
+      - name: Check for vault-encrypted files
+        run: |
+          # Ensure sensitive files are encrypted
+          if [ -f "extra_vars/rhel-subscription-secrets.yml" ]; then
+            if ! grep -q "\$ANSIBLE_VAULT" extra_vars/rhel-subscription-secrets.yml; then
+              echo "❌ rhel-subscription-secrets.yml not encrypted"
+              exit 1
+            fi
+          fi
+          echo "✅ Vault encryption check passed"
