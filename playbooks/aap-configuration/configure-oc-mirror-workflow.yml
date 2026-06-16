@@ -35,15 +35,70 @@
 
   tasks:
     # =========================================================================
-    # Job Template: Validate Operator Selection (NEW - ADR-0034)
+    # Job Template: Step 0 - Verify Infrastructure Prerequisites (NEW - v1.3)
     # =========================================================================
-    - name: Create job template - Validate Operator Selection
+    - name: Create job template - Step 0 Verify Infrastructure Prerequisites
       ansible.controller.job_template:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        name: "Validate Operator Selection"
+        name: "Step 0: Verify Infrastructure Prerequisites"
+        organization: "{{ organization_name }}"
+        description: |
+          Prerequisite validation for Workflow 2 (Image Mirroring).
+
+          Validates that Workflow 1 (Infrastructure Deployment) completed successfully:
+          - Registry accessible and authenticated
+          - HAProxy configured and routing traffic
+          - SSL/TLS certificates valid
+          - Network connectivity verified
+
+          If validation fails:
+          - Workflow stops immediately (fail-fast)
+          - Clear error message directs user to run Workflow 1 first
+          - No bandwidth wasted on downloads
+
+          This ensures users follow correct workflow execution order:
+          1. Workflow 1: Infrastructure Deployment
+          2. Workflow 2: Image Mirroring (this workflow)
+          3. Workflow 3: Cluster Deployment (future)
+        job_type: "run"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: "playbooks/verify-infrastructure-prerequisites.yml"
+        credentials:
+          - "{{ credential_name }}"
+        # No limit - playbook runs on localhost with checks against infrastructure
+        execution_environment: "{{ execution_environment }}"
+        verbosity: 1
+        ask_variables_on_launch: true
+        extra_vars:
+          required_services:
+            - registry
+            - haproxy
+          validation_mode: strict
+        state: present
+      register: verify_prereqs_template
+
+    - name: Display verify prerequisites template info
+      ansible.builtin.debug:
+        msg:
+          - "✅ Infrastructure prerequisite validation template created (v1.3)"
+          - "   ID: {{ verify_prereqs_template.id }}"
+          - "   Name: Step 0: Verify Infrastructure Prerequisites"
+          - "   Purpose: Enforce Workflow 1 → Workflow 2 execution order"
+
+    # =========================================================================
+    # Job Template: Step 1 - Validate Operator Selection (NEW - ADR-0034)
+    # =========================================================================
+    - name: Create job template - Step 1 Validate Operator Selection
+      ansible.controller.job_template:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        name: "Step 1: Validate Operator Selection"
         organization: "{{ organization_name }}"
         description: |
           Pre-flight validation of operator selections against Red Hat catalogs.
@@ -81,19 +136,19 @@
         msg:
           - "✅ Operator validation template created (ADR-0034)"
           - "   ID: {{ validate_operators_template.id }}"
-          - "   Name: Validate Operator Selection"
+          - "   Name: Step 1: Validate Operator Selection"
           - "   Purpose: Pre-flight check before mirroring"
 
     # =========================================================================
-    # Job Template: Download to Disk (Phase 1)
+    # Job Template: Step 2 - Download to Disk
     # =========================================================================
-    - name: Create job template - Download OpenShift Images to Disk
+    - name: Create job template - Step 2 Download OpenShift Images to Disk
       ansible.controller.job_template:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        name: "Download OpenShift Images to Disk (Phase 1)"
+        name: "Step 2: Download OpenShift Images to Disk"
         organization: "{{ organization_name }}"
         description: |
           Download OpenShift releases and operators to local workspace.
@@ -135,18 +190,18 @@
         msg:
           - "✅ Download template created"
           - "   ID: {{ download_template.id }}"
-          - "   Name: Download OpenShift Images to Disk (Phase 1)"
+          - "   Name: Step 2: Download OpenShift Images to Disk"
 
     # =========================================================================
-    # Job Template: Push to Registry (Phase 2)
+    # Job Template: Step 3 - Push to Registry
     # =========================================================================
-    - name: Create job template - Mirror Images to Registry
+    - name: Create job template - Step 3 Mirror Images to Registry
       ansible.controller.job_template:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        name: "Mirror Images to Registry (Phase 2)"
+        name: "Step 3: Mirror Images to Registry"
         organization: "{{ organization_name }}"
         description: |
           Push mirrored images from workspace to container registry.
@@ -189,45 +244,52 @@
         msg:
           - "✅ Push template created"
           - "   ID: {{ push_template.id }}"
-          - "   Name: Mirror Images to Registry (Phase 2)"
+          - "   Name: Step 3: Mirror Images to Registry"
 
     # =========================================================================
-    # Workflow Template: Disconnected OpenShift Image Mirroring
+    # Workflow Template: Workflow 2 - OpenShift Image Mirroring
     # =========================================================================
-    - name: Create workflow template - Disconnected OpenShift Image Mirroring
+    - name: Create workflow template - Workflow 2 OpenShift Image Mirroring
       ansible.controller.workflow_job_template:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        name: "Disconnected OpenShift Image Mirroring"
+        name: "Workflow 2: OpenShift Image Mirroring"
         organization: "{{ organization_name }}"
         description: |
-          End-to-end workflow for mirroring OpenShift images to disconnected registry.
+          Mirror OpenShift releases and operators to disconnected registry.
+
+          ⚠️  PREREQUISITE: Workflow 1 (Infrastructure Deployment) must complete successfully first.
 
           Workflow Steps:
-          1. [NEW] Validate Operator Selection (ADR-0034)
+          Step 0: Verify Infrastructure Prerequisites (NEW - v1.3)
+             - Validates Workflow 1 completed (registry accessible, HAProxy configured, certificates valid)
+             - Fails gracefully if infrastructure not ready
+             - Directs user to run Workflow 1 first
+
+          Step 1: Validate Operator Selection (ADR-0034)
              - Pre-flight validation of operator names/channels
              - Fails fast if invalid configuration (<5 sec)
              - Saves bandwidth by catching errors early
 
-          2. Download OpenShift Images (Phase 1)
+          Step 2: Download OpenShift Images
              - oc-mirror mirrorToDisk workflow
              - Downloads to /data/ocp-mirror/oc-mirror-workspace/
 
-          3. Mirror Images to Registry (Phase 2)
+          Step 3: Mirror Images to Registry
              - oc-mirror diskToMirror workflow
              - Pushes to target registry
              - Generates IDMS/ITMS manifests
 
           Benefits:
+          - Prerequisite validation prevents confusing failures
           - Operator validation prevents wasted time/bandwidth
           - Two-phase workflow enables air-gapped transfers
           - Automatic manifest generation for cluster config
 
           Variables (provide via survey or extra_vars):
-          - openshift_releases: [{name: stable-4.21, minVersion: 4.21.0, ...}]
-          - operators: [{catalog: registry.redhat.io/..., packages: [...]}]
+          - operator_preset: Curated preset (storage-operators, full-platform, etc.)
           - target_registry: registry.example.com:8443
           - target_namespace: openshift4
         inventory: "{{ inventory_name }}"
@@ -310,52 +372,76 @@
     # =========================================================================
     # Workflow Nodes: Build the workflow graph
     # =========================================================================
-    - name: Create workflow node - Validate Operators (Preflight)
+    - name: Create workflow node - Verify Prerequisites (Step 0)
       ansible.controller.workflow_job_template_node:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
+        identifier: "verify_prerequisites"
+        unified_job_template: "Step 0: Verify Infrastructure Prerequisites"
+        state: present
+      register: node_prereqs
+
+    - name: Create workflow node - Validate Operators (Step 1)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
         identifier: "validate_operators"
-        unified_job_template: "Validate Operator Selection"
+        unified_job_template: "Step 1: Validate Operator Selection"
         state: present
       register: node_validate
 
-    - name: Create workflow node - Download Images (Phase 1)
+    - name: Create workflow node - Download Images (Step 2)
       ansible.controller.workflow_job_template_node:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
         identifier: "download_images"
-        unified_job_template: "Download OpenShift Images to Disk (Phase 1)"
+        unified_job_template: "Step 2: Download OpenShift Images to Disk"
         state: present
       register: node_download
 
-    - name: Create workflow node - Push to Registry (Phase 2)
+    - name: Create workflow node - Push to Registry (Step 3)
       ansible.controller.workflow_job_template_node:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
         identifier: "push_to_registry"
-        unified_job_template: "Mirror Images to Registry (Phase 2)"
+        unified_job_template: "Step 3: Mirror Images to Registry"
         state: present
       register: node_push
 
     # =========================================================================
     # Workflow Links: Connect nodes with success/failure paths
     # =========================================================================
+    - name: Link verify_prerequisites → validate_operators (on success)
+      ansible.controller.workflow_job_template_node:
+        controller_host: "{{ aap_host }}"
+        controller_username: "{{ aap_username }}"
+        controller_password: "{{ admin_password }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
+        identifier: "verify_prerequisites"
+        success_nodes:
+          - "validate_operators"
+        state: present
+
     - name: Link validate_operators → download_images (on success)
       ansible.controller.workflow_job_template_node:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
         identifier: "validate_operators"
         success_nodes:
           - "download_images"
@@ -367,7 +453,7 @@
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
         validate_certs: "{{ aap_validate_certs }}"
-        workflow_job_template: "Disconnected OpenShift Image Mirroring"
+        workflow_job_template: "Workflow 2: OpenShift Image Mirroring"
         identifier: "download_images"
         success_nodes:
           - "push_to_registry"
@@ -380,32 +466,42 @@
       ansible.builtin.debug:
         msg:
           - "============================================"
-          - "AAP Workflow Configuration Complete"
+          - "AAP Workflow Configuration Complete (v1.3)"
           - "============================================"
           - ""
-          - "Workflow: Disconnected OpenShift Image Mirroring"
+          - "Workflow: Workflow 2: OpenShift Image Mirroring"
           - "  ID: {{ workflow_template.id }}"
           - ""
-          - "Workflow Graph:"
-          - "  1. Validate Operator Selection (NEW - ADR-0034)"
-          - "     └─► ON SUCCESS → 2"
+          - "Workflow Graph (v1.3 - 4-node):"
+          - "  Step 0: Verify Infrastructure Prerequisites (NEW - v1.3)"
+          - "     • Validates Workflow 1 completed (registry, HAProxy, certificates)"
+          - "     • Fails gracefully if infrastructure not ready"
+          - "     └─► ON SUCCESS → Step 1"
+          - "     └─► ON FAILURE → STOP (directs user to run Workflow 1 first)"
+          - ""
+          - "  Step 1: Validate Operator Selection (ADR-0034)"
+          - "     • Pre-flight validation of operator names/channels"
+          - "     └─► ON SUCCESS → Step 2"
           - "     └─► ON FAILURE → STOP (prevents wasted bandwidth)"
           - ""
-          - "  2. Download OpenShift Images (Phase 1)"
-          - "     └─► ON SUCCESS → 3"
+          - "  Step 2: Download OpenShift Images"
+          - "     • oc-mirror mirrorToDisk workflow"
+          - "     └─► ON SUCCESS → Step 3"
           - "     └─► ON FAILURE → STOP"
           - ""
-          - "  3. Mirror Images to Registry (Phase 2)"
+          - "  Step 3: Mirror Images to Registry"
+          - "     • oc-mirror diskToMirror workflow"
           - "     └─► ON SUCCESS → Complete"
           - "     └─► ON FAILURE → Manual intervention required"
           - ""
           - "Benefits:"
+          - "  ✅ Prerequisite validation enforces workflow execution order (v1.3 NEW)"
           - "  ✅ Fast failure on invalid operators (<5 sec)"
           - "  ✅ Bandwidth savings (no partial downloads)"
           - "  ✅ Clear error messages with suggestions"
           - "  ✅ Two-phase workflow for air-gapped transfers"
           - ""
-          - "Survey Options (v1.3 NEW):"
+          - "Survey Options (v1.2):"
           - "  📋 12 Operator Presets Available:"
           - "     • 8 Atomic Presets (storage, RHACM, AI, virtualization, etc.)"
           - "     • 4 Combination Presets (full-platform, enterprise-ready, etc.)"
@@ -413,10 +509,15 @@
           - "  🎯 Dropdown selection in AAP Web UI"
           - "  📝 No manual extra_vars editing required"
           - ""
+          - "Prerequisites (v1.3 NEW):"
+          - "  ⚠️  Workflow 1 (Infrastructure Deployment) must complete first"
+          - "  ⚠️  Registry, HAProxy, and certificates must be operational"
+          - ""
           - "Next Steps:"
-          - "  1. Launch workflow from AAP Web UI"
-          - "  2. Select preset from dropdown (default: storage-operators)"
-          - "  3. Provide target registry URL"
-          - "  4. Submit and monitor 3-node execution"
+          - "  1. Ensure Workflow 1 completed successfully"
+          - "  2. Launch Workflow 2 from AAP Web UI"
+          - "  3. Select operator preset from dropdown"
+          - "  4. Provide target registry URL"
+          - "  5. Submit and monitor 4-node execution"
           - ""
           - "============================================"
