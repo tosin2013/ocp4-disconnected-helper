@@ -1,0 +1,96 @@
+---
+# Test Registry Abstraction Layer
+# Validates that registry-specific variables load correctly for Quay, Harbor, and JFrog
+
+- name: Test Registry Abstraction - Quay (Primary)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    registry_type: "quay"
+    registry_url: "registry.ocp4.sandbox3377.opentlc.com:8443"
+
+  tasks:
+    - name: Load Quay-specific variables
+      ansible.builtin.include_vars:
+        file: ../roles/openshift_cluster_deploy/vars/quay.yml
+
+    - name: Display Quay registry mirror paths
+      ansible.builtin.debug:
+        var: registry_mirror_paths
+
+    - name: Verify Quay mirror path structure
+      ansible.builtin.assert:
+        that:
+          - registry_mirror_paths is defined
+          - registry_mirror_paths | length == 4
+          - "'{{ registry_url }}/ocp4/openshift4' in registry_mirror_paths[0].mirrors[0]"
+        success_msg: "✅ Quay registry abstraction working correctly"
+
+- name: Test Registry Abstraction - Harbor (Community)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    registry_type: "harbor"
+    registry_url: "harbor.sandbox3377.opentlc.com"
+
+  tasks:
+    - name: Load Harbor-specific variables
+      ansible.builtin.include_vars:
+        file: ../roles/openshift_cluster_deploy/vars/harbor.yml
+
+    - name: Display Harbor registry mirror paths
+      ansible.builtin.debug:
+        var: registry_mirror_paths
+
+    - name: Verify Harbor mirror path structure (project-based)
+      ansible.builtin.assert:
+        that:
+          - registry_mirror_paths is defined
+          - registry_mirror_paths | length == 4
+          - "'{{ registry_url }}/ocp4-project/openshift4' in registry_mirror_paths[0].mirrors[0]"
+        success_msg: "✅ Harbor registry abstraction working correctly"
+
+- name: Test Registry Abstraction - JFrog (Community)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    registry_type: "jfrog"
+    registry_url: "jfrog.sandbox3377.opentlc.com"
+
+  tasks:
+    - name: Load JFrog-specific variables
+      ansible.builtin.include_vars:
+        file: ../roles/openshift_cluster_deploy/vars/jfrog.yml
+
+    - name: Display JFrog registry mirror paths
+      ansible.builtin.debug:
+        var: registry_mirror_paths
+
+    - name: Verify JFrog mirror path structure (docker-local)
+      ansible.builtin.assert:
+        that:
+          - registry_mirror_paths is defined
+          - registry_mirror_paths | length == 4
+          - "'{{ registry_url }}/ocp4-docker-local/openshift4' in registry_mirror_paths[0].mirrors[0]"
+        success_msg: "✅ JFrog registry abstraction working correctly"
+
+- name: Test Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "✅ Registry Abstraction Testing Complete"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - ""
+          - "Tested registry types:"
+          - "  ✅ Quay (primary) - /ocp4/openshift4 paths"
+          - "  ✅ Harbor (community) - /ocp4-project/openshift4 paths"
+          - "  ✅ JFrog (community) - /ocp4-docker-local/openshift4 paths"
+          - ""
+          - "All registry-specific variables loaded successfully"
+          - "Registry abstraction layer validates correctly"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

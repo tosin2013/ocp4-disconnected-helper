@@ -1,0 +1,55 @@
+---
+# SNO Cluster Configuration with Harbor Mirror Registry (Community Contribution)
+
+# Cluster Identity
+cluster_name: "ocp4-sno-harbor"
+base_domain: "sandbox3377.opentlc.com"
+
+# Topology: Single-Node OpenShift
+cluster_topology: "sno"
+control_plane_replicas: 1
+compute_replicas: 0
+
+# OpenShift Version
+ocp_version: "4.21"
+
+# Registry Configuration (Harbor - Community)
+registry_type: "harbor"
+registry_url: "harbor.sandbox3377.opentlc.com"  # No port for Harbor (uses 443)
+registry_username: "admin"
+# registry_password: Set via vault or survey
+
+# Network Configuration
+cluster_network_cidr: "10.128.0.0/14"
+cluster_network_host_prefix: 23
+service_network_cidr: "172.30.0.0/16"
+machine_network_cidr: "192.168.10.0/24"
+
+# VIPs (SNO uses single IP)
+api_vip: "192.168.10.11"
+ingress_vip: "192.168.10.11"
+rendezvous_ip: "192.168.10.11"
+
+# DNS Provider
+dns_provider: "dnsmasq"
+
+# VM Configuration
+provision_vms: true
+vm_memory_mb: 32768
+vm_vcpus: 8
+vm_disk_size_gb: 130
+vm_network: "ocp-network"
+
+# Installation Settings
+install_timeout_minutes: 90
+validate_manifests: true
+
+# Paths
+pull_secret_path: "/root/pull-secret.json"
+openshift_install_dir: "/root/openshift-install-sno-harbor"
+iso_output_path: "/data/iso/sno-harbor"
+
+# Harbor-Specific Notes:
+# - Ensure ocp4-project and redhat-project exist in Harbor
+# - Robot account needs read access to both projects
+# - Harbor uses HTTPS on port 443 by default (no :8443)
