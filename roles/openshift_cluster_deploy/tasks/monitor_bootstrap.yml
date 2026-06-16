@@ -1,0 +1,67 @@
+---
+# Monitor bootstrap completion using openshift-install wait-for bootstrap-complete
+
+- name: Display bootstrap monitoring start
+  ansible.builtin.debug:
+    msg:
+      - "⏳ Monitoring bootstrap completion..."
+      - "   This may take 20-40 minutes depending on image pull speed"
+      - "   Bootstrap node will provision control plane nodes"
+
+- name: Wait for bootstrap to complete
+  ansible.builtin.command:
+    cmd: "{{ openshift_install_binary }} wait-for bootstrap-complete --dir {{ openshift_install_dir }} --log-level=info"
+  register: bootstrap_result
+  async: 3600  # 60 minute timeout
+  poll: 30     # Check every 30 seconds
+  failed_when: bootstrap_result.rc != 0
+  changed_when: false
+
+- name: Display bootstrap completion
+  ansible.builtin.debug:
+    msg:
+      - "✅ Bootstrap complete"
+      - "   Control plane nodes are now self-managing"
+      - "   Bootstrap resources can be removed"
+
+- name: Parse bootstrap duration from logs
+  ansible.builtin.shell:
+    cmd: |
+      if [ -f "{{ openshift_install_dir }}/.openshift_install.log" ]; then
+        grep -i "bootstrap complete" "{{ openshift_install_dir }}/.openshift_install.log" | tail -1 || echo "Duration: Unknown"
+      else
+        echo "Log file not found"
+      fi
+  register: bootstrap_duration
+  changed_when: false
+  failed_when: false
+
+- name: Display bootstrap metrics
+  ansible.builtin.debug:
+    msg:
+      - "Bootstrap Metrics:"
+      - "  Status: {{ bootstrap_result.stdout_lines | default(['Complete']) | last }}"
+      - "  {{ bootstrap_duration.stdout }}"
+      - "  Log: {{ openshift_install_dir }}/.openshift_install.log"
+
+- name: Check bootstrap VM status (if provisioned by Ansible)
+  community.libvirt.virt:
+    command: status
+    name: "{{ cluster_name }}-bootstrap"
+  register: bootstrap_vm_status
+  delegate_to: localhost
+  failed_when: false
+  changed_when: false
+  when: provision_vms | default(true)
+
+- name: Suggest bootstrap VM removal (if running)
+  ansible.builtin.debug:
+    msg:
+      - "⚠️  Bootstrap VM is still running"
+      - "   You can now safely remove it:"
+      - "   virsh destroy {{ cluster_name }}-bootstrap"
+      - "   virsh undefine {{ cluster_name }}-bootstrap"
+  when:
+    - provision_vms | default(true)
+    - bootstrap_vm_status.status is defined
+    - bootstrap_vm_status.status == "running"

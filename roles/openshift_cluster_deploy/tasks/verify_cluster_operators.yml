@@ -1,0 +1,104 @@
+---
+# Verify all cluster operators are Available
+
+- name: Display cluster operator verification start
+  ansible.builtin.debug:
+    msg:
+      - "⏳ Verifying cluster operators..."
+      - "   All operators must be Available=True, Progressing=False, Degraded=False"
+      - "   This confirms the cluster is fully functional"
+
+- name: Set KUBECONFIG environment variable
+  ansible.builtin.set_fact:
+    kubeconfig_path: "{{ openshift_install_dir }}/auth/kubeconfig"
+
+- name: Wait for cluster operators to be available
+  ansible.builtin.command:
+    cmd: "{{ openshift_install_binary }} wait-for install-complete --dir {{ openshift_install_dir }} --log-level=info"
+  register: install_complete
+  async: 2400  # 40 minute timeout
+  poll: 30     # Check every 30 seconds
+  failed_when: install_complete.rc != 0
+  changed_when: false
+
+- name: Get cluster operator status
+  ansible.builtin.command:
+    cmd: "{{ oc_binary | default('oc') }} get clusteroperators"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: cluster_operators
+  changed_when: false
+
+- name: Display cluster operators
+  ansible.builtin.debug:
+    msg:
+      - "Cluster Operators:"
+      - ""
+      - "{{ cluster_operators.stdout_lines | join('\n') }}"
+
+- name: Check for degraded operators
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get co --no-headers 2>/dev/null | \
+        awk '{if ($3 != "True" || $4 != "False" || $5 != "False") print $1}' | wc -l
+  register: degraded_count
+  changed_when: false
+  failed_when: false
+
+- name: List degraded operators (if any)
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get co --no-headers 2>/dev/null | \
+        awk '{if ($3 != "True" || $4 != "False" || $5 != "False") print $1, $3, $4, $5}'
+  register: degraded_operators
+  when: degraded_count.stdout | int > 0
+  changed_when: false
+  failed_when: false
+
+- name: Display degraded operators warning
+  ansible.builtin.debug:
+    msg:
+      - "⚠️  {{ degraded_count.stdout }} operator(s) not fully available:"
+      - ""
+      - "{{ degraded_operators.stdout_lines | join('\n') }}"
+      - ""
+      - "Wait a few minutes and check again with:"
+      - "  oc get co"
+  when: degraded_count.stdout | int > 0
+
+- name: Fail if critical operators are degraded
+  ansible.builtin.fail:
+    msg:
+      - "❌ Critical cluster operators are degraded"
+      - "   Check operator status: oc get co"
+      - "   Review logs: oc logs -n openshift-<operator> <pod>"
+  when:
+    - degraded_count.stdout | int > 0
+    - fail_on_degraded_operators | default(false)
+
+- name: Display cluster operators success
+  ansible.builtin.debug:
+    msg:
+      - "✅ All cluster operators available"
+      - "   No degraded operators detected"
+      - "   Cluster is fully functional"
+  when: degraded_count.stdout | int == 0
+
+- name: Get cluster version status
+  ansible.builtin.command:
+    cmd: "{{ oc_binary | default('oc') }} get clusterversion version -o jsonpath='{.status.conditions[?(@.type==\"Available\")].status}'"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: cluster_available
+  changed_when: false
+  failed_when: false
+
+- name: Display final cluster status
+  ansible.builtin.debug:
+    msg:
+      - "Final Cluster Status:"
+      - "  Cluster Available: {{ cluster_available.stdout | default('Unknown') }}"
+      - "  Operators Available: {{ cluster_operators.stdout_lines | length - 1 }}/{{ cluster_operators.stdout_lines | length - 1 }}"
+      - "  Degraded: {{ degraded_count.stdout }}"

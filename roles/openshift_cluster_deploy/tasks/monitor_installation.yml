@@ -1,7 +1,59 @@
 ---
-# Monitor_installation - Placeholder
-# TODO: Full implementation in later phases
+# Monitor OpenShift installation progress
+# Orchestrates bootstrap, control plane, and worker monitoring
 
-- name: Placeholder - monitor_installation will be implemented later
+- name: Display installation monitoring start
   ansible.builtin.debug:
-    msg: "monitor_installation - To be implemented"
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "Phase 6: Installation Monitoring"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - "Topology: {{ cluster_topology }}"
+      - "Install Directory: {{ openshift_install_dir }}"
+      - ""
+      - "Monitoring Steps:"
+      - "  1. Wait for bootstrap to complete"
+      - "  2. Monitor control plane readiness"
+      - "  3. Monitor worker nodes (HA only)"
+      - "  4. Verify cluster operators"
+      - "  5. Export credentials"
+
+- name: Monitor bootstrap completion
+  ansible.builtin.include_tasks: monitor_bootstrap.yml
+
+- name: Monitor control plane readiness
+  ansible.builtin.include_tasks: monitor_control_plane.yml
+
+- name: Monitor worker nodes (HA clusters only)
+  ansible.builtin.include_tasks: monitor_workers.yml
+  when: cluster_topology == "ha"
+
+- name: Verify cluster operators
+  ansible.builtin.include_tasks: verify_cluster_operators.yml
+
+- name: Export cluster credentials
+  ansible.builtin.include_tasks: export_credentials.yml
+
+- name: Display installation complete summary
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ OpenShift Installation Complete"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "Cluster: {{ cluster_name }}.{{ base_domain }}"
+      - "API URL: https://api.{{ cluster_name }}.{{ base_domain }}:6443"
+      - "Console: https://console-openshift-console.apps.{{ cluster_name }}.{{ base_domain }}"
+      - ""
+      - "Credentials:"
+      - "  Kubeconfig: {{ openshift_install_dir }}/auth/kubeconfig"
+      - "  Username: kubeadmin"
+      - "  Password: {{ openshift_install_dir }}/auth/kubeadmin-password"
+      - ""
+      - "Next Steps:"
+      - "  1. Export KUBECONFIG={{ openshift_install_dir }}/auth/kubeconfig"
+      - "  2. oc get nodes"
+      - "  3. oc get co  # Check cluster operators"
+      - "  4. oc login -u kubeadmin"

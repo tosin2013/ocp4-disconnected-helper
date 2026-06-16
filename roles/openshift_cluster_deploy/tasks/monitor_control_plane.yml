@@ -1,0 +1,73 @@
+---
+# Monitor control plane nodes readiness
+
+- name: Display control plane monitoring start
+  ansible.builtin.debug:
+    msg:
+      - "⏳ Monitoring control plane readiness..."
+      - "   Waiting for {{ control_plane_replicas }} control plane nodes"
+      - "   Nodes must be Ready and cluster operators Available"
+
+- name: Set KUBECONFIG environment variable
+  ansible.builtin.set_fact:
+    kubeconfig_path: "{{ openshift_install_dir }}/auth/kubeconfig"
+
+- name: Wait for control plane nodes to be Ready
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get nodes --selector='node-role.kubernetes.io/master' --no-headers 2>/dev/null | \
+        grep -c " Ready" || echo "0"
+  register: control_plane_ready_count
+  until: control_plane_ready_count.stdout | int == control_plane_replicas | int
+  retries: 60
+  delay: 30
+  changed_when: false
+
+- name: Get control plane node details
+  ansible.builtin.command:
+    cmd: "{{ oc_binary | default('oc') }} get nodes --selector='node-role.kubernetes.io/master' -o wide"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: control_plane_nodes
+  changed_when: false
+
+- name: Display control plane nodes
+  ansible.builtin.debug:
+    msg:
+      - "✅ Control plane nodes ready ({{ control_plane_replicas }}/{{ control_plane_replicas }})"
+      - ""
+      - "{{ control_plane_nodes.stdout_lines | join('\n') }}"
+
+- name: Check etcd cluster health
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get etcd cluster -o jsonpath='{.status.conditions[?(@.type=="EtcdMembersAvailable")].status}' 2>/dev/null || echo "Unknown"
+  register: etcd_health
+  changed_when: false
+  failed_when: false
+
+- name: Display etcd status
+  ansible.builtin.debug:
+    msg:
+      - "Etcd Cluster:"
+      - "  Members Available: {{ etcd_health.stdout | default('Checking...') }}"
+      - "  Expected Members: {{ control_plane_replicas }}"
+
+- name: Get cluster version
+  ansible.builtin.command:
+    cmd: "{{ oc_binary | default('oc') }} get clusterversion version -o jsonpath='{.status.desired.version}'"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: cluster_version
+  changed_when: false
+  failed_when: false
+
+- name: Display cluster version
+  ansible.builtin.debug:
+    msg:
+      - "✅ Control plane ready"
+      - "   OpenShift Version: {{ cluster_version.stdout | default('Unknown') }}"
+      - "   Control Plane Nodes: {{ control_plane_replicas }}"
+      - "   Etcd: {{ etcd_health.stdout | default('Unknown') }}"

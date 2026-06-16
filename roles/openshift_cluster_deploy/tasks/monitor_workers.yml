@@ -1,0 +1,86 @@
+---
+# Monitor worker nodes joining and readiness (HA clusters only)
+
+- name: Display worker monitoring start
+  ansible.builtin.debug:
+    msg:
+      - "⏳ Monitoring worker nodes..."
+      - "   Waiting for {{ compute_replicas }} worker nodes to join"
+      - "   Workers must approve CSRs and become Ready"
+
+- name: Set KUBECONFIG environment variable
+  ansible.builtin.set_fact:
+    kubeconfig_path: "{{ openshift_install_dir }}/auth/kubeconfig"
+
+- name: Check for pending CSRs (Certificate Signing Requests)
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get csr --no-headers 2>/dev/null | grep -c "Pending" || echo "0"
+  register: pending_csrs_count
+  changed_when: false
+  failed_when: false
+
+- name: Approve pending CSRs if any exist
+  ansible.builtin.command:
+    cmd: "{{ oc_binary | default('oc') }} adm certificate approve {{ item }}"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  loop: "{{ pending_csrs.stdout_lines }}"
+  when: pending_csrs_count.stdout | int > 0
+  vars:
+    pending_csrs: "{{ lookup('pipe', 'oc get csr --no-headers | grep Pending | awk \"{print $1}\"', errors='ignore') | default('', true) }}"
+  register: csr_approval
+  changed_when: csr_approval.rc == 0
+  failed_when: false
+
+- name: Display CSR approval status
+  ansible.builtin.debug:
+    msg:
+      - "CSR Approval:"
+      - "  Pending CSRs: {{ pending_csrs_count.stdout }}"
+      - "  {% if pending_csrs_count.stdout | int > 0 %}Approved: {{ csr_approval.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | list | length }}{% else %}No pending CSRs{% endif %}"
+  when: pending_csrs_count.stdout | int > 0
+
+- name: Wait for worker nodes to be Ready
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get nodes --selector='node-role.kubernetes.io/worker' --no-headers 2>/dev/null | \
+        grep -c " Ready" || echo "0"
+  register: worker_ready_count
+  until: worker_ready_count.stdout | int == compute_replicas | int
+  retries: 40
+  delay: 30
+  changed_when: false
+
+- name: Get worker node details
+  ansible.builtin.command:
+    cmd: "{{ oc_binary | default('oc') }} get nodes --selector='node-role.kubernetes.io/worker' -o wide"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: worker_nodes
+  changed_when: false
+
+- name: Display worker nodes
+  ansible.builtin.debug:
+    msg:
+      - "✅ Worker nodes ready ({{ compute_replicas }}/{{ compute_replicas }})"
+      - ""
+      - "{{ worker_nodes.stdout_lines | join('\n') }}"
+
+- name: Get total node count
+  ansible.builtin.shell:
+    cmd: |
+      export KUBECONFIG="{{ kubeconfig_path }}"
+      {{ oc_binary | default('oc') }} get nodes --no-headers 2>/dev/null | grep -c " Ready" || echo "0"
+  register: total_nodes_ready
+  changed_when: false
+
+- name: Display cluster node summary
+  ansible.builtin.debug:
+    msg:
+      - "✅ All nodes ready"
+      - "   Control Plane: {{ control_plane_replicas }}"
+      - "   Workers: {{ compute_replicas }}"
+      - "   Total Ready: {{ total_nodes_ready.stdout }}/{{ control_plane_replicas | int + compute_replicas | int }}"

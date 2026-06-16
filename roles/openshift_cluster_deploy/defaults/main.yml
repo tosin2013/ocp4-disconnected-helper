@@ -59,9 +59,16 @@ openshift_install_dir: "/root/openshift-install"
 iso_output_path: "/data/iso"
 manifests_dir: "{{ openshift_install_dir }}/manifests"
 openshift_install_binary: "/usr/local/bin/openshift-install"
+credentials_export_dir: "/data/ocp-credentials"
 
 # VM Base Image (for provisioning)
 vm_base_image: "/data/libvirt-images/centos-stream-9-base.qcow2"
+
+# Binary Paths
+oc_binary: "/usr/local/bin/oc"
+
+# Monitoring Options
+fail_on_degraded_operators: false  # Set to true for strict validation
 
 # Agent-Based Installer Configuration
 rendezvous_ip: "{{ api_vip }}"  # First control plane node for rendezvous
