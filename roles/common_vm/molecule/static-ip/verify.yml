@@ -1,0 +1,119 @@
+---
+# Verify playbook for static IP scenario
+# Validates cloud-init network-config v2 syntax and content
+
+- name: Verify - Static IP Configuration
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read generated network-config
+      ansible.builtin.slurp:
+        src: /tmp/molecule-test-images/network-config
+      register: network_config_b64
+
+    - name: Decode network-config
+      ansible.builtin.set_fact:
+        network_config: "{{ network_config_b64.content | b64decode }}"
+
+    - name: Parse network-config as YAML
+      ansible.builtin.set_fact:
+        network_config_yaml: "{{ network_config | from_yaml }}"
+
+    # Test 1: Verify network-config v2 version
+    - name: Assert network-config version is 2
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.version == 2
+        fail_msg: "Network-config must be version 2"
+        success_msg: "✓ Network-config version is 2"
+
+    # Test 2: Verify ethernets section exists
+    - name: Assert ethernets configuration exists
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets is defined
+          - network_config_yaml.ethernets.eth0 is defined
+        fail_msg: "Network-config missing ethernets.eth0 section"
+        success_msg: "✓ Ethernets section exists"
+
+    # Test 3: Verify static IP is set correctly
+    - name: Assert static IP address is correct
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.addresses is defined
+          - network_config_yaml.ethernets.eth0.addresses[0] == "192.168.10.50/24"
+        fail_msg: "Static IP not set correctly"
+        success_msg: "✓ Static IP is 192.168.10.50/24"
+
+    # Test 4: Verify DHCP is disabled (critical for static IP)
+    - name: Assert DHCP4 is disabled
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.dhcp4 is defined
+          - network_config_yaml.ethernets.eth0.dhcp4 == false
+        fail_msg: "DHCP4 must be explicitly disabled for static IP"
+        success_msg: "✓ DHCP4 is disabled"
+
+    # Test 5: Verify gateway4 is used (ADR workaround for CentOS Stream 9)
+    - name: Assert gateway4 is set (not routes)
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.gateway4 is defined
+          - network_config_yaml.ethernets.eth0.gateway4 == "192.168.10.1"
+        fail_msg: "gateway4 must be used instead of routes (CentOS Stream 9 workaround)"
+        success_msg: "✓ Gateway4 is set to 192.168.10.1"
+
+    # Test 6: Verify DNS servers are set correctly
+    - name: Assert DNS nameservers are configured
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.nameservers is defined
+          - network_config_yaml.ethernets.eth0.nameservers.addresses is defined
+          - network_config_yaml.ethernets.eth0.nameservers.addresses | length == 2
+          - "'192.168.10.1' in network_config_yaml.ethernets.eth0.nameservers.addresses"
+          - "'8.8.8.8' in network_config_yaml.ethernets.eth0.nameservers.addresses"
+        fail_msg: "DNS servers not configured correctly"
+        success_msg: "✓ DNS servers configured: 192.168.10.1, 8.8.8.8"
+
+    # Test 7: Verify YAML syntax is valid
+    - name: Validate network-config YAML syntax
+      ansible.builtin.command:
+        cmd: "python3 -c 'import yaml; yaml.safe_load(open(\"/tmp/molecule-test-images/network-config\"))'"
+      register: yaml_validation
+      changed_when: false
+      failed_when: yaml_validation.rc != 0
+
+    - name: Assert YAML syntax is valid
+      ansible.builtin.assert:
+        that:
+          - yaml_validation.rc == 0
+        fail_msg: "Network-config has invalid YAML syntax"
+        success_msg: "✓ YAML syntax is valid"
+
+    # Test 8: Verify user-data exists
+    - name: Check user-data file exists
+      ansible.builtin.stat:
+        path: /tmp/molecule-test-images/user-data
+      register: user_data_stat
+
+    - name: Assert user-data file exists
+      ansible.builtin.assert:
+        that:
+          - user_data_stat.stat.exists
+        fail_msg: "User-data file not generated"
+        success_msg: "✓ User-data file exists"
+
+    # Summary
+    - name: Test Summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Static IP Configuration Tests: PASSED
+          ========================================
+          ✓ Network-config v2 format valid
+          ✓ Static IP: 192.168.10.50/24
+          ✓ DHCP4 disabled
+          ✓ Gateway4: 192.168.10.1 (CentOS Stream 9 compatible)
+          ✓ DNS servers: 192.168.10.1, 8.8.8.8
+          ✓ YAML syntax valid
+          ✓ User-data generated

@@ -1,0 +1,19 @@
+---
+# Uses rootful Podman (sudo) to match create.yml behavior
+- name: Destroy Podman container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Destroy Podman container (rootful)
+      ansible.builtin.command:
+        cmd: sudo podman rm -f {{ item.name }}
+      loop: "{{ molecule_yml.platforms }}"
+      register: destroy_result
+      ignore_errors: true
+      changed_when: destroy_result.rc == 0
+
+    - name: Remove instance config file
+      ansible.builtin.file:
+        path: "{{ molecule_instance_config }}"
+        state: absent

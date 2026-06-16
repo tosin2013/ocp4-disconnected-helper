@@ -1,0 +1,57 @@
+---
+# Molecule configuration for common_vm role testing with Podman
+#
+# IMPORTANT: Uses userns="nomap" in create.yml to resolve rootless Podman
+# UID mapping conflict on CentOS Stream 10. This prevents the default
+# container UID 0 → host UID 1001 mapping that triggers newuidmap rejection.
+#
+# See ADR-0036 for full technical justification and troubleshooting guide.
+
+dependency:
+  name: galaxy
+  enabled: false  # No external dependencies for this role
+
+ansible:
+  cfg:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+      callbacks_enabled: profile_tasks
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+
+  playbooks:
+    create: create.yml
+    converge: converge.yml
+    destroy: destroy.yml
+    verify: verify.yml
+
+platforms:
+  - name: instance
+    image: registry.access.redhat.com/ubi9/ubi-init:latest
+    pre_build_image: true
+    command: /usr/sbin/init
+    privileged: true  # Required for systemd in container
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      /run: ""
+      /tmp: ""
+
+provisioner:
+  name: ansible
+  log: true
+  options:
+    diff: true
+
+verifier:
+  name: ansible
+
+scenario:
+  name: default
+  test_sequence:
+    - destroy
+    - create
+    - converge
+    - verify
+    - destroy

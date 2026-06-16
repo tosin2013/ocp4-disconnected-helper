@@ -1,0 +1,53 @@
+---
+# Converge playbook for static IP scenario
+# Tests cloud-init configuration generation with static IP settings
+
+- name: Converge - Static IP Configuration
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Mock libvirt paths for testing (no actual VM creation)
+    vm_images_dir: "/tmp/molecule-test-images"
+    vm_cloud_init_iso: "/tmp/molecule-test-images/test-static-vm-cloud-init.iso"
+  tasks:
+    - name: Create mock image directory
+      ansible.builtin.file:
+        path: "{{ vm_images_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Generate cloud-init user-data
+      ansible.builtin.template:
+        src: "../../templates/cloud-init/user-data.yml.j2"
+        dest: "/tmp/molecule-test-images/user-data"
+        mode: '0644'
+      vars:
+        vm_name: "test-static-vm"
+        vm_hostname: "test-static-vm"
+        vm_fqdn: "test-static-vm.example.com"
+        vm_user: "admin"
+        vm_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ test@example.com"
+
+    - name: Generate cloud-init network-config v2
+      ansible.builtin.template:
+        src: "../../templates/cloud-init/network-config.yml.j2"
+        dest: "/tmp/molecule-test-images/network-config"
+        mode: '0644'
+      vars:
+        vm_use_static_ip: true
+        vm_static_ip: "192.168.10.50"
+        vm_netmask: "255.255.255.0"
+        vm_gateway: "192.168.10.1"
+        vm_dns_servers:
+          - "192.168.10.1"
+          - "8.8.8.8"
+
+    - name: Display generated network-config
+      ansible.builtin.command:
+        cmd: cat /tmp/molecule-test-images/network-config
+      register: network_config_content
+      changed_when: false
+
+    - name: Show network-config content
+      ansible.builtin.debug:
+        var: network_config_content.stdout_lines

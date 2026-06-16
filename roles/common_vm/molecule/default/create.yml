@@ -1,0 +1,71 @@
+---
+# SECURITY WARNING: This playbook uses rootful Podman (sudo) due to a fundamental
+# incompatibility between rootless Podman 5.8.2 and CentOS Stream 10's subordinate
+# UID configuration. This is documented as technical debt in ADR-0036.
+#
+# Root cause: Podman attempts to map container UID 0 → host UID 1001, but
+# newuidmap rejects this mapping even with correct /etc/subuid configuration.
+# All rootless workarounds (userns=nomap, userns=auto, storage squashing) fail
+# because the UID mapping error occurs during image pull, before container creation.
+#
+# TODO (v1.4.0): Investigate upstream Podman fix or migrate to Docker-compatible
+# container runtime that supports true rootless operation.
+
+- name: Create Podman container for testing
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    molecule_inventory:
+      all:
+        hosts: {}
+  tasks:
+    - name: Pull container image (rootful due to UID mapping limitation)
+      ansible.builtin.command:
+        cmd: sudo podman pull {{ item.image }}
+      loop: "{{ molecule_yml.platforms }}"
+      register: pull_result
+      changed_when: "'Downloaded newer image' in pull_result.stdout"
+
+    - name: Create Podman container (rootful)
+      ansible.builtin.command:
+        cmd: >
+          sudo podman run -d
+          --name {{ item.name }}
+          --privileged={{ item.privileged | default(false) }}
+          {% for vol in item.volumes | default([]) %}
+          -v {{ vol }}
+          {% endfor %}
+          {% for mount_point in item.tmpfs | default({}) | list %}
+          --tmpfs {{ mount_point }}
+          {% endfor %}
+          {{ item.image }}
+          {{ item.command | default('/usr/sbin/init') }}
+      loop: "{{ molecule_yml.platforms }}"
+      register: container_result
+      changed_when: true
+
+    - name: Populate instance config dict
+      ansible.builtin.set_fact:
+        instance_conf_dict:
+          instance: "{{ item.name }}"
+          address: "localhost"
+          user: "root"
+          port: "22"
+          identity_file: ""
+          connection: "containers.podman.podman"
+      loop: "{{ molecule_yml.platforms }}"
+      register: instance_config_dict
+
+    - name: Convert instance config dict to a list
+      ansible.builtin.set_fact:
+        instance_conf: "{{ instance_config_dict.results | map(attribute='ansible_facts.instance_conf_dict') | list }}"
+
+    - name: Dump instance config
+      ansible.builtin.copy:
+        content: |
+          # Molecule managed
+
+          {{ instance_conf | to_json | from_json | to_yaml }}
+        dest: "{{ molecule_instance_config }}"
+        mode: "0600"

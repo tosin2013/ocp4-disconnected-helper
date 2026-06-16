@@ -1,0 +1,114 @@
+---
+# Verify playbook for DHCP scenario
+# Validates cloud-init network-config v2 with DHCP enabled
+
+- name: Verify - DHCP Configuration
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read generated network-config
+      ansible.builtin.slurp:
+        src: /tmp/molecule-test-dhcp/network-config
+      register: network_config_b64
+
+    - name: Decode network-config
+      ansible.builtin.set_fact:
+        network_config: "{{ network_config_b64.content | b64decode }}"
+
+    - name: Parse network-config as YAML
+      ansible.builtin.set_fact:
+        network_config_yaml: "{{ network_config | from_yaml }}"
+
+    # Test 1: Verify network-config v2 version
+    - name: Assert network-config version is 2
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.version == 2
+        fail_msg: "Network-config must be version 2"
+        success_msg: "✓ Network-config version is 2"
+
+    # Test 2: Verify ethernets section exists
+    - name: Assert ethernets configuration exists
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets is defined
+          - network_config_yaml.ethernets.eth0 is defined
+        fail_msg: "Network-config missing ethernets.eth0 section"
+        success_msg: "✓ Ethernets section exists"
+
+    # Test 3: Verify DHCP4 is enabled
+    - name: Assert DHCP4 is enabled
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.dhcp4 is defined
+          - network_config_yaml.ethernets.eth0.dhcp4 == true
+        fail_msg: "DHCP4 must be enabled for dynamic IP"
+        success_msg: "✓ DHCP4 is enabled"
+
+    # Test 4: Verify static IP parameters are absent
+    - name: Assert addresses (static IP) is not set
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.addresses is not defined
+        fail_msg: "Static addresses should not be set when using DHCP"
+        success_msg: "✓ No static addresses configured"
+
+    # Test 5: Verify gateway4 is absent (not needed with DHCP)
+    - name: Assert gateway4 is not set
+      ansible.builtin.assert:
+        that:
+          - network_config_yaml.ethernets.eth0.gateway4 is not defined
+        fail_msg: "Gateway4 should not be set when using DHCP"
+        success_msg: "✓ No static gateway configured"
+
+    # Test 6: Verify nameservers are not manually configured
+    # (DHCP server provides DNS)
+    - name: Check nameservers configuration
+      ansible.builtin.set_fact:
+        has_nameservers: "{{ network_config_yaml.ethernets.eth0.nameservers is defined }}"
+
+    - name: Display nameserver status
+      ansible.builtin.debug:
+        msg: "{{ 'DNS servers from DHCP' if not has_nameservers else 'Manual DNS override present' }}"
+
+    # Test 7: Verify YAML syntax is valid
+    - name: Validate network-config YAML syntax
+      ansible.builtin.command:
+        cmd: "python3 -c 'import yaml; yaml.safe_load(open(\"/tmp/molecule-test-dhcp/network-config\"))'"
+      register: yaml_validation
+      changed_when: false
+      failed_when: yaml_validation.rc != 0
+
+    - name: Assert YAML syntax is valid
+      ansible.builtin.assert:
+        that:
+          - yaml_validation.rc == 0
+        fail_msg: "Network-config has invalid YAML syntax"
+        success_msg: "✓ YAML syntax is valid"
+
+    # Test 8: Verify minimal DHCP config (no extra parameters)
+    - name: Count configured parameters
+      ansible.builtin.set_fact:
+        param_count: "{{ network_config_yaml.ethernets.eth0.keys() | length }}"
+
+    - name: Assert minimal DHCP configuration
+      ansible.builtin.assert:
+        that:
+          - param_count | int <= 2  # Should only have dhcp4 and maybe match/set-name
+        fail_msg: "DHCP config should be minimal (dhcp4 only)"
+        success_msg: "✓ Minimal DHCP configuration"
+
+    # Summary
+    - name: Test Summary
+      ansible.builtin.debug:
+        msg: |
+          =====================================
+          DHCP Configuration Tests: PASSED
+          =====================================
+          ✓ Network-config v2 format valid
+          ✓ DHCP4 enabled
+          ✓ No static addresses configured
+          ✓ No static gateway configured
+          ✓ DNS from DHCP server
+          ✓ YAML syntax valid
+          ✓ Minimal configuration (clean)

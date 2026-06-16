@@ -1,0 +1,154 @@
+---
+# Converge playbook for error handling scenario
+# Tests graceful failure with invalid configurations
+
+- name: Converge - Error Handling Tests
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_results: []
+  tasks:
+    - name: Create test output directory
+      ansible.builtin.file:
+        path: /tmp/molecule-test-errors
+        state: directory
+        mode: '0755'
+
+    # Test 1: Missing vm_static_ip when vm_use_static_ip is true
+    - name: Test missing static IP value
+      block:
+        - name: Try to generate network-config without static IP
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/network-config.yml.j2"
+            dest: "/tmp/molecule-test-errors/network-config-missing-ip"
+            mode: '0644'
+          vars:
+            vm_use_static_ip: true
+            vm_static_ip: ""  # Empty - should fail
+          register: missing_ip_test
+          ignore_errors: true
+
+        - name: Record missing IP test result
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'missing_static_ip', 'failed': missing_ip_test.failed, 'msg': missing_ip_test.msg | default('No error')}] }}"
+      rescue:
+        - name: Record expected failure
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'missing_static_ip', 'failed': true, 'msg': 'Template rendering failed as expected'}] }}"
+
+    # Test 2: Invalid IP address format
+    - name: Test invalid IP format
+      block:
+        - name: Try to generate network-config with invalid IP
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/network-config.yml.j2"
+            dest: "/tmp/molecule-test-errors/network-config-invalid-ip"
+            mode: '0644'
+          vars:
+            vm_use_static_ip: true
+            vm_static_ip: "not.a.valid.ip.address"
+            vm_netmask: "255.255.255.0"
+            vm_gateway: "192.168.10.1"
+          register: invalid_ip_test
+          ignore_errors: true
+
+        - name: Validate invalid IP produces warning
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'invalid_ip_format', 'failed': false, 'msg': 'Template accepts any string (validation should be in role logic)'}] }}"
+      rescue:
+        - name: Record invalid IP handling
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'invalid_ip_format', 'failed': true, 'msg': 'Template failed on invalid IP'}] }}"
+
+    # Test 3: Missing DNS servers (should use defaults)
+    - name: Test missing DNS servers
+      block:
+        - name: Generate network-config without DNS servers
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/network-config.yml.j2"
+            dest: "/tmp/molecule-test-errors/network-config-no-dns"
+            mode: '0644'
+          vars:
+            vm_use_static_ip: true
+            vm_static_ip: "192.168.10.50"
+            vm_netmask: "255.255.255.0"
+            vm_gateway: "192.168.10.1"
+            vm_dns_servers: []  # Empty list
+          register: no_dns_test
+          ignore_errors: true
+
+        - name: Record no DNS test result
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'missing_dns_servers', 'failed': no_dns_test.failed, 'msg': 'Template handles empty DNS list'}] }}"
+      rescue:
+        - name: Record DNS handling failure
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'missing_dns_servers', 'failed': true, 'msg': 'Template failed on empty DNS list'}] }}"
+
+    # Test 4: Invalid YAML in user-data
+    - name: Test user-data generation with special characters
+      block:
+        - name: Generate user-data with special characters in hostname
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/user-data.yml.j2"
+            dest: "/tmp/molecule-test-errors/user-data-special-chars"
+            mode: '0644'
+          vars:
+            vm_name: "test-vm-with-special-@#$"
+            vm_hostname: "test-vm-with-special-@#$"
+            vm_fqdn: "test@invalid#domain.com"
+            vm_user: "admin"
+            vm_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ test@example.com"
+          register: special_chars_test
+          ignore_errors: true
+
+        - name: Validate YAML syntax
+          ansible.builtin.command:
+            cmd: "python3 -c 'import yaml; yaml.safe_load(open(\"/tmp/molecule-test-errors/user-data-special-chars\"))'"
+          register: yaml_validation
+          changed_when: false
+          failed_when: false
+
+        - name: Record special characters test
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'special_chars_in_hostname', 'failed': yaml_validation.rc != 0, 'msg': 'YAML syntax check result: ' + (yaml_validation.rc | string)}] }}"
+      rescue:
+        - name: Record special chars handling
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'special_chars_in_hostname', 'failed': true, 'msg': 'Template or validation failed'}] }}"
+
+    # Test 5: Conflicting configuration (static IP + no gateway)
+    - name: Test static IP without gateway
+      block:
+        - name: Generate network-config with static IP but no gateway
+          ansible.builtin.template:
+            src: "../../templates/cloud-init/network-config.yml.j2"
+            dest: "/tmp/molecule-test-errors/network-config-no-gateway"
+            mode: '0644'
+          vars:
+            vm_use_static_ip: true
+            vm_static_ip: "192.168.10.50"
+            vm_netmask: "255.255.255.0"
+            vm_gateway: ""  # Missing gateway
+            vm_dns_servers:
+              - "8.8.8.8"
+          register: no_gateway_test
+          ignore_errors: true
+
+        - name: Record no gateway test result
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'static_ip_no_gateway', 'failed': no_gateway_test.failed, 'msg': 'Template handles missing gateway'}] }}"
+      rescue:
+        - name: Record gateway handling
+          ansible.builtin.set_fact:
+            test_results: "{{ test_results + [{'test': 'static_ip_no_gateway', 'failed': true, 'msg': 'Template failed on missing gateway'}] }}"
+
+    - name: Save test results to file
+      ansible.builtin.copy:
+        content: "{{ test_results | to_nice_yaml }}"
+        dest: /tmp/molecule-test-errors/test-results.yml
+        mode: '0644'
+
+    - name: Display test results
+      ansible.builtin.debug:
+        var: test_results

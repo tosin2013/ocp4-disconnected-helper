@@ -1,0 +1,76 @@
+---
+# Molecule scenario for testing common_vm role with DHCP configuration
+#
+# Tests:
+# - Cloud-init network-config v2 with DHCP enabled
+# - dhcp4: true configuration
+# - Absence of static IP parameters
+# - Dynamic IP assignment behavior
+
+dependency:
+  name: galaxy
+  enabled: false
+
+ansible:
+  cfg:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+      callbacks_enabled: profile_tasks
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+
+  playbooks:
+    create: ../default/create.yml
+    converge: converge.yml
+    destroy: ../default/destroy.yml
+    verify: verify.yml
+
+platforms:
+  - name: dhcp-test
+    image: registry.access.redhat.com/ubi9/ubi-init:latest
+    pre_build_image: true
+    command: /usr/sbin/init
+    privileged: true
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      /run: ""
+      /tmp: ""
+
+provisioner:
+  name: ansible
+  log: true
+  options:
+    diff: true
+  inventory:
+    host_vars:
+      dhcp-test:
+        # DHCP configuration
+        vm_name: "test-dhcp-vm"
+        vm_use_static_ip: false
+        vm_network: "default"
+        vm_network_bridge: "virbr0"
+
+        # VM specs
+        vm_memory: 2048
+        vm_cpus: 2
+        vm_disk_size: 20
+
+        # Cloud-init
+        vm_hostname: "test-dhcp-vm"
+        vm_fqdn: "test-dhcp-vm.example.com"
+        vm_user: "admin"
+        vm_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ test@example.com"
+
+verifier:
+  name: ansible
+
+scenario:
+  name: dhcp
+  test_sequence:
+    - destroy
+    - create
+    - converge
+    - verify
+    - destroy

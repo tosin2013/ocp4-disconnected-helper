@@ -1,0 +1,34 @@
+---
+# Purpose: Test the common_vm role in a Podman container
+# Molecule calls this playbook with `molecule converge`.
+#
+# NOTE: Uses local connection targeting rootful Podman container via `podman exec`.
+# This is a workaround for containers.podman.podman plugin incompatibility with
+# rootful containers (see ADR-0036 for technical details).
+
+- name: Converge
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Verify container is running
+      ansible.builtin.command:
+        cmd: sudo podman exec instance /usr/bin/whoami
+      register: whoami_result
+      changed_when: false
+
+    - name: Display container user context
+      ansible.builtin.debug:
+        msg: "Container running as: {{ whoami_result.stdout }}"
+
+    - name: Test basic Ansible execution inside container
+      ansible.builtin.command:
+        cmd: sudo podman exec instance /usr/bin/cat /etc/os-release
+      register: os_release
+      changed_when: false
+
+    - name: Display container OS
+      ansible.builtin.debug:
+        msg: "{{ os_release.stdout_lines }}"
+
+    # Note: common_vm creates actual VMs via libvirt, so we can't run it in a container
+    # These tests validate that Molecule can create containers and execute commands
