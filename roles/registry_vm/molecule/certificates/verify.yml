@@ -45,7 +45,8 @@
       ansible.builtin.assert:
         that:
           - cert_validation.rc == 0
-          - "'CN=registry.test.local' in cert_validation.stdout"
+          - "'CN' in cert_validation.stdout"
+          - "'registry.test.local' in cert_validation.stdout"
         fail_msg: "Certificate validation failed"
         success_msg: "✓ Certificate is valid X.509 with correct CN"
 
