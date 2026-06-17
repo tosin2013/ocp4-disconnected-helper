@@ -75,32 +75,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install Ansible
+      - name: Pull Custom AAP Execution Environment
         run: |
-          pip install ansible-core
-          ansible-galaxy collection install community.libvirt
-          ansible-galaxy collection install ansible.posix
-          ansible-galaxy collection install community.general
-          ansible-galaxy collection install containers.podman
-          ansible-galaxy collection install kubernetes.core
+          # Pull the custom EE image that includes ansible.controller and all required collections
+          podman pull quay.io/tosin2013/ansible-ee-minimal:latest
 
-      - name: Check playbook syntax
+      - name: Check playbook syntax (in custom EE container)
         run: |
           for playbook in playbooks/*.yml; do
-            # Skip AAP-specific playbooks (require ansible.controller collection not available in CI)
-            if [[ "$playbook" == *"-aap-"* ]] || [[ "$playbook" == *"-aap.yml" ]] || \
-               [[ "$playbook" == *"configure-custom-ee"* ]] || [[ "$playbook" == *"complete-aap"* ]]; then
-              echo "Skipping AAP-specific playbook: $playbook"
-              continue
-            fi
-
             echo "Checking $playbook..."
-            ansible-playbook --syntax-check "$playbook" \
+
+            # Run syntax check inside the custom EE container
+            # This container has ansible.controller, kubernetes.core, and all required collections
+            podman run --rm \
+              -v $PWD:/workspace:Z \
+              -w /workspace \
+              quay.io/tosin2013/ansible-ee-minimal:latest \
+              ansible-playbook --syntax-check "$playbook" \
               -i inventory/ibm-cloud.yml \
               || exit 1
           done
