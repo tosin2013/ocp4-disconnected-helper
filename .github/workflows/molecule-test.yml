@@ -125,7 +125,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        if: steps.role-filter.outputs.should_run == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libxml2-utils
+
+      - name: Install Python dependencies
         if: steps.role-filter.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
