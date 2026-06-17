@@ -91,6 +91,12 @@ jobs:
       - name: Check playbook syntax
         run: |
           for playbook in playbooks/*.yml; do
+            # Skip AAP-specific playbooks (require ansible.controller collection)
+            if [[ "$playbook" == *"complete-aap-setup"* ]] || [[ "$playbook" == *"configure-aap"* ]]; then
+              echo "Skipping AAP-specific playbook: $playbook"
+              continue
+            fi
+
             echo "Checking $playbook..."
             ansible-playbook --syntax-check "$playbook" \
               -i inventory/ibm-cloud.yml \
