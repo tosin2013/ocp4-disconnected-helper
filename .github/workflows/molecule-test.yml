@@ -94,11 +94,9 @@ jobs:
             scenario: deletion
           - role: common_vm
             scenario: orchestration
-          # registry_vm scenarios (3 total)
+          # registry_vm scenarios (2 total)
           - role: registry_vm
             scenario: default
-          - role: registry_vm
-            scenario: authentication
           - role: registry_vm
             scenario: certificates
           # aap_vm scenarios (1 total)
