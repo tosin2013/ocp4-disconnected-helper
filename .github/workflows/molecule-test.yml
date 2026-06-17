@@ -33,7 +33,7 @@ jobs:
 
       - name: Get changed roles
         id: changed-files
-        uses: tj-actions/changed-files@v48
+        uses: tj-actions/changed-files@v47
         with:
           files: roles/**
           dir_names: true
