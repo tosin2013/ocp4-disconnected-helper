@@ -69,11 +69,14 @@ Create a **custom execution environment** by forking `https://github.com/tosin20
 - AAP authenticates to Quay using dedicated Container Registry credential
 - Quay repository access restricted to authorized users only
 
-**Credential Rotation Process**:
-1. Update credentials in `extra_vars/rhel-subscription-secrets.yml`
-2. Rebuild EE with new credentials: `ansible-playbook playbooks/build-custom-ee.yml`
-3. Push updated image to Quay (overwrites `:latest` tag)
-4. AAP automatically pulls updated image on next project sync (if `Always pull` enabled)
+**Credential Rotation Process** (delegated to upstream as of v1.3.0):
+1. Update credentials in upstream repository's secrets
+2. Trigger upstream rebuild (via git tag or workflow_dispatch)
+3. Upstream publishes new image version to Quay
+4. Update downstream CI/CD workflows to use new version tag
+5. AAP automatically pulls updated image on next project sync (if `Always pull` enabled)
+
+**Note**: Local EE builds were deprecated in v1.3.0. All EE management delegated to https://github.com/tosin2013/ocp4-aap-execution-environment.
 
 ## Alternatives Considered
 
@@ -122,7 +125,13 @@ git remote add origin git@github.com:tosin2013/ocp4-aap-execution-environment.gi
    Password: <robot_token>
    ```
 
-### Phase 3: Build Automation
+### Phase 3: Build Automation (DEPRECATED - See v1.3.0 Update)
+
+**Historical Note**: This phase was implemented in v1.0-v1.2 but deprecated in v1.3.0 in favor of upstream delegation. The playbook below was removed. See `docs/EE_DELEGATION.md` for current architecture.
+
+<details>
+<summary>Original implementation (deprecated, for historical reference)</summary>
+
 Create `playbooks/build-custom-ee.yml`:
 ```yaml
 - name: Build and Publish Custom AAP Execution Environment
@@ -146,6 +155,8 @@ Create `playbooks/build-custom-ee.yml`:
       ansible.builtin.command:
         cmd: podman push quay.io/tosin2013/ocp4-aap-execution-environment:latest
 ```
+
+</details>
 
 ### Phase 4: AAP Configuration
 ```yaml

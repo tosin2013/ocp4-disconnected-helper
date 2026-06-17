@@ -8,6 +8,29 @@ nav_order: 6
 
 **ADR Reference**: [ADR 0029](adrs/0029-custom-execution-environment-for-aap-registry-authentication.md)
 
+---
+
+## ⚠️ DEPRECATED (v1.3.0)
+
+This guide is **deprecated** as of v1.3.0 (2026-06-17). Local EE builds have been replaced by upstream delegation.
+
+**Current Approach**: Consume pre-built EE images from https://github.com/tosin2013/ocp4-aap-execution-environment
+
+**See**: `docs/EE_DELEGATION.md` for current architecture and upgrade process.
+
+**Reason for Deprecation**:
+- Faster CI (30s pull vs 5min build)
+- Single source of truth for collections
+- Automatic updates on upstream releases
+- No duplicate maintenance overhead
+
+This document is retained for historical reference only.
+
+---
+
+<details>
+<summary><strong>Original Guide (Historical Reference)</strong></summary>
+
 **Purpose**: Resolve AAP project sync failures caused by immutable Control Plane Execution Environment lacking `registry.redhat.io` authentication.
 
 ---
@@ -373,3 +396,5 @@ curl -k -u admin:<password> -X POST \
 ansible-playbook playbooks/build-custom-ee.yml \
   -e@extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
 ```
+
+</details>

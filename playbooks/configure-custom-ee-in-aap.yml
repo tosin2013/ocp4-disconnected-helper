@@ -7,7 +7,7 @@
 #     -e@extra_vars/rhel-subscription-secrets.yml --vault-password-file ~/.vault_pass
 #
 # Prerequisites:
-#   - Custom EE built and pushed to Quay (run playbooks/build-custom-ee.yml first)
+#   - Custom EE published to Quay by upstream (https://github.com/tosin2013/ocp4-aap-execution-environment)
 #   - AAP 2.6 deployed and accessible
 #   - ansible.controller collection installed
 

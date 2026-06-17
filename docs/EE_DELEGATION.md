@@ -43,9 +43,11 @@ As of v1.3.0, this project **fully delegates** Ansible Execution Environment (EE
 
 **Deprecated Files** (removed in v1.3.0):
 - ❌ `playbooks/build-custom-ee.yml` — EE build playbook
-- ❌ `.github/workflows/build-ee.yml` — EE build CI workflow  
-- ❌ `execution-environment.yml` — Local EE definition
-- ❌ `files/requirements.yml` — Collection dependencies
+- ❌ `.github/workflows/build-custom-ee.yml` — EE build CI workflow
+
+**Files That Never Existed** (intentionally never created):
+- ❌ `execution-environment.yml` — Local EE definition (never needed, delegated from start)
+- ❌ `files/requirements.yml` — EE collection dependencies (upstream manages this)
 
 **Reason**: Maintaining duplicate EE build logic creates:
 - Version drift between this repo and upstream
@@ -351,8 +353,11 @@ podman pull quay.io/takinosh/ocp4-aap-execution-environment:v1.2.2
 
 ### v1.3.0 (2026-06-17)
 - ✅ Removed local EE build playbooks and workflows
+  - Deleted: `playbooks/build-custom-ee.yml`
+  - Deleted: `.github/workflows/build-custom-ee.yml`
 - ✅ Delegated to upstream ocp4-aap-execution-environment repository
-- ✅ Updated GitHub Actions to pull from Quay
+- ✅ Updated GitHub Actions to pull from Quay (v1.2.2)
+- ✅ Achieved 100% CI coverage (62/62 playbooks)
 - ✅ Documented collaboration model (this file)
 
 ### v1.2.2 (2026-06-17 - upstream)
