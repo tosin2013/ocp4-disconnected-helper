@@ -222,9 +222,21 @@
             cmd: podman tag hello-world:latest {{ ansible_host }}:{{ registry_port }}/test/hello-world:latest
           changed_when: false
 
+        - name: Read registry credentials
+          ansible.builtin.slurp:
+            src: /opt/mirror-registry/credentials.txt
+          register: registry_creds_file
+          when: registry_type == 'quay'
+
+        - name: Extract password from credentials
+          ansible.builtin.set_fact:
+            registry_password: "{{ (registry_creds_file.content | b64decode | regex_search('password: (.+)', '\\1'))[0] }}"
+          when: registry_type == 'quay'
+          no_log: true
+
         - name: Login to registry
           ansible.builtin.command:
-            cmd: podman login --tls-verify=false {{ ansible_host }}:{{ registry_port }} -u init -p "{{ lookup('file', '/opt/mirror-registry/credentials.txt') | regex_search('password: (.+)', '\\1') | first }}"
+            cmd: "podman login --tls-verify=false {{ ansible_host }}:{{ registry_port }} -u init -p {{ registry_password }}"
           when: registry_type == 'quay'
           no_log: true
           changed_when: false
