@@ -91,8 +91,9 @@ jobs:
       - name: Check playbook syntax
         run: |
           for playbook in playbooks/*.yml; do
-            # Skip AAP-specific playbooks (require ansible.controller collection)
-            if [[ "$playbook" == *"complete-aap-setup"* ]] || [[ "$playbook" == *"configure-aap"* ]]; then
+            # Skip AAP-specific playbooks (require ansible.controller collection not available in CI)
+            if [[ "$playbook" == *"-aap-"* ]] || [[ "$playbook" == *"-aap.yml" ]] || \
+               [[ "$playbook" == *"configure-custom-ee"* ]] || [[ "$playbook" == *"complete-aap"* ]]; then
               echo "Skipping AAP-specific playbook: $playbook"
               continue
             fi
