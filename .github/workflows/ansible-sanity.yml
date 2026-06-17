@@ -78,7 +78,8 @@ jobs:
       - name: Pull Custom AAP Execution Environment
         run: |
           # Pull the custom EE image that includes ansible.controller and all required collections
-          podman pull quay.io/tosin2013/ansible-ee-minimal:latest
+          # Source: https://github.com/tosin2013/ocp4-aap-execution-environment
+          podman pull quay.io/takinosh/ocp4-aap-execution-environment:latest
 
       - name: Check playbook syntax (in custom EE container)
         run: |
@@ -90,7 +91,7 @@ jobs:
             podman run --rm \
               -v $PWD:/workspace:Z \
               -w /workspace \
-              quay.io/tosin2013/ansible-ee-minimal:latest \
+              quay.io/takinosh/ocp4-aap-execution-environment:latest \
               ansible-playbook --syntax-check "$playbook" \
               -i inventory/ibm-cloud.yml \
               || exit 1

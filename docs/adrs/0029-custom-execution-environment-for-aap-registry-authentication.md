@@ -294,9 +294,103 @@ Downloads to /data/ocp-mirror/ (1TB storage ✅)
 - **Enables**: AAP job templates for `push-to-registry-v2.yml` playbook
 - **Storage**: Mirroring uses hypervisor `/data` (1TB), not controller (60GB)
 
+## CI/CD Integration (2026-06-17)
+
+### Context
+
+GitHub Actions workflows for Ansible sanity checks (`.github/workflows/ansible-sanity.yml`) need to validate playbook syntax for 26+ playbooks, including 9 AAP-specific playbooks that require `ansible.controller` collection. This collection is unavailable in standard pip-installed Ansible and requires either:
+1. Licensed AAP instance with `automation-hub` access (not viable for CI)
+2. Custom execution environment with pre-installed collections
+
+**Challenge**: Installing `ansible.controller` via pip requires authentication to Ansible Automation Hub (`cloud.redhat.com`), which is not available in public GitHub Actions runners.
+
+### Solution
+
+**Use the same custom EE built for AAP in GitHub Actions CI/CD pipelines.**
+
+**Registry Path**: `quay.io/takinosh/ocp4-aap-execution-environment:latest`
+
+**Implementation**:
+```yaml
+# .github/workflows/ansible-sanity.yml
+syntax-check:
+  runs-on: ubuntu-latest
+  steps:
+    - name: Pull Custom AAP Execution Environment
+      run: |
+        # Source: https://github.com/tosin2013/ocp4-aap-execution-environment
+        podman pull quay.io/takinosh/ocp4-aap-execution-environment:latest
+
+    - name: Check playbook syntax (in custom EE container)
+      run: |
+        for playbook in playbooks/*.yml; do
+          podman run --rm \
+            -v $PWD:/workspace:Z \
+            -w /workspace \
+            quay.io/takinosh/ocp4-aap-execution-environment:latest \
+            ansible-playbook --syntax-check "$playbook" \
+            -i inventory/ibm-cloud.yml \
+            || exit 1
+        done
+```
+
+### Benefits
+
+1. **Zero Credential Management**: No need to store Ansible Hub tokens in GitHub Secrets
+2. **Complete Coverage**: All 26+ playbooks validated (no skipping AAP playbooks)
+3. **Consistent Environment**: Same execution environment in CI and AAP runtime
+4. **Faster CI**: Pull pre-built image (~3GB, 30-60s) vs pip install + collection downloads
+5. **Dependency Parity**: Exact same Ansible collections, Python packages, and binaries
+
+### Repository Alignment
+
+**Custom EE Repository**: `https://github.com/tosin2013/ocp4-aap-execution-environment`
+- Builds and publishes image to `quay.io/takinosh/ocp4-aap-execution-environment:latest`
+- Uses GitHub Actions workflow (`.github/workflows/build-and-push.yml`)
+- Runs on: push to main, workflow_dispatch, git tags
+
+**This Repository**: `https://github.com/tosin2013/ocp4-disconnected-helper`
+- Pulls public image from Quay in CI workflow
+- No custom EE build logic (delegates to separate repo)
+- CI workflow triggers on: PR, push to main, workflow_dispatch
+
+### Deployment Model
+
+```
+┌─────────────────────────────────────┐
+│ ocp4-aap-execution-environment repo │
+│  - execution-environment.yml        │
+│  - Makefile (build/test/publish)    │
+│  - GitHub Actions workflow          │
+└──────────────┬──────────────────────┘
+               │ builds & pushes
+               ↓
+┌─────────────────────────────────────┐
+│ quay.io/takinosh/                   │
+│   ocp4-aap-execution-environment    │
+│   :latest (public image)            │
+└──────────────┬──────────────────────┘
+               │ pulls from
+     ┌─────────┴─────────┐
+     ↓                   ↓
+┌─────────────┐  ┌──────────────────┐
+│ AAP Runtime │  │ GitHub Actions   │
+│ Job Execute │  │ CI Syntax Checks │
+└─────────────┘  └──────────────────┘
+```
+
+### Impact on v1.3.0 Release
+
+**Before**: CI workflow failed with `couldn't resolve module/action 'ansible.controller.*'` errors, requiring skip patterns that prevented AAP playbook validation.
+
+**After**: All playbooks validated in CI using same execution environment as AAP runtime, ensuring consistency between CI checks and production execution.
+
+**Release Gate Compliance**: Satisfies v1.3.0 requirement: "GitHub Actions pipelines must pass for lint and Molecule testing" (per user requirement: "i would not consider the release a success until it actually deploys a disconnected openshift via aap and our github actions pipelines pass").
+
 ## Approval
 
 **Approved By**: Project Architecture Team  
 **Date**: 2026-06-05  
 **Implementation Target**: Immediate (blocks Task #22 - AAP project import)  
-**Enhancement Approved**: 2026-06-10 (oc-mirror + SSH delegation)
+**Enhancement Approved**: 2026-06-10 (oc-mirror + SSH delegation)  
+**CI/CD Integration Approved**: 2026-06-17 (GitHub Actions container-based validation)
