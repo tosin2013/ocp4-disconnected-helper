@@ -387,10 +387,45 @@ syntax-check:
 
 **Release Gate Compliance**: Satisfies v1.3.0 requirement: "GitHub Actions pipelines must pass for lint and Molecule testing" (per user requirement: "i would not consider the release a success until it actually deploys a disconnected openshift via aap and our github actions pipelines pass").
 
+## Best Practices
+
+### Version Pinning in CI/CD
+
+**Always use specific version tags** (e.g., `v1.2.0`) instead of `latest` in CI/CD workflows for:
+
+1. **Reproducibility**: Ensures builds are deterministic across time
+2. **Cache Invalidation**: Avoids stale image caches from registry/runtime
+3. **Explicit Upgrades**: Forces intentional EE updates with testing
+4. **Rollback Safety**: Clear version history for quick rollback if needed
+
+**Example** (`.github/workflows/ansible-sanity.yml`):
+
+```yaml
+# ✅ GOOD - Pinned to specific version
+podman pull quay.io/takinosh/ocp4-aap-execution-environment:v1.2.0
+
+# ❌ BAD - Latest tag may be cached or not yet updated
+podman pull quay.io/takinosh/ocp4-aap-execution-environment:latest
+```
+
+**Rationale**: On 2026-06-17, the v1.2.0 release was published but the `latest` tag had not yet propagated to all registry caches. GitHub Actions workflows pulling `:latest` received an older image (May 25, 2026) missing `ansible.controller` collection, causing syntax check failures. Switching to `:v1.2.0` immediately resolved the issue.
+
+### Update Strategy
+
+When a new EE version is released:
+
+1. Review release notes: https://github.com/tosin2013/ocp4-aap-execution-environment/releases
+2. Update workflow to new version tag: `vX.Y.Z`
+3. Test CI workflow passes with new version
+4. Merge PR and document version update in commit message
+
+**Never use `latest` in production workflows** — only for local development/testing.
+
 ## Approval
 
 **Approved By**: Project Architecture Team  
 **Date**: 2026-06-05  
 **Implementation Target**: Immediate (blocks Task #22 - AAP project import)  
 **Enhancement Approved**: 2026-06-10 (oc-mirror + SSH delegation)  
-**CI/CD Integration Approved**: 2026-06-17 (GitHub Actions container-based validation)
+**CI/CD Integration Approved**: 2026-06-17 (GitHub Actions container-based validation)  
+**Version Pinning Practice Approved**: 2026-06-17 (Pin to v1.2.0 for reproducibility)
