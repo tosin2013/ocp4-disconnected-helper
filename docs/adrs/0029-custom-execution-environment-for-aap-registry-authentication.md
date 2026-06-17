@@ -402,7 +402,7 @@ syntax-check:
 
 ```yaml
 # ✅ GOOD - Pinned to specific version
-podman pull quay.io/takinosh/ocp4-aap-execution-environment:v1.2.1
+podman pull quay.io/takinosh/ocp4-aap-execution-environment:v1.2.2
 
 # ❌ BAD - Latest tag may be cached or not yet updated
 podman pull quay.io/takinosh/ocp4-aap-execution-environment:latest
@@ -410,7 +410,9 @@ podman pull quay.io/takinosh/ocp4-aap-execution-environment:latest
 
 **Rationale**: On 2026-06-17, the v1.2.0 release was published but the `latest` tag had not yet propagated to all registry caches. GitHub Actions workflows pulling `:latest` received an older image (May 25, 2026) missing `ansible.controller` collection, causing syntax check failures. Switching to `:v1.2.0` immediately resolved the issue.
 
-**Update (2026-06-17)**: v1.2.1 released as critical patch to add missing `infra.aap_utilities` collection discovered by CI workflow during v1.2.0 validation. This demonstrates the value of version pinning - the CI caught the gap before it could affect deployments. All workflows updated to v1.2.1.
+**Update (2026-06-17 - v1.2.1)**: Released as critical patch to add missing `infra.aap_utilities` collection discovered by CI workflow during v1.2.0 validation. This demonstrates the value of version pinning - the CI caught the gap before it could affect deployments. All workflows updated to v1.2.1.
+
+**Update (2026-06-17 - v1.2.2)**: Released to add `community.libvirt` (KVM/libvirt VM provisioning) and `containers.podman` (container management) collections. Comprehensive syntax validation of 62 downstream playbooks revealed 10 playbooks failing without community.libvirt, including the main `site.yml` entrypoint. v1.2.2 brings coverage from 82% to 98%, with only 2 test playbooks requiring downstream fixes (incorrect module names). All workflows updated to v1.2.2.
 
 ### Update Strategy
 
@@ -431,4 +433,5 @@ When a new EE version is released:
 **Enhancement Approved**: 2026-06-10 (oc-mirror + SSH delegation)  
 **CI/CD Integration Approved**: 2026-06-17 (GitHub Actions container-based validation)  
 **Version Pinning Practice Approved**: 2026-06-17 (Pin to v1.2.0 for reproducibility)  
-**v1.2.1 Upgrade Approved**: 2026-06-17 (Critical patch for infra.aap_utilities collection)
+**v1.2.1 Upgrade Approved**: 2026-06-17 (Critical patch for infra.aap_utilities collection)  
+**v1.2.2 Upgrade Approved**: 2026-06-17 (Complete collection set: community.libvirt + containers.podman for 98% coverage)
