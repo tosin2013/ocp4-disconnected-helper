@@ -72,55 +72,77 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        role: ${{ fromJson(needs.detect-changed-roles.outputs.roles) }}
-        scenario:
-          # common_vm scenarios
-          - default
-          - static-ip
-          - dhcp
-          - error-handling
-          - libvirt-xml
-          - mac-address
-          - idempotence
-          - provision
-          - deletion
-          - orchestration
-          # registry_vm scenarios
-          - certificates
-          # aap_vm scenarios (default shared with common_vm)
+        include:
+          # common_vm scenarios (10 total)
+          - role: common_vm
+            scenario: default
+          - role: common_vm
+            scenario: static-ip
+          - role: common_vm
+            scenario: dhcp
+          - role: common_vm
+            scenario: error-handling
+          - role: common_vm
+            scenario: libvirt-xml
+          - role: common_vm
+            scenario: mac-address
+          - role: common_vm
+            scenario: idempotence
+          - role: common_vm
+            scenario: provision
+          - role: common_vm
+            scenario: deletion
+          - role: common_vm
+            scenario: orchestration
+          # registry_vm scenarios (3 total)
+          - role: registry_vm
+            scenario: default
+          - role: registry_vm
+            scenario: authentication
+          - role: registry_vm
+            scenario: certificates
+          # aap_vm scenarios (1 total)
+          - role: aap_vm
+            scenario: default
 
     steps:
+      - name: Check if role should be tested
+        id: role-filter
+        run: |
+          ROLES='${{ needs.detect-changed-roles.outputs.roles }}'
+          if echo "$ROLES" | jq -e '. | contains(["${{ matrix.role }}"])' > /dev/null; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ Skipping ${{ matrix.role }} / ${{ matrix.scenario }} (role not changed)"
+          fi
+
       - name: Checkout code
+        if: steps.role-filter.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.role-filter.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
 
       - name: Install dependencies
+        if: steps.role-filter.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install molecule[podman] molecule-plugins[podman]
           pip install ansible-core
 
       - name: Install Ansible collections
+        if: steps.role-filter.outputs.should_run == 'true'
         run: |
           ansible-galaxy collection install containers.podman
           ansible-galaxy collection install ansible.posix
 
-      - name: Check if scenario exists
-        id: scenario-check
-        run: |
-          if [ -d "roles/${{ matrix.role }}/molecule/${{ matrix.scenario }}" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run Molecule test
-        if: steps.scenario-check.outputs.exists == 'true'
+        if: steps.role-filter.outputs.should_run == 'true'
         run: |
           cd roles/${{ matrix.role }}
           molecule test --scenario-name ${{ matrix.scenario }}
