@@ -1,5 +1,6 @@
 ---
-# Uses rootful Podman (sudo) to match create.yml behavior
+# Molecule destroy playbook for Podman containers (rootful mode)
+# Uses rootful Podman (sudo) to match create.yml behavior per ADR-0036
 - name: Destroy Podman container
   hosts: localhost
   connection: local

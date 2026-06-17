@@ -1,11 +1,17 @@
 ---
 # Molecule configuration for common_vm role testing with Podman
 #
-# IMPORTANT: Uses userns="nomap" in create.yml to resolve rootless Podman
-# UID mapping conflict on CentOS Stream 10. This prevents the default
-# container UID 0 → host UID 1001 mapping that triggers newuidmap rejection.
+# TECHNICAL DEBT (ADR-0036): Uses rootful Podman (sudo) for container operations
+# due to fundamental incompatibility between rootless Podman 5.8.2 and CentOS
+# Stream 10's UID mapping implementation. The newuidmap binary rejects Podman's
+# default mapping (container UID 0 → host UID 1001) at the kernel level.
 #
-# See ADR-0036 for full technical justification and troubleshooting guide.
+# This is acceptable for test isolation since:
+# - Tests run in ephemeral CI environment with trusted images
+# - Production deployments still use rootless where supported
+# - Alternative solutions (userns modes) fail during image pull phase
+#
+# See ADR-0036 for complete technical analysis and future migration path.
 
 dependency:
   name: galaxy

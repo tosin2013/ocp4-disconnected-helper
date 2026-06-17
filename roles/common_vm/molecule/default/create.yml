@@ -1,15 +1,35 @@
 ---
-# SECURITY WARNING: This playbook uses rootful Podman (sudo) due to a fundamental
-# incompatibility between rootless Podman 5.8.2 and CentOS Stream 10's subordinate
-# UID configuration. This is documented as technical debt in ADR-0036.
+# Molecule create playbook for Podman containers
 #
-# Root cause: Podman attempts to map container UID 0 → host UID 1001, but
-# newuidmap rejects this mapping even with correct /etc/subuid configuration.
-# All rootless workarounds (userns=nomap, userns=auto, storage squashing) fail
-# because the UID mapping error occurs during image pull, before container creation.
+# TECHNICAL DEBT (ADR-0036): Uses rootful Podman (sudo) due to fundamental
+# incompatibility between rootless Podman 5.8.2 and CentOS Stream 10's UID
+# mapping implementation.
 #
-# TODO (v1.4.0): Investigate upstream Podman fix or migrate to Docker-compatible
-# container runtime that supports true rootless operation.
+# Root Cause: The newuidmap binary rejects Podman's default UID mapping
+# (container UID 0 → host UID 1001) at the kernel level, even with correct
+# /etc/subuid configuration. This affects ALL rootless operations including:
+# - podman pull (image layer extraction)
+# - podman images (image list with namespace setup)
+# - podman run (container creation)
+#
+# Why Rootful for Testing is Acceptable:
+# - Molecule tests run in isolated CI environment (not production)
+# - Container content is trusted (official Red Hat UBI images)
+# - Test execution is ephemeral (containers destroyed after each run)
+# - Production deployments still use rootless where supported
+#
+# Attempted Solutions (All Failed):
+# - userns=nomap: UID mapping fails before runtime flag takes effect
+# - userns=auto: Same failure during image pull phase
+# - Storage squashing: Degrades isolation without solving root cause
+# - Explicit /etc/subuid entry: Podman explicitly rejects including host UID
+#
+# Future Resolution (v1.4.0+):
+# - Upstream Podman fix for CentOS Stream 10 UID mapping
+# - Migration to Docker-compatible runtime with rootless support
+# - Alternative: Use VM-based Molecule driver instead of containers
+#
+# See ADR-0036 for complete technical analysis and security impact assessment.
 
 - name: Create Podman container for testing
   hosts: localhost
@@ -20,12 +40,12 @@
       all:
         hosts: {}
   tasks:
-    - name: Pull container image (rootful due to UID mapping limitation)
+    - name: Pull container image (rootful)
       ansible.builtin.command:
         cmd: sudo podman pull {{ item.image }}
       loop: "{{ molecule_yml.platforms }}"
       register: pull_result
-      changed_when: "'Downloaded newer image' in pull_result.stdout"
+      changed_when: "'Downloaded newer image' in pull_result.stdout or 'Storing signatures' in pull_result.stdout"
 
     - name: Create Podman container (rootful)
       ansible.builtin.command:
