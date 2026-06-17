@@ -43,8 +43,14 @@ jobs:
       - name: Set roles matrix
         id: set-roles
         run: |
-          if [ "${{ steps.changed-files.outputs.any_changed }}" == "true" ]; then
-            # Extract unique role names from changed paths
+          # On workflow_dispatch or push to main: test all roles
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] || [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Testing all roles (workflow_dispatch or push to main)"
+            ALL_ROLES='["common_vm","registry_vm","aap_vm"]'
+            echo "roles=$ALL_ROLES" >> "$GITHUB_OUTPUT"
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.changed-files.outputs.any_changed }}" == "true" ]; then
+            # Extract unique role names from changed paths (PR workflow)
             CHANGED_ROLES=$(echo '${{ steps.changed-files.outputs.all_changed_files }}' | \
               jq -r '.[] | select(startswith("roles/")) | split("/")[1]' | \
               sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
