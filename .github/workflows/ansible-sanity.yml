@@ -79,8 +79,8 @@ jobs:
         run: |
           # Pull the custom EE image that includes ansible.controller and all required collections
           # Source: https://github.com/tosin2013/ocp4-aap-execution-environment
-          # Using v1.2.0 for reproducibility (includes AAP 2.6, ansible.controller, oc-mirror)
-          podman pull quay.io/takinosh/ocp4-aap-execution-environment:v1.2.0
+          # Using v1.2.1 for reproducibility (includes AAP 2.6, ansible.controller, infra.aap_utilities, oc-mirror)
+          podman pull quay.io/takinosh/ocp4-aap-execution-environment:v1.2.1
 
       - name: Check playbook syntax (in custom EE container)
         run: |
@@ -92,7 +92,7 @@ jobs:
             podman run --rm \
               -v $PWD:/workspace:Z \
               -w /workspace \
-              quay.io/takinosh/ocp4-aap-execution-environment:v1.2.0 \
+              quay.io/takinosh/ocp4-aap-execution-environment:v1.2.1 \
               ansible-playbook --syntax-check "$playbook" \
               -i inventory/ibm-cloud.yml \
               || exit 1
