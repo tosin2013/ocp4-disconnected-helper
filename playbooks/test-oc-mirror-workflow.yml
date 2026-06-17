@@ -88,7 +88,7 @@
         success_msg: "✓ Deploy workflow launched (Job ID: {{ deploy_job.id }})"
 
     - name: "[DEPLOY] Wait for deploy workflow to complete"
-      ansible.controller.workflow_job_wait:
+      ansible.controller.workflow_node_wait:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
@@ -188,7 +188,7 @@
         success_msg: "✓ Teardown workflow launched (Job ID: {{ teardown_job.id }})"
 
     - name: "[TEARDOWN] Wait for teardown workflow to complete"
-      ansible.controller.workflow_job_wait:
+      ansible.controller.workflow_node_wait:
         controller_host: "{{ aap_host }}"
         controller_username: "{{ aap_username }}"
         controller_password: "{{ admin_password }}"
